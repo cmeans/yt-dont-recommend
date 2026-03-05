@@ -92,6 +92,9 @@ STATE_FILE = Path.home() / ".yt-dont-recommend" / "processed.json"
 # Log file
 LOG_FILE = Path.home() / ".yt-dont-recommend" / "run.log"
 
+# Default personal exclusion list — loaded automatically if present
+DEFAULT_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "exclude.txt"
+
 # Delays (seconds) — be respectful to avoid rate limiting
 MIN_DELAY = 3.0
 MAX_DELAY = 7.0
@@ -1002,9 +1005,9 @@ def main():
         default=None,
         metavar="SOURCE",
         help=(
-            "Channels to never block, regardless of the blocklist. "
-            "Accepts a local file path or HTTP/HTTPS URL in the same plain-text format as --source. "
-            "Useful for protecting channels you want to keep even though a community list includes them."
+            f"Channels to never block, regardless of the blocklist. "
+            f"Accepts a local file path or HTTP/HTTPS URL in the same plain-text format as --source. "
+            f"If not specified, {DEFAULT_EXCLUDE_FILE} is loaded automatically if it exists."
         ),
     )
     parser.add_argument("--headless", action="store_true",
@@ -1076,11 +1079,13 @@ def main():
         logging.error("No channels found. Check your source or its format.")
         return
 
-    if args.exclude:
-        exclude_set = {c.lower() for c in resolve_source(args.exclude)}
+    exclude_source = args.exclude or (str(DEFAULT_EXCLUDE_FILE) if DEFAULT_EXCLUDE_FILE.exists() else None)
+    if exclude_source:
+        exclude_set = {c.lower() for c in resolve_source(exclude_source)}
         before = len(channels)
         channels = [c for c in channels if c.lower() not in exclude_set]
-        logging.info(f"Excluded {before - len(channels)} channel(s) via --exclude ({len(channels)} remaining)")
+        label = "--exclude" if args.exclude else f"default exclude file ({DEFAULT_EXCLUDE_FILE})"
+        logging.info(f"Excluded {before - len(channels)} channel(s) via {label} ({len(channels)} remaining)")
 
     process_channels(
         channels,

@@ -67,13 +67,13 @@ python yt_dont_recommend.py --list-sources
 
 ## Exclusion List
 
-If a community blocklist includes a channel you want to keep, use `--exclude` to protect it:
+If a community blocklist includes a channel you want to keep, add it to your personal exclusion file:
 
-```bash
-python yt_dont_recommend.py --exclude ~/my-exceptions.txt
+```
+~/.yt-dont-recommend/exclude.txt
 ```
 
-The exclusion file uses the same plain-text format as blocklists. Excluded channels are silently skipped even if they appear in the blocklist or the home feed.
+This file is loaded automatically on every run — no flag required. The format is the same plain-text format as blocklists:
 
 ```
 # Channels I want to keep despite being on community lists
@@ -81,7 +81,14 @@ The exclusion file uses the same plain-text format as blocklists. Excluded chann
 /@AnotherChannel
 ```
 
-`--exclude` accepts a local file path or any HTTP/HTTPS URL. It does not accept built-in source names.
+To use a different file instead (or a remote URL), pass `--exclude`:
+
+```bash
+python yt_dont_recommend.py --exclude /path/to/other-list.txt
+python yt_dont_recommend.py --exclude https://example.com/my-exclusions.txt
+```
+
+`--exclude` does not accept built-in source names.
 
 ## Subscription Protection
 
