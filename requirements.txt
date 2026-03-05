@@ -1,0 +1,5 @@
+# Runtime
+playwright
+
+# Development / testing
+pytest
