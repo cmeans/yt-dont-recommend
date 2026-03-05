@@ -276,6 +276,82 @@ class TestResolveSource:
 # --exclude filtering (applied in main() before process_channels)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# check_removals
+# ---------------------------------------------------------------------------
+
+class TestCheckRemovals:
+    def _state(self, blocked: dict) -> dict:
+        """Build a minimal state dict with the given blocked_by entries."""
+        processed = list(blocked.keys())
+        return {
+            "processed": processed,
+            "blocked_by": {
+                ch: {"sources": list(sources), "blocked_at": "2026-01-01T00:00:00"}
+                for ch, sources in blocked.items()
+            },
+            "would_have_blocked": {},
+            "last_run": None,
+            "stats": {"success": len(processed), "skipped": 0, "failed": 0},
+        }
+
+    def test_unblocks_channel_removed_from_sole_source(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state({"/@gone": ["deslop"]})
+        n = ydr.check_removals(state, [], "deslop", "all")
+        assert n == 1
+        assert "/@gone" not in state["processed"]
+        assert "/@gone" not in state["blocked_by"]
+
+    def test_all_policy_keeps_block_when_other_source_still_present(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state({"/@channel": ["deslop", "aislist"]})
+        n = ydr.check_removals(state, [], "deslop", "all")
+        assert n == 0
+        assert "/@channel" in state["processed"]
+        # deslop removed from sources list, aislist still there
+        assert state["blocked_by"]["/@channel"]["sources"] == ["aislist"]
+
+    def test_any_policy_unblocks_even_with_other_sources(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state({"/@channel": ["deslop", "aislist"]})
+        n = ydr.check_removals(state, [], "deslop", "any")
+        assert n == 1
+        assert "/@channel" not in state["processed"]
+        assert "/@channel" not in state["blocked_by"]
+
+    def test_channel_still_in_list_is_not_touched(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state({"/@still-there": ["deslop"]})
+        n = ydr.check_removals(state, ["/@still-there"], "deslop", "all")
+        assert n == 0
+        assert "/@still-there" in state["processed"]
+
+    def test_channel_from_different_source_not_affected(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state({"/@channel": ["aislist"]})
+        # Running deslop — aislist channel not in deslop, but deslop didn't block it
+        n = ydr.check_removals(state, [], "deslop", "all")
+        assert n == 0
+        assert "/@channel" in state["processed"]
+
+    def test_check_removals_is_case_insensitive(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state({"/@Channel": ["deslop"]})
+        # Current list has different casing — should still be recognised as present
+        n = ydr.check_removals(state, ["/@channel"], "deslop", "all")
+        assert n == 0
+
+    def test_load_state_backward_compat_adds_missing_fields(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        # Write an old-style state without the new fields
+        old_state = {"processed": ["/@ch"], "last_run": None, "stats": {}}
+        (tmp_path / "processed.json").write_text(json.dumps(old_state))
+        state = ydr.load_state()
+        assert "blocked_by" in state
+        assert "would_have_blocked" in state
+
+
 class TestExcludeFiltering:
     """
     The exclude logic lives in main(), but the underlying mechanism is just

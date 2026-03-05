@@ -142,8 +142,18 @@ def setup_logging(verbose: bool = False):
 def load_state() -> dict:
     if STATE_FILE.exists():
         with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"processed": [], "last_run": None, "stats": {"success": 0, "skipped": 0, "failed": 0}}
+            s = json.load(f)
+        # Ensure new fields exist for older state files (backward compat)
+        s.setdefault("blocked_by", {})
+        s.setdefault("would_have_blocked", {})
+        return s
+    return {
+        "processed": [],
+        "blocked_by": {},
+        "would_have_blocked": {},
+        "last_run": None,
+        "stats": {"success": 0, "skipped": 0, "failed": 0},
+    }
 
 
 def save_state(state: dict):
@@ -332,8 +342,114 @@ def _click_dont_recommend(page, card) -> bool:
     return True
 
 
-def process_channels(channels: list[str], dry_run: bool = False,
-                     limit: int | None = None, headless: bool = False):
+def check_removals(state: dict, current_channels: list[str],
+                   source: str, unblock_policy: str) -> int:
+    """
+    Compare currently-fetched blocklist against previously-blocked channels.
+
+    If a channel was blocked because of `source` but is no longer in the
+    current list, it may be a false positive that the list maintainer corrected.
+
+    unblock_policy:
+      "all" — only unblock when the channel has been dropped from every source
+               that originally blocked it (conservative, default)
+      "any" — unblock as soon as any single source drops the channel
+
+    Modifies state in place. Returns the count of channels unblocked.
+    """
+    current_set = {c.lower() for c in current_channels}
+    blocked_by = state.get("blocked_by", {})
+    unblocked_count = 0
+
+    for channel, info in list(blocked_by.items()):
+        sources = info.get("sources", [])
+        if source not in sources:
+            continue
+        if channel.lower() in current_set:
+            continue
+
+        # This channel was blocked by `source` but is no longer on that list
+        other_sources = [s for s in sources if s != source]
+
+        if unblock_policy == "any" or not other_sources:
+            # Unblock completely
+            del blocked_by[channel]
+            try:
+                state["processed"].remove(channel)
+            except ValueError:
+                pass
+            unblocked_count += 1
+            if other_sources:
+                logging.warning(
+                    f"*** UNBLOCKED {channel} — dropped from '{source}'. "
+                    f"NOTE: still present in {other_sources} but unblocked "
+                    f"because --unblock-policy=any. Channel can now appear in recommendations."
+                )
+            else:
+                logging.warning(
+                    f"*** UNBLOCKED {channel} — removed from '{source}' blocklist "
+                    f"(possible false positive correction by list maintainer). "
+                    f"Channel can now appear in recommendations."
+                )
+            save_state(state)
+        else:
+            # policy == "all" and other sources still assert the block
+            info["sources"] = other_sources
+            logging.info(
+                f"NOTE: {channel} was dropped from '{source}' but is still "
+                f"blocked by: {other_sources}. Will unblock when removed from all sources."
+            )
+
+    return unblocked_count
+
+
+def fetch_subscriptions(page) -> set[str]:
+    """
+    Scrape the YouTube subscriptions management page and return a set of
+    lowercased channel paths (/@handle or /channel/UCxxx).
+
+    Returns an empty set if the page cannot be parsed, with a warning logged.
+    """
+    logging.info("Fetching subscriptions list...")
+    page.goto("https://www.youtube.com/feed/channels", wait_until="domcontentloaded")
+    time.sleep(PAGE_LOAD_WAIT)
+
+    subscriptions: set[str] = set()
+    prev_count = -1
+    max_scrolls = 50
+
+    for _ in range(max_scrolls):
+        links = page.query_selector_all(
+            "ytd-channel-renderer a#main-link, "
+            "ytd-channel-renderer a[href^='/@'], "
+            "ytd-channel-renderer a[href^='/channel/UC']"
+        )
+        for link in links:
+            href = (link.get_attribute("href") or "").split("?")[0].rstrip("/")
+            if href.startswith("/@") or href.startswith("/channel/"):
+                subscriptions.add(href.lower())
+
+        if len(subscriptions) == prev_count:
+            break  # no new channels loaded after scroll
+        prev_count = len(subscriptions)
+
+        page.evaluate("window.scrollBy(0, window.innerHeight * 3)")
+        time.sleep(1.5)
+
+    if subscriptions:
+        logging.info(f"Found {len(subscriptions)} subscribed channels")
+    else:
+        logging.warning(
+            "No subscriptions found — the subscriptions page may have changed its layout. "
+            "Subscription protection is disabled for this run. "
+            "Run --check-selectors and check manually."
+        )
+    return subscriptions
+
+
+def process_channels(channels: list[str], source: str,
+                     dry_run: bool = False, limit: int | None = None,
+                     headless: bool = False, unblock_policy: str = "all"):
     """
     Scan the YouTube home feed and click 'Don't recommend channel' on any
     card whose channel is in the blocklist.
@@ -349,10 +465,15 @@ def process_channels(channels: list[str], dry_run: bool = False,
     """
     from playwright.sync_api import sync_playwright
 
-    MAX_NO_PROGRESS_SCROLLS = 20   # stop after this many scrolls with no new blocks
+    MAX_NO_PROGRESS_SCROLLS = 20
 
     state = load_state()
     processed_set = set(state["processed"])
+
+    # Check for channels removed from the blocklist since the last run
+    n_unblocked = check_removals(state, channels, source, unblock_policy)
+    if n_unblocked:
+        processed_set = set(state["processed"])  # refresh after removals
 
     unblocked = {c for c in channels if c not in processed_set}
     logging.info(
@@ -376,7 +497,6 @@ def process_channels(channels: list[str], dry_run: bool = False,
             logging.info(f"  ... and {len(unblocked) - 20} more")
         return
 
-    # Build lookup: lowercased channel path → original path (for case-insensitive matching)
     channel_lookup = {c.lower(): c for c in unblocked}
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -399,7 +519,13 @@ def process_channels(channels: list[str], dry_run: bool = False,
             context.close()
             return
 
-        logging.info("Logged in. Scanning home feed for blocklisted channels...")
+        subscriptions = fetch_subscriptions(page)
+
+        # Navigate back to home feed after fetching subscriptions
+        page.goto("https://www.youtube.com", wait_until="domcontentloaded")
+        time.sleep(PAGE_LOAD_WAIT)
+
+        logging.info("Scanning home feed for blocklisted channels...")
 
         blocked_count = 0
         no_progress_scrolls = 0
@@ -422,22 +548,37 @@ def process_channels(channels: list[str], dry_run: bool = False,
                 if limit and blocked_count >= limit:
                     break
 
-                # Find the channel link within this feed card
-                channel_link = card.query_selector(
-                    "a[href^='/@'], a[href^='/channel/UC']"
-                )
+                channel_link = card.query_selector("a[href^='/@'], a[href^='/channel/UC']")
                 if not channel_link:
                     continue
 
                 href = channel_link.get_attribute("href") or ""
-                # Strip query params (some hrefs have ?sub_confirmation=1 etc.)
                 path = href.split("?")[0].rstrip("/")
                 canonical = channel_lookup.get(path.lower())
                 if not canonical or canonical in processed_set:
                     continue
 
-                # Found a blocklisted channel in the feed
-                logging.info(f"Found in feed: {canonical} — clicking 'Don't recommend channel'...")
+                # Check subscription protection before blocking
+                if canonical.lower() in subscriptions:
+                    whb = state["would_have_blocked"]
+                    if canonical not in whb or not whb[canonical].get("notified"):
+                        logging.warning(
+                            f"SUBSCRIBED CHANNEL IN BLOCKLIST: {canonical} appears in "
+                            f"'{source}' but you're subscribed to it — skipping block. "
+                            f"Worth checking if the channel's content has changed recently. "
+                            f"(This notice will not repeat. See would_have_blocked in state file.)"
+                        )
+                        entry = whb.get(canonical, {})
+                        entry.setdefault("sources", [])
+                        if source not in entry["sources"]:
+                            entry["sources"].append(source)
+                        entry.setdefault("first_seen", datetime.now().isoformat())
+                        entry["notified"] = True
+                        whb[canonical] = entry
+                        save_state(state)
+                    continue
+
+                logging.info(f"Found in feed: {canonical} — blocking...")
                 try:
                     success = _click_dont_recommend(page, card)
                 except Exception as e:
@@ -452,18 +593,27 @@ def process_channels(channels: list[str], dry_run: bool = False,
                     state["stats"]["success"] += 1
                     blocked_count += 1
                     found_match_this_pass = True
+
+                    # Record which source is responsible for this block
+                    blocked_by = state["blocked_by"]
+                    if canonical not in blocked_by:
+                        blocked_by[canonical] = {
+                            "sources": [source],
+                            "blocked_at": datetime.now().isoformat(),
+                        }
+                    elif source not in blocked_by[canonical].get("sources", []):
+                        blocked_by[canonical]["sources"].append(source)
+
                     logging.info(f"[{blocked_count}] OK {canonical}")
                     save_state(state)
 
-                    # Rate limiting
                     if blocked_count % LONG_PAUSE_EVERY == 0:
                         logging.info(f"Taking a {LONG_PAUSE_SECONDS}s break...")
                         time.sleep(LONG_PAUSE_SECONDS)
                     else:
                         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-                    # The DOM changes after blocking — break and rescan
-                    break
+                    break  # rescan after DOM changes
                 else:
                     state["stats"]["skipped"] += 1
                     logging.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
@@ -472,7 +622,6 @@ def process_channels(channels: list[str], dry_run: bool = False,
             if found_match_this_pass:
                 no_progress_scrolls = 0
             else:
-                # No matches this pass — scroll to load more feed content
                 page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
                 time.sleep(2.0)
                 no_progress_scrolls += 1
@@ -841,6 +990,14 @@ def main():
     parser.add_argument("--limit", type=int, default=None,
                         help="Stop after blocking this many channels")
     parser.add_argument(
+        "--unblock-policy", choices=["all", "any"], default="all",
+        help=(
+            "When a channel is dropped from a blocklist, when to unblock it. "
+            "'all' (default): only unblock when removed from every source that blocked it. "
+            "'any': unblock as soon as any single source drops it."
+        ),
+    )
+    parser.add_argument(
         "--exclude",
         default=None,
         metavar="SOURCE",
@@ -886,10 +1043,15 @@ def main():
 
     if args.stats:
         state = load_state()
-        print(f"\nProcessed channels : {len(state['processed'])}")
+        whb = state.get("would_have_blocked", {})
+        print(f"\nBlocked channels   : {len(state['processed'])}")
         print(f"Last run           : {state.get('last_run', 'never')}")
         print(f"Stats              : {state.get('stats', {})}")
-        print(f"State file         : {STATE_FILE}")
+        if whb:
+            print(f"\nSubscribed channels in blocklist (skipped, notified once):")
+            for ch, info in whb.items():
+                print(f"  {ch}  (sources: {info.get('sources', [])}, first seen: {info.get('first_seen', '?')[:10]})")
+        print(f"\nState file         : {STATE_FILE}")
         print(f"Log file           : {LOG_FILE}")
         return
 
@@ -922,9 +1084,11 @@ def main():
 
     process_channels(
         channels,
+        source=args.source,
         dry_run=args.dry_run,
         limit=args.limit,
         headless=args.headless,
+        unblock_policy=args.unblock_policy,
     )
 
 
