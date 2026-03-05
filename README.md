@@ -45,6 +45,9 @@ python yt_dont_recommend.py --source aislist
 # Process only 10 channels (good for first test)
 python yt_dont_recommend.py --limit 10
 
+# Protect specific channels from ever being blocked
+python yt_dont_recommend.py --exclude ~/my-exceptions.txt
+
 # Run in headless mode (no visible browser)
 python yt_dont_recommend.py --headless
 
@@ -57,6 +60,24 @@ python yt_dont_recommend.py --reset-state
 # List built-in sources
 python yt_dont_recommend.py --list-sources
 ```
+
+## Exclusion List
+
+If a community blocklist includes a channel you want to keep, use `--exclude` to protect it:
+
+```bash
+python yt_dont_recommend.py --exclude ~/my-exceptions.txt
+```
+
+The exclusion file uses the same plain-text format as blocklists. Excluded channels are silently skipped even if they appear in the blocklist or the home feed.
+
+```
+# Channels I want to keep despite being on community lists
+/@IBMTechnology
+/@SomeOtherChannel
+```
+
+`--exclude` accepts a local file path or any HTTP/HTTPS URL. It does not accept built-in source names.
 
 ## Blocklist Format
 

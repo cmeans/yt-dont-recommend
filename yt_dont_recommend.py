@@ -840,6 +840,16 @@ def main():
     )
     parser.add_argument("--limit", type=int, default=None,
                         help="Stop after blocking this many channels")
+    parser.add_argument(
+        "--exclude",
+        default=None,
+        metavar="SOURCE",
+        help=(
+            "Channels to never block, regardless of the blocklist. "
+            "Accepts a local file path or HTTP/HTTPS URL in the same plain-text format as --source. "
+            "Useful for protecting channels you want to keep even though a community list includes them."
+        ),
+    )
     parser.add_argument("--headless", action="store_true",
                         help="Run browser in headless mode (no visible window)")
     parser.add_argument("--verbose", action="store_true",
@@ -903,6 +913,12 @@ def main():
     if not channels:
         logging.error("No channels found. Check your source or its format.")
         return
+
+    if args.exclude:
+        exclude_set = {c.lower() for c in resolve_source(args.exclude)}
+        before = len(channels)
+        channels = [c for c in channels if c.lower() not in exclude_set]
+        logging.info(f"Excluded {before - len(channels)} channel(s) via --exclude ({len(channels)} remaining)")
 
     process_channels(
         channels,

@@ -270,3 +270,55 @@ class TestResolveSource:
         # treated as a file path and exit if not found.
         with pytest.raises(SystemExit):
             ydr.resolve_source("notabuiltin")
+
+
+# ---------------------------------------------------------------------------
+# --exclude filtering (applied in main() before process_channels)
+# ---------------------------------------------------------------------------
+
+class TestExcludeFiltering:
+    """
+    The exclude logic lives in main(), but the underlying mechanism is just
+    set subtraction using resolve_source(). These tests verify the filtering
+    logic directly using the same pattern main() uses.
+    """
+
+    def _apply_exclude(self, channels: list[str], exclude_raw: str) -> list[str]:
+        """Simulate what main() does with --exclude."""
+        exclude_set = {c.lower() for c in ydr.parse_text_blocklist(exclude_raw)}
+        return [c for c in channels if c.lower() not in exclude_set]
+
+    def test_excluded_channel_removed(self):
+        channels = ["/@keep", "/@remove", "/@also-keep"]
+        result = self._apply_exclude(channels, "/@remove\n")
+        assert result == ["/@keep", "/@also-keep"]
+
+    def test_exclude_is_case_insensitive(self):
+        channels = ["/@SomeChannel"]
+        result = self._apply_exclude(channels, "/@somechannel\n")
+        assert result == []
+
+    def test_exclude_with_comments_and_blanks(self):
+        channels = ["/@a", "/@b", "/@c"]
+        result = self._apply_exclude(channels, "# exclude b\n\n/@b\n")
+        assert result == ["/@a", "/@c"]
+
+    def test_empty_exclude_list_changes_nothing(self):
+        channels = ["/@a", "/@b"]
+        result = self._apply_exclude(channels, "# just comments\n\n")
+        assert result == ["/@a", "/@b"]
+
+    def test_exclude_channel_id_format(self):
+        channels = ["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx", "/@keep"]
+        result = self._apply_exclude(channels, "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx\n")
+        assert result == ["/@keep"]
+
+    def test_exclude_all_channels(self):
+        channels = ["/@a", "/@b"]
+        result = self._apply_exclude(channels, "/@a\n/@b\n")
+        assert result == []
+
+    def test_exclude_nonexistent_channel_is_noop(self):
+        channels = ["/@a", "/@b"]
+        result = self._apply_exclude(channels, "/@not-in-list\n")
+        assert result == ["/@a", "/@b"]
