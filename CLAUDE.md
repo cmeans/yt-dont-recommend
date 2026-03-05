@@ -30,40 +30,85 @@ The tool should work with **any** channel blocklist, not just AI slop lists. Use
 2. **Arbitrary URL**: `--source https://example.com/blocklist.txt` — same text format, fetched over HTTP
 3. **Built-in named sources**: `--source deslop` or `--source aislist` — community AI slop lists with format-specific parsers
 
-The local file path is the most important for shareability. Someone curates a list, puts it in a repo or a gist, others point at it. The standard format should be the DeSlop format: one channel path per line (`/@handle` or `/channel/UCxxx`), comments with `#`.
+The local file path is the most important for shareability. Someone curates a list, puts it in a repo or a gist, others point at it. The standard format is the DeSlop format: one channel path per line (`/@handle` or `/channel/UCxxx`), comments with `#`.
 
-## Known Issues & Risks (High Priority)
+## Confirmed Findings from Live Testing (2026-03-05)
 
-### 1. Selector Fragility (CRITICAL)
-The Playwright selectors in `dont_recommend_channel()` have NOT been tested against a live YouTube page. YouTube changes their DOM structure frequently and A/B tests different layouts. The selectors for finding the three-dot menu and the "Don't recommend channel" option will almost certainly need adjustment after the first live test.
+### "Don't Recommend" context — RESOLVED
+**"Don't recommend channel" appears ONLY in the YouTube home feed.**
 
-**First task should be:** Run `--login`, then `--limit 1` with the browser visible (no `--headless`) and observe what happens. Fix selectors based on actual DOM.
+Tested four contexts with `--check-selectors`:
+- **Home feed** (`ytd-rich-item-renderer` cards): PASS — option present
+- **Search results**: FAIL — option absent
+- **Channel header (`/videos` page)**: FAIL — option absent
+- **Video watch page**: FAIL — option absent
 
-### 2. "Don't Recommend" Context Problem (POSSIBLY FUNDAMENTAL)
-The script currently navigates to a channel's `/videos` page, finds a video, and tries to click "Don't recommend channel" from the video's context menu. **However**, that menu option may only appear in certain contexts:
-- Home feed recommendations
-- Search results
-- Sidebar suggestions
+The correct `aria-label` for the home feed "More actions" button is `'More actions'`. The selector `'Action menu'` is used on channel pages but leads nowhere useful.
 
-It may NOT appear when you're already on the channel's own page. If this is the case, the entire approach needs to change — e.g., searching for the channel name from the YouTube home page and acting on the result there instead.
+The tool's processing approach is the **home feed scanner**: navigate to `youtube.com`, scan `ytd-rich-item-renderer` cards for channels matching the blocklist, click the three-dot menu, select "Don't recommend channel", scroll for more cards, repeat.
 
-### 3. AiSList JSON Format (UNVERIFIED)
-The `aislist` blocklist source parser is a best-guess. I could see the AiSList GitHub repo structure (`AiSList/blacklist.json` exists under `Override92/AiSList`) but couldn't fetch the raw JSON to confirm the schema. The DeSlop source (`deslop`) is verified — it's a simple text file, one channel path per line, comments start with `#`. **Start with DeSlop.**
-
-### 4. Rate Limiting
-The current delays (3-7s between actions, 30s every 25 channels) are guesses. YouTube could flag rapid automated "Don't recommend" actions. The user should start small (`--limit 10`) and increase gradually. If YouTube starts showing CAPTCHAs or unusual behavior, back off significantly.
-
-### 5. YouTube ToS
-Automating UI interactions violates YouTube's Terms of Service. This is for personal use on the user's own account. Same risk category as SmartTube or ad blockers.
+### AiSList JSON format — UNVERIFIED
+The `aislist` parser is a best-guess. The schema has not been confirmed against the live file. Start with `--source deslop` (verified).
 
 ## Architecture
 
-Single-file Python script. Key components:
+Single-file Python script (`yt_dont_recommend.py`). Key components:
 
-- **Blocklist fetching**: Downloads from GitHub raw URLs or reads local files, parses text or JSON format
-- **State management**: `~/.yt-recommend-trainer/processed.json` tracks which channels have been handled (crash-safe, saves after each channel)
-- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs)
-- **Rate limiting**: Random delays + periodic longer pauses
+- **Blocklist fetching**: `resolve_source()` handles built-in keys, HTTP(S) URLs, and local file paths. `parse_text_blocklist()` and `parse_json_blocklist()` handle format variants. JSON format is auto-detected by leading `{` or `[`.
+- **State management**: `~/.yt-dont-recommend/processed.json` tracks which channels have been handled (crash-safe, saved after each action). State schema includes `blocked_by` (per-channel source tracking) and `would_have_blocked` (subscription-protected channels).
+- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs).
+- **Subscription protection**: `fetch_subscriptions(page)` scrapes `youtube.com/feed/channels`, returns a lowercase set of handles. Called once per run in `process_channels()`. Subscribed channels are skipped with a one-time WARNING logged and stored in `state["would_have_blocked"]`.
+- **Blocklist removal detection**: `check_removals()` runs at the start of each `process_channels()` call, compares the current list against `state["blocked_by"]`, and auto-unblocks channels no longer on the list, per `--unblock-policy`.
+- **Rate limiting**: Random 3–7s delays between actions, 30s pause every 25 channels.
+
+### State Schema
+
+```json
+{
+  "processed": ["/@channel1"],
+  "blocked_by": {
+    "/@channel1": {"sources": ["deslop"], "blocked_at": "2026-03-05T..."}
+  },
+  "would_have_blocked": {
+    "/@SomeChannel": {"sources": ["deslop"], "first_seen": "...", "notified": true}
+  },
+  "last_run": "...",
+  "stats": {"success": 1, "skipped": 0, "failed": 0}
+}
+```
+
+`load_state()` is backward-compatible: missing keys are populated via `setdefault`.
+
+### Key Function Signatures
+
+```python
+def process_channels(channels: list[str], source: str,
+                     dry_run: bool = False, limit: int | None = None,
+                     headless: bool = False, unblock_policy: str = "all"):
+
+def check_removals(state: dict, current_channels: list[str],
+                   source: str, unblock_policy: str) -> int:
+
+def fetch_subscriptions(page) -> set[str]:
+```
+
+### CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--login` | Open browser for Google account authentication |
+| `--source` | Blocklist: built-in name, local file path, or HTTP(S) URL |
+| `--exclude` | Exclusion list: local file path or HTTP(S) URL (not built-in names) |
+| `--limit N` | Stop after N channels |
+| `--dry-run` | Show what would be processed without acting |
+| `--headless` | Run without a visible browser window |
+| `--unblock-policy {all,any}` | When to auto-unblock channels removed from lists (default: `all`) |
+| `--stats` | Show processed count, success/skip/fail, and `would_have_blocked` entries |
+| `--reset-state` | Clear all state and start over |
+| `--list-sources` | Print built-in source names |
+| `--check-selectors` | Run 4-context selector diagnostic, save report + screenshots |
+| `--test-channel` | Channel to use with `--check-selectors` (default: `/@YouTube`) |
+| `--verbose` | Extra logging |
 
 ## Standard Blocklist Format
 
@@ -79,38 +124,51 @@ The interchange format is plain text:
 
 This matches the DeSlop format and is trivial to create, share, and parse.
 
-## Original Developer's Environment
-
-- Fedora 43 (username: cmeans)
-- Python 3.x available
-- Playwright needs to be installed: `pip install playwright --break-system-packages && playwright install chromium`
-- The developer is technically proficient (full-stack developer, C#/Java/Python)
-
 ## Built-in Blocklist Sources
 
-| Key      | Format    | Verified | URL |
-|----------|-----------|----------|-----|
-| `deslop` | text      | YES      | `https://raw.githubusercontent.com/NikoboiNFTB/DeSlop/refs/heads/main/block/list.txt` |
-| `aislist`| json      | NO       | `https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/blacklist.json` |
+| Key       | Format | Verified | URL |
+|-----------|--------|----------|-----|
+| `deslop`  | text   | YES      | `https://raw.githubusercontent.com/NikoboiNFTB/DeSlop/refs/heads/main/block/list.txt` |
+| `aislist` | json   | NO       | `https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/blacklist.json` |
 
-DeSlop list has ~130+ channels. AiSList may be larger but format is unconfirmed.
+DeSlop has ~130+ channels. AiSList may be larger but its JSON schema is unconfirmed.
 
 Other potential sources to consider adding:
 - surasshu/cevval AI music blocklist (BlockTube JSON export with channel IDs)
 - Any future community lists that adopt the standard text format
 
-## Development Priorities
+## Open Issues & Risks
 
-1. **Get the basic flow working with real selectors** — run against 1 channel, observe, fix
-2. **Determine if "Don't recommend" works from channel pages** — if not, redesign the navigation approach
-3. **Implement local file and URL source support** — `--source /path/to/file.txt` and `--source https://...`
-4. **Verify AiSList JSON format** — fetch the file, inspect, fix parser
-5. **Consider combining multiple sources** in a single run with deduplication
-6. **Update state directory** from `~/.yt-deslop-trainer/` to `~/.yt-recommend-trainer/`
-7. **Update README** to reflect generalized scope and document the standard blocklist format
+### 1. Selector Fragility (ongoing)
+YouTube changes its DOM frequently. Use `--check-selectors` to diagnose when the script starts silently skipping channels. The selector checker saves a timestamped report and screenshots to `~/.yt-dont-recommend/`.
+
+### 2. Home Feed Matching Completeness
+The tool can only block channels that appear in the home feed during a run. A channel on the blocklist that never surfaces won't be processed until a future run where it does. This is a fundamental limitation of the home-feed-only approach.
+
+### 3. Handle vs. Channel ID Matching
+Feed cards typically expose `/@handle` hrefs. Blocklist entries using `/channel/UCxxx` format only match if the card also uses that ID. DeSlop (handles) matches well; AiSList (channel IDs) may match less reliably.
+
+### 4. AiSList JSON Format (unverified)
+The `aislist` parser is a best-guess. Verify by running `--source aislist --dry-run` and inspecting the parsed count.
+
+### 5. Subscription Scraping (untested live)
+`fetch_subscriptions()` uses selectors `ytd-channel-renderer a#main-link` and scrolling on `youtube.com/feed/channels`. These have not been live-tested. If subscription protection silently fails, the selectors here are the first place to look.
+
+### 6. Rate Limiting
+The current delays (3–7s between actions, 30s every 25 channels) are conservative guesses. Back off further if YouTube shows CAPTCHAs or unusual behavior.
+
+### 7. YouTube ToS
+Automating UI interactions violates YouTube's Terms of Service. This is for personal use on the user's own account — same risk category as SmartTube or ad blockers.
+
+## Original Developer's Environment
+
+- Fedora 43 (username: cmeans)
+- Python 3.x with `.venv` in project root
+- Playwright: `pip install playwright && playwright install chromium` (inside venv)
+- Git remote: `https://github.com/cmeans/yt-dont-recommend.git` (HTTPS; SSH had timeout issues)
 
 ## What NOT To Do
 
-- Don't run headless until selectors are verified with visible browser
+- Don't run headless until you've confirmed the selectors are working with a visible browser
 - Don't process the full list until rate limiting behavior is understood
 - Don't assume selectors work just because they look reasonable — YouTube's DOM is notoriously inconsistent

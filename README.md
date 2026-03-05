@@ -51,8 +51,12 @@ python yt_dont_recommend.py --exclude ~/my-exceptions.txt
 # Run in headless mode (no visible browser)
 python yt_dont_recommend.py --headless
 
-# Check progress
+# Check progress (includes subscription-protected channels)
 python yt_dont_recommend.py --stats
+
+# Control when a channel is auto-unblocked after being removed from a list
+python yt_dont_recommend.py --unblock-policy all   # default: unblock only when gone from all sources
+python yt_dont_recommend.py --unblock-policy any   # unblock as soon as gone from any source
 
 # Start over
 python yt_dont_recommend.py --reset-state
@@ -73,11 +77,29 @@ The exclusion file uses the same plain-text format as blocklists. Excluded chann
 
 ```
 # Channels I want to keep despite being on community lists
-/@IBMTechnology
-/@SomeOtherChannel
+/@SomeChannel
+/@AnotherChannel
 ```
 
 `--exclude` accepts a local file path or any HTTP/HTTPS URL. It does not accept built-in source names.
+
+## Subscription Protection
+
+The tool automatically skips any channel you are subscribed to — even if it appears on a blocklist. Blocking a channel you subscribe to would signal YouTube to stop recommending it, which is usually not what you want.
+
+When a subscribed channel appears on the blocklist, a `WARNING` is logged and the event is recorded in state under `would_have_blocked`. This warning fires only once per channel (not on every run). Use `--stats` to see the full list.
+
+If a channel you subscribe to genuinely should be blocked, add it to `--exclude` instead, which suppresses the warning, or unsubscribe and let the tool handle it on the next run.
+
+## Auto-Unblock (False Positive Correction)
+
+When a channel is removed from a blocklist, the tool can automatically reverse the "Don't recommend channel" action.
+
+**`--unblock-policy all` (default):** Unblock only when the channel has been dropped from *every* source that originally blocked it. Useful when running multiple lists — a channel removed from one aggressive list but still present in another stays blocked.
+
+**`--unblock-policy any`:** Unblock as soon as the channel disappears from *any* source that blocked it. More aggressive about reversing false positives.
+
+Auto-unblock events are logged prominently so they are easy to spot.
 
 ## Blocklist Format
 
@@ -94,9 +116,9 @@ This format is shared with the [DeSlop](https://github.com/NikoboiNFTB/DeSlop) p
 
 ## Built-in Sources
 
-| Source   | Description                                                        |
-|----------|--------------------------------------------------------------------|
-| `deslop` | DeSlop project (~130+ channels, plain text, actively maintained)   |
+| Source    | Description                                                       |
+|-----------|-------------------------------------------------------------------|
+| `deslop`  | DeSlop project (~130+ channels, plain text, actively maintained)  |
 | `aislist` | AiSList / AiBlock extension list (community JSON, broader)        |
 
 You can run multiple sources sequentially — the state tracker prevents re-processing the same channel twice.
@@ -104,13 +126,18 @@ You can run multiple sources sequentially — the state tracker prevents re-proc
 ## How It Works
 
 1. Fetches the blocklist (local file, URL, or built-in source)
-2. Opens Chromium using your saved YouTube login session
-3. For each channel:
-   - Navigates to their `/videos` page
-   - Hovers over the first video to reveal the three-dot menu
+2. Checks whether any previously blocked channels have since been removed from the list and auto-unblocks them per `--unblock-policy`
+3. Opens Chromium using your saved YouTube login session
+4. Scrapes your subscriptions so subscribed channels are never blocked
+5. Scans the YouTube home feed for cards matching blocklist channels
+6. For each match:
+   - Clicks the "More actions" menu on the video card
    - Clicks "Don't recommend channel"
-   - Saves progress after each channel (crash-safe, can always resume)
-4. Rate-limits itself: 3–7s between channels, 30s break every 25 channels
+   - Saves progress immediately (crash-safe, always resumable)
+7. Scrolls for more cards and repeats until the list is exhausted or `--limit` is reached
+8. Rate-limits itself: 3–7s between actions, 30s break every 25 channels
+
+> **Why the home feed?** Live testing confirmed that "Don't recommend channel" only appears in home feed recommendation contexts. It does not appear on a channel's own `/videos` page, in search results, or on the video watch page.
 
 ## State & Logs
 
@@ -119,14 +146,15 @@ All data lives in `~/.yt-dont-recommend/`:
 | Path | Purpose |
 |------|---------|
 | `browser-profile/` | Chromium profile with your login session |
-| `processed.json` | Channels already handled (won't re-process) |
+| `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings |
 | `run.log` | Timestamped log of all actions |
 
 ## Caveats
 
 - **YouTube ToS:** Automating UI interactions may violate YouTube's Terms of Service. Personal use, your own account, your own risk.
-- **Selector fragility:** YouTube's HTML structure changes frequently. If the script starts failing, the selectors in `dont_recommend_channel()` likely need updating. Run with `--limit 1` and without `--headless` to observe what's happening.
-- **Context limitation:** "Don't recommend channel" may only appear in certain contexts (home feed, search results) and not on a channel's own page. If the option is never found, the navigation approach may need to change.
+- **Selector fragility:** YouTube's HTML structure changes frequently. If the script starts silently skipping channels, the selectors are probably broken. Run `--check-selectors` to diagnose.
+- **Home feed matching:** The tool can only block channels that appear in your home feed during a run. Channels on the blocklist that never surface in the feed during that session will not be processed. Resume runs until the list is exhausted.
+- **Handle vs. channel ID:** Blocklist entries using `/channel/UCxxx` format only match home feed cards that also expose that ID. Most feeds use `/@handle` hrefs. DeSlop uses handles and matches well; AiSList uses channel IDs and may match less reliably.
 - **Start small:** Use `--limit 10` for your first real run to confirm everything is working before processing a full list.
 
 ## Running Periodically
@@ -136,10 +164,11 @@ All data lives in `~/.yt-dont-recommend/`:
 0 3 * * 0 cd /path/to/yt-dont-recommend && python yt_dont_recommend.py --headless
 ```
 
+Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
+
 ## Checking and Updating Selectors
 
-YouTube changes its DOM structure frequently. When the script starts silently skipping
-everything (SKIP entries in the log), the selectors are probably broken.
+YouTube changes its DOM structure frequently. When the script starts silently skipping everything (SKIP entries in the log), the selectors are probably broken.
 
 Run the selector checker to diagnose:
 
@@ -147,19 +176,14 @@ Run the selector checker to diagnose:
 python yt_dont_recommend.py --check-selectors
 ```
 
-This opens a visible browser, tests the current selectors against both the YouTube home
-feed and a channel's /videos page, prints every menu item it finds, and saves a
-timestamped report with screenshots to `~/.yt-dont-recommend/`.
+This opens a visible browser, tests the current selectors against four contexts (home feed, search results, channel header, video watch page), prints every menu item found, and saves a timestamped report with screenshots to `~/.yt-dont-recommend/`.
 
-It also answers a structural question: **the "Don't recommend channel" option may only
-appear in certain contexts** (home feed, search results) and not on a channel's own page.
-If the checker shows it working on the home feed but not the channel page, the processing
-approach needs to change. The report will tell you clearly.
+**Confirmed behavior (as of 2026-03-05):** "Don't recommend channel" appears **only** in the home feed. It does not appear in search results, on channel pages, or on the video watch page. The tool's home feed scanner reflects this.
 
 Exit code is 0 if the target option was found, 1 if not — suitable for scripting:
 
 ```bash
-# Run check monthly and log the result
+# Run check monthly and alert on failure
 0 0 1 * * cd /path/to/yt-dont-recommend && python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 ```
 
