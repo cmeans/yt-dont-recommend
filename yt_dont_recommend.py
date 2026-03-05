@@ -536,6 +536,7 @@ def process_channels(channels: list[str], source: str,
 
         blocked_count = 0
         no_progress_scrolls = 0
+        seen_paths: set[str] = set()
 
         while True:
             if limit and blocked_count >= limit:
@@ -561,6 +562,10 @@ def process_channels(channels: list[str], source: str,
 
                 href = channel_link.get_attribute("href") or ""
                 path = href.split("?")[0].rstrip("/")
+                if path.lower() in seen_paths:
+                    continue
+                seen_paths.add(path.lower())
+                logging.debug(f"Feed card channel: {path}")
                 canonical = channel_lookup.get(path.lower())
                 if not canonical or canonical in processed_set:
                     continue
