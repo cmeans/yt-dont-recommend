@@ -76,9 +76,9 @@ BUILTIN_SOURCES = {
     },
     "aislist": {
         "name": "AiSList",
-        "url": "https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/blacklist.json",
-        "format": "json",
-        "description": "Community-maintained list from AiBlock extension",
+        "url": "https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/aislist_blocklist.txt",
+        "format": "text",
+        "description": "Community-maintained list from AiSList (~8400+ channels, ! comments)",
     },
 }
 
@@ -173,45 +173,67 @@ def save_state(state: dict):
 # --- Blocklist Fetching ---
 
 def parse_text_blocklist(raw: str) -> list[str]:
-    """Parse plain text blocklist: one channel path per line, # comments."""
+    """Parse plain text blocklist: one channel path per line.
+
+    Supports # and ! comment prefixes. Normalizes all variants to canonical
+    form: @handle for handles, UCxxx for channel IDs.
+    """
     channels = []
     for line in raw.splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith("#") or line.startswith("!"):
             continue
+        # Strip leading slash: /@handle → @handle
+        if line.startswith("/@"):
+            line = line[1:]
+        # Strip /channel/ prefix: /channel/UCxxx → UCxxx
+        elif line.startswith("/channel/"):
+            line = line[len("/channel/"):]
         channels.append(line)
     return channels
 
 
 def parse_json_blocklist(raw: str) -> list[str]:
-    """Parse JSON blocklist. Handles several common formats."""
+    """Parse JSON blocklist. Handles several common formats.
+
+    All results are normalized to canonical form: @handle or UCxxx.
+    """
     channels = []
     try:
         data = json.loads(raw)
         if isinstance(data, list):
             for entry in data:
                 if isinstance(entry, str):
+                    # Normalize /@handle → @handle, /channel/UCxxx → UCxxx
+                    if entry.startswith("/@"):
+                        entry = entry[1:]
+                    elif entry.startswith("/channel/"):
+                        entry = entry[len("/channel/"):]
                     channels.append(entry)
                 elif isinstance(entry, dict):
                     for key in ("channelHandle", "handle", "channelId", "id", "url"):
                         if key in entry:
                             val = entry[key]
                             if val.startswith("http"):
-                                path = urlparse(val).path
-                                channels.append(path)
+                                path = urlparse(val).path  # e.g. /@handle
+                                if path.startswith("/@"):
+                                    val = path[1:]
+                                elif path.startswith("/channel/"):
+                                    val = path[len("/channel/"):]
+                                else:
+                                    val = path
                             elif val.startswith("UC"):
-                                channels.append(f"/channel/{val}")
+                                pass  # already canonical
                             elif val.startswith("@"):
-                                channels.append(f"/@{val.lstrip('@')}")
-                            else:
-                                channels.append(val)
+                                pass  # already canonical
+                            channels.append(val)
                             break
         elif isinstance(data, dict):
             for key in data:
                 if key.startswith("UC"):
-                    channels.append(f"/channel/{key}")
+                    channels.append(key)
                 elif key.startswith("@"):
-                    channels.append(f"/@{key.lstrip('@')}")
+                    channels.append(key)
     except json.JSONDecodeError:
         logging.warning("Failed to parse as JSON; falling back to line-by-line text parsing")
         channels = parse_text_blocklist(raw)
@@ -220,8 +242,11 @@ def parse_json_blocklist(raw: str) -> list[str]:
 
 def fetch_remote(url: str) -> str:
     req = Request(url, headers={"User-Agent": "yt-dont-recommend/1.0"})
-    with urlopen(req, timeout=30) as resp:
-        return resp.read().decode("utf-8")
+    try:
+        with urlopen(req, timeout=30) as resp:
+            return resp.read().decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch {url}: {e}") from e
 
 
 def resolve_source(source: str) -> list[str]:
@@ -259,10 +284,15 @@ def resolve_source(source: str) -> list[str]:
     return channels
 
 
-def channel_to_url(channel_path: str) -> str:
-    if channel_path.startswith("http"):
-        return channel_path
-    return f"https://www.youtube.com{channel_path}"
+def channel_to_url(channel: str) -> str:
+    """Convert a canonical channel identifier to a full YouTube URL."""
+    if channel.startswith("http"):
+        return channel
+    if channel.startswith("@"):
+        return f"https://www.youtube.com/{channel}"
+    if channel.startswith("UC"):
+        return f"https://www.youtube.com/channel/{channel}"
+    return f"https://www.youtube.com/{channel}"
 
 
 # --- Browser Automation ---
@@ -413,7 +443,7 @@ def check_removals(state: dict, current_channels: list[str],
 def fetch_subscriptions(page) -> set[str]:
     """
     Scrape the YouTube subscriptions management page and return a set of
-    lowercased channel paths (/@handle or /channel/UCxxx).
+    lowercased canonical channel IDs (@handle or UCxxx).
 
     Returns an empty set if the page cannot be parsed, with a warning logged.
     """
@@ -433,8 +463,10 @@ def fetch_subscriptions(page) -> set[str]:
         )
         for link in links:
             href = (link.get_attribute("href") or "").split("?")[0].rstrip("/")
-            if href.startswith("/@") or href.startswith("/channel/"):
-                subscriptions.add(href.lower())
+            if href.startswith("/@"):
+                subscriptions.add(href[1:].lower())  # /@handle → @handle
+            elif href.startswith("/channel/"):
+                subscriptions.add(href[len("/channel/"):].lower())  # /channel/UCxxx → UCxxx
 
         if len(subscriptions) == prev_count:
             break  # no new channels loaded after scroll
@@ -483,9 +515,10 @@ def process_channels(channels: list[str], source: str,
         processed_set = set(state["processed"])  # refresh after removals
 
     unblocked = {c for c in channels if c not in processed_set}
+    already_done = len(channels) - len(unblocked)
     logging.info(
         f"{len(channels)} channels in blocklist, "
-        f"{len(processed_set)} already blocked, "
+        f"{already_done} already blocked, "
         f"{len(unblocked)} remaining"
     )
 
@@ -561,7 +594,14 @@ def process_channels(channels: list[str], source: str,
                     continue
 
                 href = channel_link.get_attribute("href") or ""
-                path = href.split("?")[0].rstrip("/")
+                raw_path = href.split("?")[0].rstrip("/")
+                # Normalize to canonical form: @handle or UCxxx
+                if raw_path.startswith("/@"):
+                    path = raw_path[1:]  # /@handle → @handle
+                elif raw_path.startswith("/channel/"):
+                    path = raw_path[len("/channel/"):]  # /channel/UCxxx → UCxxx
+                else:
+                    continue
                 if path.lower() in seen_paths:
                     continue
                 seen_paths.add(path.lower())
@@ -1100,7 +1140,11 @@ def main():
     for source in sources:
         if len(sources) > 1:
             logging.info(f"--- Source: {source} ---")
-        channels = resolve_source(source)
+        try:
+            channels = resolve_source(source)
+        except RuntimeError as e:
+            logging.error(f"Could not load source '{source}': {e} — skipping.")
+            continue
         if not channels:
             logging.warning(f"No channels found for source '{source}' — skipping.")
             continue

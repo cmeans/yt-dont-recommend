@@ -80,8 +80,8 @@ This file is loaded automatically on every run — no flag required. The format 
 
 ```
 # Channels I want to keep despite being on community lists
-/@SomeChannel
-/@AnotherChannel
+@SomeChannel
+@AnotherChannel
 ```
 
 To use a different file instead (or a remote URL), pass `--exclude`:
@@ -117,9 +117,9 @@ Plain text, one channel path per line. Comments start with `#`.
 
 ```
 # My custom blocklist
-/@SomeHandle
-/@AnotherChannel
-/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx
+@SomeHandle
+@AnotherChannel
+UCxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 This format is shared with the [DeSlop](https://github.com/NikoboiNFTB/DeSlop) project. You can point `--source` at any file or URL using this format, or at JSON files using common channel object schemas.

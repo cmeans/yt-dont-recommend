@@ -118,9 +118,9 @@ The interchange format is plain text:
 # Comments start with #
 # Blank lines are ignored
 # Entries are YouTube channel paths:
-/@SomeHandle
-/@AnotherChannel
-/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx
+@SomeHandle
+@AnotherChannel
+UCxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 This matches the DeSlop format and is trivial to create, share, and parse.

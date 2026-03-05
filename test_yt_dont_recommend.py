@@ -26,23 +26,35 @@ import yt_dont_recommend as ydr
 class TestParseTextBlocklist:
     def test_basic_handles(self):
         raw = "/@channel1\n/@channel2\n"
-        assert ydr.parse_text_blocklist(raw) == ["/@channel1", "/@channel2"]
+        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
+
+    def test_bare_at_handles(self):
+        raw = "@channel1\n@channel2\n"
+        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
 
     def test_channel_id_format(self):
         raw = "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx\n"
-        assert ydr.parse_text_blocklist(raw) == ["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        assert ydr.parse_text_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+
+    def test_bare_channel_id_format(self):
+        raw = "UCxxxxxxxxxxxxxxxxxxxxxxxx\n"
+        assert ydr.parse_text_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
 
     def test_comments_ignored(self):
         raw = "# this is a comment\n/@channel1\n# another comment\n"
-        assert ydr.parse_text_blocklist(raw) == ["/@channel1"]
+        assert ydr.parse_text_blocklist(raw) == ["@channel1"]
+
+    def test_exclamation_comments_ignored(self):
+        raw = "! this is an aislist comment\n@channel1\n"
+        assert ydr.parse_text_blocklist(raw) == ["@channel1"]
 
     def test_blank_lines_ignored(self):
         raw = "\n/@channel1\n\n\n/@channel2\n\n"
-        assert ydr.parse_text_blocklist(raw) == ["/@channel1", "/@channel2"]
+        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
 
     def test_whitespace_stripped(self):
         raw = "  /@channel1  \n  /@channel2  \n"
-        assert ydr.parse_text_blocklist(raw) == ["/@channel1", "/@channel2"]
+        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
 
     def test_empty_string(self):
         assert ydr.parse_text_blocklist("") == []
@@ -60,11 +72,11 @@ class TestParseTextBlocklist:
             "# end\n"
         )
         result = ydr.parse_text_blocklist(raw)
-        assert result == ["/@HandleChannel", "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        assert result == ["@HandleChannel", "UCxxxxxxxxxxxxxxxxxxxxxxxx"]
 
     def test_no_trailing_newline(self):
         raw = "/@channel1"
-        assert ydr.parse_text_blocklist(raw) == ["/@channel1"]
+        assert ydr.parse_text_blocklist(raw) == ["@channel1"]
 
 
 # ---------------------------------------------------------------------------
@@ -73,38 +85,38 @@ class TestParseTextBlocklist:
 
 class TestParseJsonBlocklist:
     def test_list_of_strings(self):
-        raw = json.dumps(["/@channel1", "/@channel2"])
-        assert ydr.parse_json_blocklist(raw) == ["/@channel1", "/@channel2"]
+        raw = json.dumps(["@channel1", "@channel2"])
+        assert ydr.parse_json_blocklist(raw) == ["@channel1", "@channel2"]
 
     def test_list_of_dicts_channel_handle_key(self):
         raw = json.dumps([{"channelHandle": "@channel1"}])
-        assert ydr.parse_json_blocklist(raw) == ["/@channel1"]
+        assert ydr.parse_json_blocklist(raw) == ["@channel1"]
 
     def test_list_of_dicts_handle_key(self):
         raw = json.dumps([{"handle": "@channel2"}])
-        assert ydr.parse_json_blocklist(raw) == ["/@channel2"]
+        assert ydr.parse_json_blocklist(raw) == ["@channel2"]
 
     def test_list_of_dicts_channel_id_uc_prefix(self):
         raw = json.dumps([{"channelId": "UCxxxxxxxxxxxxxxxxxxxxxxxx"}])
-        assert ydr.parse_json_blocklist(raw) == ["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
 
     def test_list_of_dicts_full_youtube_url(self):
         raw = json.dumps([{"url": "https://www.youtube.com/@channel1"}])
-        assert ydr.parse_json_blocklist(raw) == ["/@channel1"]
+        assert ydr.parse_json_blocklist(raw) == ["@channel1"]
 
     def test_list_of_dicts_key_priority_order(self):
         # channelHandle should be preferred over handle, id, etc.
         raw = json.dumps([{"channelHandle": "@preferred", "handle": "@ignored", "id": "also-ignored"}])
         result = ydr.parse_json_blocklist(raw)
-        assert result == ["/@preferred"]
+        assert result == ["@preferred"]
 
     def test_dict_keyed_by_channel_id(self):
         raw = json.dumps({"UCxxxxxxxxxxxxxxxxxxxxxxxx": {"name": "Some Channel"}})
-        assert ydr.parse_json_blocklist(raw) == ["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
 
     def test_dict_keyed_by_at_handle(self):
         raw = json.dumps({"@channel1": {"name": "Channel One"}})
-        assert ydr.parse_json_blocklist(raw) == ["/@channel1"]
+        assert ydr.parse_json_blocklist(raw) == ["@channel1"]
 
     def test_dict_mixed_keys(self):
         raw = json.dumps({
@@ -113,15 +125,15 @@ class TestParseJsonBlocklist:
             "unrelated-key": {},  # should be skipped
         })
         result = ydr.parse_json_blocklist(raw)
-        assert "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx" in result
-        assert "/@handleChannel" in result
+        assert "UCxxxxxxxxxxxxxxxxxxxxxxxx" in result
+        assert "@handleChannel" in result
         assert len(result) == 2  # unrelated key skipped
 
     def test_invalid_json_falls_back_to_text_parse(self):
         # If JSON parsing fails, it should fall back to treating content as plain text
         raw = "/@channel1\n/@channel2\n"
         result = ydr.parse_json_blocklist(raw)
-        assert result == ["/@channel1", "/@channel2"]
+        assert result == ["@channel1", "@channel2"]
 
     def test_empty_list(self):
         assert ydr.parse_json_blocklist("[]") == []
@@ -131,12 +143,12 @@ class TestParseJsonBlocklist:
 
     def test_list_mixed_strings_and_dicts(self):
         raw = json.dumps([
-            "/@string-channel",
+            "@string-channel",
             {"channelId": "UCxxxxxxxxxxxxxxxxxxxxxxxx"},
         ])
         result = ydr.parse_json_blocklist(raw)
-        assert "/@string-channel" in result
-        assert "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx" in result
+        assert "@string-channel" in result
+        assert "UCxxxxxxxxxxxxxxxxxxxxxxxx" in result
 
 
 # ---------------------------------------------------------------------------
@@ -145,10 +157,10 @@ class TestParseJsonBlocklist:
 
 class TestChannelToUrl:
     def test_handle_path(self):
-        assert ydr.channel_to_url("/@SomeChannel") == "https://www.youtube.com/@SomeChannel"
+        assert ydr.channel_to_url("@SomeChannel") == "https://www.youtube.com/@SomeChannel"
 
     def test_channel_id_path(self):
-        assert ydr.channel_to_url("/channel/UCxxx") == "https://www.youtube.com/channel/UCxxx"
+        assert ydr.channel_to_url("UCxxx") == "https://www.youtube.com/channel/UCxxx"
 
     def test_already_full_url_passthrough(self):
         url = "https://www.youtube.com/@SomeChannel"
@@ -174,12 +186,12 @@ class TestStateManagement:
     def test_save_then_load_roundtrip(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
-        state["processed"].append("/@channel1")
+        state["processed"].append("@channel1")
         state["stats"]["success"] = 1
         ydr.save_state(state)
 
         loaded = ydr.load_state()
-        assert "/@channel1" in loaded["processed"]
+        assert "@channel1" in loaded["processed"]
         assert loaded["stats"]["success"] == 1
         assert loaded["last_run"] is not None
 
@@ -207,20 +219,20 @@ class TestResolveSource:
         f = tmp_path / "list.txt"
         f.write_text("/@channel1\n# comment\n/@channel2\n")
         result = ydr.resolve_source(str(f))
-        assert result == ["/@channel1", "/@channel2"]
+        assert result == ["@channel1", "@channel2"]
 
     def test_local_json_file(self, tmp_path):
         f = tmp_path / "list.json"
-        f.write_text(json.dumps(["/@channel1", "/@channel2"]))
+        f.write_text(json.dumps(["@channel1", "@channel2"]))
         result = ydr.resolve_source(str(f))
-        assert result == ["/@channel1", "/@channel2"]
+        assert result == ["@channel1", "@channel2"]
 
     def test_local_file_tilde_expansion(self, tmp_path, monkeypatch):
         # ~ should be expanded to home dir; fake it by using an absolute path
         f = tmp_path / "list.txt"
         f.write_text("/@channel1\n")
         result = ydr.resolve_source(str(f))
-        assert result == ["/@channel1"]
+        assert result == ["@channel1"]
 
     def test_missing_local_file_exits(self):
         with pytest.raises(SystemExit) as exc_info:
@@ -231,39 +243,40 @@ class TestResolveSource:
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
             mock_fetch.return_value = "/@channel1\n# comment\n/@channel2\n"
             result = ydr.resolve_source("deslop")
-        assert result == ["/@channel1", "/@channel2"]
+        assert result == ["@channel1", "@channel2"]
         mock_fetch.assert_called_once_with(ydr.BUILTIN_SOURCES["deslop"]["url"])
 
     def test_builtin_source_aislist_fetches_and_parses(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = json.dumps(["/@channel1"])
+            # AiSList uses plain text with ! comments and bare @handle entries
+            mock_fetch.return_value = "! comment\n@channel1\n@channel2\n"
             result = ydr.resolve_source("aislist")
-        assert result == ["/@channel1"]
+        assert result == ["@channel1", "@channel2"]
         mock_fetch.assert_called_once_with(ydr.BUILTIN_SOURCES["aislist"]["url"])
 
     def test_remote_url_text(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
             mock_fetch.return_value = "/@channel1\n/@channel2\n"
             result = ydr.resolve_source("https://example.com/list.txt")
-        assert result == ["/@channel1", "/@channel2"]
+        assert result == ["@channel1", "@channel2"]
 
     def test_remote_url_json_sniffed_by_leading_bracket(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = json.dumps(["/@channel1"])
+            mock_fetch.return_value = json.dumps(["@channel1"])
             result = ydr.resolve_source("https://example.com/list.json")
-        assert result == ["/@channel1"]
+        assert result == ["@channel1"]
 
     def test_remote_url_json_sniffed_by_leading_brace(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
             mock_fetch.return_value = json.dumps({"UCxxxxxxxxxxxxxxxxxxxxxxxx": {}})
             result = ydr.resolve_source("https://example.com/channels.json")
-        assert result == ["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        assert result == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
 
     def test_http_url_also_accepted(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
             mock_fetch.return_value = "/@channel1\n"
             result = ydr.resolve_source("http://example.com/list.txt")
-        assert result == ["/@channel1"]
+        assert result == ["@channel1"]
 
     def test_unknown_string_treated_as_file_path(self):
         # A string that's not a built-in key and not http(s):// should be
@@ -297,55 +310,55 @@ class TestCheckRemovals:
 
     def test_unblocks_channel_removed_from_sole_source(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = self._state({"/@gone": ["deslop"]})
+        state = self._state({"@gone": ["deslop"]})
         n = ydr.check_removals(state, [], "deslop", "all")
         assert n == 1
-        assert "/@gone" not in state["processed"]
-        assert "/@gone" not in state["blocked_by"]
+        assert "@gone" not in state["processed"]
+        assert "@gone" not in state["blocked_by"]
 
     def test_all_policy_keeps_block_when_other_source_still_present(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = self._state({"/@channel": ["deslop", "aislist"]})
+        state = self._state({"@channel": ["deslop", "aislist"]})
         n = ydr.check_removals(state, [], "deslop", "all")
         assert n == 0
-        assert "/@channel" in state["processed"]
+        assert "@channel" in state["processed"]
         # deslop removed from sources list, aislist still there
-        assert state["blocked_by"]["/@channel"]["sources"] == ["aislist"]
+        assert state["blocked_by"]["@channel"]["sources"] == ["aislist"]
 
     def test_any_policy_unblocks_even_with_other_sources(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = self._state({"/@channel": ["deslop", "aislist"]})
+        state = self._state({"@channel": ["deslop", "aislist"]})
         n = ydr.check_removals(state, [], "deslop", "any")
         assert n == 1
-        assert "/@channel" not in state["processed"]
-        assert "/@channel" not in state["blocked_by"]
+        assert "@channel" not in state["processed"]
+        assert "@channel" not in state["blocked_by"]
 
     def test_channel_still_in_list_is_not_touched(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = self._state({"/@still-there": ["deslop"]})
-        n = ydr.check_removals(state, ["/@still-there"], "deslop", "all")
+        state = self._state({"@still-there": ["deslop"]})
+        n = ydr.check_removals(state, ["@still-there"], "deslop", "all")
         assert n == 0
-        assert "/@still-there" in state["processed"]
+        assert "@still-there" in state["processed"]
 
     def test_channel_from_different_source_not_affected(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = self._state({"/@channel": ["aislist"]})
+        state = self._state({"@channel": ["aislist"]})
         # Running deslop — aislist channel not in deslop, but deslop didn't block it
         n = ydr.check_removals(state, [], "deslop", "all")
         assert n == 0
-        assert "/@channel" in state["processed"]
+        assert "@channel" in state["processed"]
 
     def test_check_removals_is_case_insensitive(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = self._state({"/@Channel": ["deslop"]})
+        state = self._state({"@Channel": ["deslop"]})
         # Current list has different casing — should still be recognised as present
-        n = ydr.check_removals(state, ["/@channel"], "deslop", "all")
+        n = ydr.check_removals(state, ["@channel"], "deslop", "all")
         assert n == 0
 
     def test_load_state_backward_compat_adds_missing_fields(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         # Write an old-style state without the new fields
-        old_state = {"processed": ["/@ch"], "last_run": None, "stats": {}}
+        old_state = {"processed": ["@ch"], "last_run": None, "stats": {}}
         (tmp_path / "processed.json").write_text(json.dumps(old_state))
         state = ydr.load_state()
         assert "blocked_by" in state
@@ -365,36 +378,36 @@ class TestExcludeFiltering:
         return [c for c in channels if c.lower() not in exclude_set]
 
     def test_excluded_channel_removed(self):
-        channels = ["/@keep", "/@remove", "/@also-keep"]
-        result = self._apply_exclude(channels, "/@remove\n")
-        assert result == ["/@keep", "/@also-keep"]
+        channels = ["@keep", "@remove", "@also-keep"]
+        result = self._apply_exclude(channels, "@remove\n")
+        assert result == ["@keep", "@also-keep"]
 
     def test_exclude_is_case_insensitive(self):
-        channels = ["/@SomeChannel"]
-        result = self._apply_exclude(channels, "/@somechannel\n")
+        channels = ["@SomeChannel"]
+        result = self._apply_exclude(channels, "@somechannel\n")
         assert result == []
 
     def test_exclude_with_comments_and_blanks(self):
-        channels = ["/@a", "/@b", "/@c"]
-        result = self._apply_exclude(channels, "# exclude b\n\n/@b\n")
-        assert result == ["/@a", "/@c"]
+        channels = ["@a", "@b", "@c"]
+        result = self._apply_exclude(channels, "# exclude b\n\n@b\n")
+        assert result == ["@a", "@c"]
 
     def test_empty_exclude_list_changes_nothing(self):
-        channels = ["/@a", "/@b"]
+        channels = ["@a", "@b"]
         result = self._apply_exclude(channels, "# just comments\n\n")
-        assert result == ["/@a", "/@b"]
+        assert result == ["@a", "@b"]
 
     def test_exclude_channel_id_format(self):
-        channels = ["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx", "/@keep"]
-        result = self._apply_exclude(channels, "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx\n")
-        assert result == ["/@keep"]
+        channels = ["UCxxxxxxxxxxxxxxxxxxxxxxxx", "@keep"]
+        result = self._apply_exclude(channels, "UCxxxxxxxxxxxxxxxxxxxxxxxx\n")
+        assert result == ["@keep"]
 
     def test_exclude_all_channels(self):
-        channels = ["/@a", "/@b"]
-        result = self._apply_exclude(channels, "/@a\n/@b\n")
+        channels = ["@a", "@b"]
+        result = self._apply_exclude(channels, "@a\n@b\n")
         assert result == []
 
     def test_exclude_nonexistent_channel_is_noop(self):
-        channels = ["/@a", "/@b"]
-        result = self._apply_exclude(channels, "/@not-in-list\n")
-        assert result == ["/@a", "/@b"]
+        channels = ["@a", "@b"]
+        result = self._apply_exclude(channels, "@nothere\n")
+        assert result == ["@a", "@b"]
