@@ -61,7 +61,7 @@ import sys
 import time
 from datetime import datetime, date
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from urllib.request import urlopen, Request
 
 # --- Configuration ---
@@ -108,7 +108,8 @@ VIDEO_SELECTORS = [
     "#contents ytd-rich-grid-row",
 ]
 MENU_BTN_SELECTORS = [
-    "button[aria-label='Action menu']",
+    "button[aria-label='More actions']",                        # home feed and search results
+    "button[aria-label='Action menu']",                         # channel pages
     "button.yt-icon-button#button[aria-label='Action menu']",
     "yt-icon-button#button[aria-label='Action menu']",
     "ytd-menu-renderer yt-icon-button",
@@ -279,57 +280,37 @@ def do_login():
     logging.info("Login session saved. You can now run without --login.")
 
 
-def _find_menu_btn(video_element):
-    """Find the three-dot menu button within a video element. Returns element or None."""
+def _find_menu_btn(card):
+    """Find the 'More actions' menu button within a feed card. Returns element or None."""
     for sel in MENU_BTN_SELECTORS:
-        btn = video_element.query_selector(sel)
+        btn = card.query_selector(sel)
         if btn:
             return btn
-    # Fallback: any button whose aria-label contains action/menu/more
-    for btn in video_element.query_selector_all("button"):
+    # Fallback: any button whose aria-label contains 'action', 'menu', or 'more'
+    for btn in card.query_selector_all("button"):
         label = (btn.get_attribute("aria-label") or "").lower()
         if any(w in label for w in ("action", "menu", "more")):
             return btn
     return None
 
 
-def dont_recommend_channel(page, channel_url: str, channel_id: str) -> bool:
+def _click_dont_recommend(page, card) -> bool:
     """
-    Navigate to a channel's /videos page, find a video, and click
-    'Don't recommend channel' from its context menu.
+    Click 'Don't recommend channel' on a home feed card.
 
-    NOTE: These selectors have not been verified against a live YouTube page.
-    YouTube changes its DOM frequently. Run --check-selectors first to confirm
-    everything works before bulk processing.
+    'Don't recommend channel' only appears in recommendation feed contexts
+    (home feed, subscription feed). It does NOT appear in search results,
+    on channel pages, or on video watch pages — confirmed 2026-03-05.
 
-    Returns True if successful, False if skipped.
+    Returns True if the option was found and clicked, False otherwise.
     """
-    videos_url = channel_url.rstrip("/") + "/videos"
-    page.goto(videos_url, wait_until="domcontentloaded")
-    time.sleep(PAGE_LOAD_WAIT)
-
-    error_el = page.query_selector("#error-page, [class*='error']")
-    if error_el:
-        logging.debug(f"Error page for: {channel_url}")
-        return False
-
-    video_element = None
-    for selector in VIDEO_SELECTORS:
-        video_element = page.query_selector(selector)
-        if video_element:
-            break
-
-    if not video_element:
-        logging.debug(f"No videos found on {channel_url}")
-        return False
-
-    video_element.scroll_into_view_if_needed()
-    video_element.hover()
+    card.scroll_into_view_if_needed()
+    card.hover()
     time.sleep(0.5)
 
-    menu_btn = _find_menu_btn(video_element)
+    menu_btn = _find_menu_btn(card)
     if not menu_btn:
-        logging.debug(f"Could not find menu button on {channel_url}")
+        logging.debug("Could not find menu button on feed card")
         return False
 
     menu_btn.click()
@@ -344,7 +325,6 @@ def dont_recommend_channel(page, channel_url: str, channel_id: str) -> bool:
 
     if not target_item:
         page.keyboard.press("Escape")
-        logging.debug(f"'Don't recommend channel' not found in menu for {channel_url}")
         return False
 
     target_item.click()
@@ -353,41 +333,51 @@ def dont_recommend_channel(page, channel_url: str, channel_id: str) -> bool:
 
 
 def process_channels(channels: list[str], dry_run: bool = False,
-                     limit: int | None = None, resume_from: str | None = None,
-                     headless: bool = False):
+                     limit: int | None = None, headless: bool = False):
     """
-    For each channel in the list, navigate to its page, find a video,
-    and trigger 'Don't recommend channel'.
+    Scan the YouTube home feed and click 'Don't recommend channel' on any
+    card whose channel is in the blocklist.
+
+    The feed is scrolled repeatedly to load new cards. Stops when the limit
+    is reached, the feed is exhausted, or no blocklist channels have appeared
+    after MAX_NO_PROGRESS_SCROLLS consecutive scrolls.
+
+    Note: this only acts on channels YouTube is actively recommending to you.
+    Channels not currently in your feed are not being recommended and don't
+    need blocking. Run again periodically — as YouTube's algorithm adapts,
+    fewer blocklisted channels will appear.
     """
     from playwright.sync_api import sync_playwright
+
+    MAX_NO_PROGRESS_SCROLLS = 20   # stop after this many scrolls with no new blocks
 
     state = load_state()
     processed_set = set(state["processed"])
 
-    remaining = [c for c in channels if c not in processed_set]
-    logging.info(f"{len(channels)} total, {len(processed_set)} already processed, {len(remaining)} remaining")
+    unblocked = {c for c in channels if c not in processed_set}
+    logging.info(
+        f"{len(channels)} channels in blocklist, "
+        f"{len(processed_set)} already blocked, "
+        f"{len(unblocked)} remaining"
+    )
 
-    if resume_from:
-        try:
-            idx = remaining.index(resume_from)
-            remaining = remaining[idx:]
-            logging.info(f"Resuming from {resume_from}, {len(remaining)} channels left")
-        except ValueError:
-            logging.warning(f"Channel {resume_from} not found in remaining list; processing all")
-
-    if limit:
-        remaining = remaining[:limit]
-        logging.info(f"Limited to {limit} channels")
-
-    if not remaining:
-        logging.info("Nothing to process!")
+    if not unblocked:
+        logging.info("All channels in the blocklist have already been blocked.")
         return
 
     if dry_run:
-        logging.info("DRY RUN — would process these channels:")
-        for ch in remaining:
-            logging.info(f"  {channel_to_url(ch)}")
+        logging.info(
+            "DRY RUN — blocklist loaded. Will scan home feed and block any of these "
+            f"{len(unblocked)} channels that appear:"
+        )
+        for ch in sorted(unblocked)[:20]:
+            logging.info(f"  {ch}")
+        if len(unblocked) > 20:
+            logging.info(f"  ... and {len(unblocked) - 20} more")
         return
+
+    # Build lookup: lowercased channel path → original path (for case-insensitive matching)
+    channel_lookup = {c.lower(): c for c in unblocked}
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -409,50 +399,112 @@ def process_channels(channels: list[str], dry_run: bool = False,
             context.close()
             return
 
-        logging.info("Logged in. Starting to process channels...")
+        logging.info("Logged in. Scanning home feed for blocklisted channels...")
 
-        for i, channel_path in enumerate(remaining):
-            channel_url = channel_to_url(channel_path)
+        blocked_count = 0
+        no_progress_scrolls = 0
 
-            try:
-                success = dont_recommend_channel(page, channel_url, channel_path)
+        while True:
+            if limit and blocked_count >= limit:
+                logging.info(f"Reached limit of {limit} channels blocked.")
+                break
+            if no_progress_scrolls >= MAX_NO_PROGRESS_SCROLLS:
+                logging.info(
+                    f"No blocklisted channels found after {no_progress_scrolls} "
+                    "consecutive scrolls — feed exhausted for this run."
+                )
+                break
+
+            cards = page.query_selector_all("ytd-rich-item-renderer")
+            found_match_this_pass = False
+
+            for card in cards:
+                if limit and blocked_count >= limit:
+                    break
+
+                # Find the channel link within this feed card
+                channel_link = card.query_selector(
+                    "a[href^='/@'], a[href^='/channel/UC']"
+                )
+                if not channel_link:
+                    continue
+
+                href = channel_link.get_attribute("href") or ""
+                # Strip query params (some hrefs have ?sub_confirmation=1 etc.)
+                path = href.split("?")[0].rstrip("/")
+                canonical = channel_lookup.get(path.lower())
+                if not canonical or canonical in processed_set:
+                    continue
+
+                # Found a blocklisted channel in the feed
+                logging.info(f"Found in feed: {canonical} — clicking 'Don't recommend channel'...")
+                try:
+                    success = _click_dont_recommend(page, card)
+                except Exception as e:
+                    logging.error(f"FAIL {canonical}: {e}")
+                    state["stats"]["failed"] += 1
+                    save_state(state)
+                    continue
 
                 if success:
-                    state["processed"].append(channel_path)
+                    state["processed"].append(canonical)
+                    processed_set.add(canonical)
                     state["stats"]["success"] += 1
-                    logging.info(f"[{i+1}/{len(remaining)}] OK {channel_path}")
+                    blocked_count += 1
+                    found_match_this_pass = True
+                    logging.info(f"[{blocked_count}] OK {canonical}")
+                    save_state(state)
+
+                    # Rate limiting
+                    if blocked_count % LONG_PAUSE_EVERY == 0:
+                        logging.info(f"Taking a {LONG_PAUSE_SECONDS}s break...")
+                        time.sleep(LONG_PAUSE_SECONDS)
+                    else:
+                        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+
+                    # The DOM changes after blocking — break and rescan
+                    break
                 else:
                     state["stats"]["skipped"] += 1
-                    logging.warning(f"[{i+1}/{len(remaining)}] SKIP {channel_path} (menu option not found)")
+                    logging.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
+                    save_state(state)
 
-            except Exception as e:
-                state["stats"]["failed"] += 1
-                logging.error(f"[{i+1}/{len(remaining)}] FAIL {channel_path}: {e}")
-
-            save_state(state)
-
-            if (i + 1) % LONG_PAUSE_EVERY == 0:
-                logging.info(f"Taking a {LONG_PAUSE_SECONDS}s break to avoid rate limiting...")
-                time.sleep(LONG_PAUSE_SECONDS)
+            if found_match_this_pass:
+                no_progress_scrolls = 0
             else:
-                time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+                # No matches this pass — scroll to load more feed content
+                page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
+                time.sleep(2.0)
+                no_progress_scrolls += 1
 
         context.close()
 
-    logging.info(f"Done. Stats: {state['stats']}")
+    logging.info(f"Done. Blocked {blocked_count} channel(s) this run. Stats: {state['stats']}")
+
+
+def _screenshot(page, path: Path, pr):
+    """Take a screenshot, logging a warning if it fails (e.g. window minimized)."""
+    try:
+        page.mouse.move(0, 0)  # reset hover state before capturing
+        time.sleep(0.3)
+        page.screenshot(path=str(path))
+        pr(f"\nScreenshot: {path}")
+    except Exception as e:
+        pr(f"\nScreenshot skipped ({e})")
 
 
 def check_selectors(test_channel: str = "/@YouTube") -> bool:
     """
     Diagnostic mode: test whether the DOM selectors still work against live YouTube pages.
 
-    Tests two contexts:
-      1. YouTube home feed  — where "Don't recommend channel" most likely appears
-      2. A channel's /videos page  — where the current processing loop navigates
+    Tests confirmed working and non-working contexts (as of 2026-03-05):
+      1. Home feed        — WORKS. 'Don't recommend channel' appears here.
+      2. Search results   — DOES NOT WORK. Menu lacks the option.
+      3. Channel header   — DOES NOT WORK. No 'More actions' button exists.
+      4. Video watch page — DOES NOT WORK. Menu lacks the option.
 
-    This answers two questions at once: are the selectors correct, and does the
-    option actually appear in each context? If it only appears in the home feed,
-    the processing approach needs to change.
+    The option is exclusive to recommendation feed contexts. The processing
+    loop scans the home feed, which is the only viable automated approach.
 
     Saves a timestamped report and screenshots to ~/.yt-dont-recommend/.
     Returns True if the target option was found (exit code 0), False otherwise (exit code 1).
@@ -564,19 +616,170 @@ def check_selectors(test_channel: str = "/@YouTube") -> bool:
         pr("Login confirmed.")
 
         home_ok = test_context(page, "TEST 1: YouTube Home Feed")
-        page.screenshot(path=str(data_dir / f"check-home-{date_str}.png"))
-        pr(f"\nScreenshot: {data_dir / f'check-home-{date_str}.png'}")
+        _screenshot(page, data_dir / f"check-home-{date_str}.png", pr)
 
-        # Build channel /videos URL
+        # Test 2: search results (the context the processing loop actually uses)
         channel_path = test_channel if test_channel.startswith("/") else f"/{test_channel}"
-        channel_url = f"https://www.youtube.com{channel_path.rstrip('/')}/videos"
+        query = channel_path[1:] if channel_path.startswith("/@") else channel_path
+        search_url = f"https://www.youtube.com/results?search_query={quote(query)}"
+        pr(f"\nNavigating to: {search_url}")
+        page.goto(search_url, wait_until="domcontentloaded")
+        time.sleep(PAGE_LOAD_WAIT)
+
+        search_ok = test_context(page, f"TEST 2: Search Results ({test_channel})")
+        _screenshot(page, data_dir / f"check-search-{date_str}.png", pr)
+
+        # Test 3: channel header "more actions" button (next to Subscribe)
+        channel_url = f"https://www.youtube.com{channel_path}"
         pr(f"\nNavigating to: {channel_url}")
         page.goto(channel_url, wait_until="domcontentloaded")
         time.sleep(PAGE_LOAD_WAIT)
 
-        channel_ok = test_context(page, f"TEST 2: Channel /videos Page ({test_channel})")
-        page.screenshot(path=str(data_dir / f"check-channel-{date_str}.png"))
-        pr(f"\nScreenshot: {data_dir / f'check-channel-{date_str}.png'}")
+        pr(f"\n{'=' * 60}")
+        pr(f"  TEST 3: Channel Header Menu ({test_channel})")
+        pr(f"{'=' * 60}")
+
+        # Candidate selectors for the "⋮" button in the channel header
+        header_btn_selectors = [
+            "ytd-channel-header-renderer button[aria-label='More actions']",
+            "ytd-channel-header-renderer button[aria-label='More']",
+            "#channel-header-container button[aria-label='More actions']",
+            "#channel-header-container button[aria-label='More']",
+            "#channel-header ytd-button-renderer:last-child button",
+            "ytd-channel-header-renderer ytd-button-renderer button",
+        ]
+
+        pr("\nChannel header button selectors:")
+        header_btn = None
+        for sel in header_btn_selectors:
+            btn = page.query_selector(sel)
+            pr(f"  {'FOUND' if btn else 'not found':20}  {sel}")
+            if btn and header_btn is None:
+                header_btn = btn
+
+        # If none found, dump every button with an aria-label so we can identify the right selector
+        if not header_btn:
+            pr("\n  Dumping all buttons with aria-label (to identify correct selector):")
+            for btn in page.query_selector_all("button[aria-label]"):
+                aria = btn.get_attribute("aria-label") or ""
+                # Walk up to find the nearest ancestor with an id or a known tag name
+                ancestor = btn.evaluate(
+                    "el => { let n = el; while(n) { if(n.id) return '#' + n.id;"
+                    " if(n.tagName && n.tagName.includes('-')) return n.tagName.toLowerCase();"
+                    " n = n.parentElement; } return 'unknown'; }"
+                )
+                pr(f"    [{ancestor}]  aria-label='{aria}'")
+
+        header_ok = False
+        if not header_btn:
+            pr("\n  Could not find channel header button.")
+        else:
+            header_btn.click()
+            time.sleep(1.0)
+
+            items = page.query_selector_all(MENU_ITEM_SELECTOR)
+            pr(f"\nMenu items ({len(items)} found):")
+            for item in items:
+                text = (item.inner_text() or "").strip()
+                if not text:
+                    continue
+                is_target = any(p in text.lower() for p in TARGET_PHRASES)
+                marker = "  <-- TARGET" if is_target else ""
+                pr(f"  - {text}{marker}")
+                if is_target:
+                    header_ok = True
+
+            page.keyboard.press("Escape")
+            time.sleep(0.3)
+
+            if not header_ok:
+                pr("\n  Target option not found in channel header menu.")
+
+        _screenshot(page, data_dir / f"check-header-{date_str}.png", pr)
+
+        # Test 4: video watch page — menu below the video title
+        pr(f"\n{'=' * 60}")
+        pr(f"  TEST 4: Video Watch Page Menu ({test_channel})")
+        pr(f"{'=' * 60}")
+
+        # Navigate to the channel's videos page to get a video link
+        videos_url = f"https://www.youtube.com{channel_path}/videos"
+        pr(f"\nNavigating to {videos_url} to find a video...")
+        page.goto(videos_url, wait_until="domcontentloaded")
+        time.sleep(PAGE_LOAD_WAIT)
+
+        # Grab the href of the first video link
+        video_link = page.query_selector("a#video-title-link, a#thumbnail[href*='/watch']")
+        watch_url = None
+        if video_link:
+            href = video_link.get_attribute("href") or ""
+            if href.startswith("/watch"):
+                watch_url = f"https://www.youtube.com{href}"
+            elif href.startswith("http"):
+                watch_url = href
+
+        watch_ok = False
+        if not watch_url:
+            pr("  Could not find a video link on the channel page.")
+        else:
+            pr(f"  Found video: {watch_url}")
+            page.goto(watch_url, wait_until="domcontentloaded")
+            time.sleep(PAGE_LOAD_WAIT + 1)  # video pages load slower
+
+            # The "..." menu below the video title (not the player controls)
+            watch_menu_selectors = [
+                "ytd-menu-renderer button[aria-label='More actions']",
+                "ytd-watch-metadata button[aria-label='More actions']",
+                "#actions button[aria-label='More actions']",
+                "#top-level-buttons-computed ~ ytd-menu-renderer button",
+                "ytd-watch-metadata ytd-menu-renderer button",
+            ]
+
+            pr("\nVideo page menu button selectors:")
+            watch_btn = None
+            for sel in watch_menu_selectors:
+                # Use locator to find a VISIBLE instance (multiple may exist in DOM)
+                loc = page.locator(sel).filter(has_not=page.locator("[hidden]"))
+                count = loc.count()
+                pr(f"  {'FOUND (' + str(count) + ')' if count else 'not found':20}  {sel}")
+                if count and watch_btn is None:
+                    # Pick the first visible one
+                    for i in range(count):
+                        candidate = loc.nth(i)
+                        try:
+                            if candidate.is_visible():
+                                watch_btn = candidate
+                                break
+                        except Exception:
+                            pass
+
+            if not watch_btn:
+                pr("\n  Could not find a visible video page menu button.")
+            else:
+                watch_btn.scroll_into_view_if_needed()
+                time.sleep(0.3)
+                watch_btn.click()
+                time.sleep(1.0)
+
+                items = page.query_selector_all(MENU_ITEM_SELECTOR)
+                pr(f"\nMenu items ({len(items)} found):")
+                for item in items:
+                    text = (item.inner_text() or "").strip()
+                    if not text:
+                        continue
+                    is_target = any(p in text.lower() for p in TARGET_PHRASES)
+                    marker = "  <-- TARGET" if is_target else ""
+                    pr(f"  - {text}{marker}")
+                    if is_target:
+                        watch_ok = True
+
+                page.keyboard.press("Escape")
+                time.sleep(0.3)
+
+                if not watch_ok:
+                    pr("\n  Target option not found in video page menu.")
+
+        _screenshot(page, data_dir / f"check-watch-{date_str}.png", pr)
 
         context.close()
 
@@ -584,20 +787,23 @@ def check_selectors(test_channel: str = "/@YouTube") -> bool:
     pr(f"\n{'=' * 60}")
     pr("  SUMMARY")
     pr(f"{'=' * 60}")
-    pr(f"  Home feed:    {'PASS' if home_ok else 'FAIL'}")
-    pr(f"  Channel page: {'PASS' if channel_ok else 'FAIL'}")
+    pr(f"  Home feed:      {'PASS' if home_ok else 'FAIL'}")
+    pr(f"  Search results: {'PASS' if search_ok else 'FAIL'}")
+    pr(f"  Channel header: {'PASS' if header_ok else 'FAIL'}")
+    pr(f"  Video page:     {'PASS' if watch_ok else 'FAIL'}")
 
-    if home_ok and not channel_ok:
-        pr("\n  ACTION NEEDED: The option is only available from the home feed,")
-        pr("  not from a channel's own /videos page. The processing loop needs")
-        pr("  to be redesigned to work from home feed recommendations instead.")
-    elif channel_ok:
-        pr("\n  Channel page approach works. The current implementation should function correctly.")
+    if watch_ok:
+        pr("\n  Video page approach works — navigate to a video from the channel,")
+        pr("  then use the menu below the video title.")
+    elif header_ok:
+        pr("\n  Channel header approach works — most efficient option.")
+        pr("  Navigate to channel page and use the header menu.")
+    elif search_ok:
+        pr("\n  Search results approach works.")
     elif home_ok:
-        pr("\n  Home feed works but channel page does not.")
-        pr("  Consider switching the processing approach to use home feed.")
+        pr("\n  Only the home feed works. The processing loop needs a feed-scanning approach.")
     else:
-        pr("\n  Target not found in either context.")
+        pr("\n  Target not found in any context.")
         pr("  Check the screenshots and menu item lists above, then update selectors.")
 
     report_path = data_dir / f"selector-check-{date_str}.txt"
@@ -633,9 +839,7 @@ def main():
         ),
     )
     parser.add_argument("--limit", type=int, default=None,
-                        help="Maximum number of channels to process this run")
-    parser.add_argument("--resume-from", type=str, default=None,
-                        help="Resume from this channel path (skips all channels before it)")
+                        help="Stop after blocking this many channels")
     parser.add_argument("--headless", action="store_true",
                         help="Run browser in headless mode (no visible window)")
     parser.add_argument("--verbose", action="store_true",
@@ -704,7 +908,6 @@ def main():
         channels,
         dry_run=args.dry_run,
         limit=args.limit,
-        resume_from=args.resume_from,
         headless=args.headless,
     )
 
