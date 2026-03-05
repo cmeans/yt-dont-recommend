@@ -56,6 +56,7 @@ License: MIT
 import argparse
 import json
 import logging
+import logging.handlers
 import random
 import sys
 import time
@@ -130,12 +131,15 @@ TARGET_PHRASES = ("don't recommend", "dont recommend")
 def setup_logging(verbose: bool = False):
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     level = logging.DEBUG if verbose else logging.INFO
+    file_handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=1 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    )
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(LOG_FILE, mode="a"),
+            file_handler,
         ],
     )
 
