@@ -59,6 +59,7 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 - **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs).
 - **Subscription protection**: `fetch_subscriptions(page)` scrapes `youtube.com/feed/channels`, returns a lowercase set of handles. Called once per run in `process_channels()`. Subscribed channels are skipped with a one-time WARNING logged and stored in `state["would_have_blocked"]`.
 - **Blocklist removal detection**: `check_removals()` runs at the start of each `process_channels()` call, compares the current list against `state["blocked_by"]`, and auto-unblocks channels no longer on the list, per `--unblock-policy`.
+- **Logging**: `RotatingFileHandler` — `run.log` caps at 1 MB with 5 backups (`run.log.1`–`run.log.5`).
 - **Rate limiting**: Random 3–7s delays between actions, 30s pause every 25 channels.
 
 ### State Schema

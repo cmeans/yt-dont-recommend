@@ -154,7 +154,7 @@ All data lives in `~/.yt-dont-recommend/`:
 |------|---------|
 | `browser-profile/` | Chromium profile with your login session |
 | `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings |
-| `run.log` | Timestamped log of all actions |
+| `run.log` | Timestamped log of all actions (rotates at 1 MB, 5 backups kept) |
 
 ## Caveats
 
