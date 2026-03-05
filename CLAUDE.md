@@ -98,7 +98,7 @@ def fetch_subscriptions(page) -> set[str]:
 | Flag | Description |
 |------|-------------|
 | `--login` | Open browser for Google account authentication |
-| `--source` | Blocklist: built-in name, local file path, or HTTP(S) URL |
+| `--source` | Blocklist: built-in name(s) (comma-separated), local file path, or HTTP(S) URL. Defaults to all built-in sources. |
 | `--exclude` | Exclusion list: local file path or HTTP(S) URL (not built-in names) |
 | `--limit N` | Stop after N channels |
 | `--dry-run` | Show what would be processed without acting |

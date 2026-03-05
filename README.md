@@ -29,18 +29,21 @@ python yt_dont_recommend.py --login
 # Dry run — see what channels would be processed
 python yt_dont_recommend.py --dry-run
 
-# Process channels from the default built-in list (DeSlop)
+# Process all built-in sources consecutively (default)
 python yt_dont_recommend.py
+
+# Use a specific built-in source
+python yt_dont_recommend.py --source deslop
+python yt_dont_recommend.py --source aislist
+
+# Use multiple sources explicitly (comma-separated)
+python yt_dont_recommend.py --source deslop,aislist
 
 # Use a local blocklist file
 python yt_dont_recommend.py --source /path/to/my-list.txt
 
 # Use a remote blocklist URL
 python yt_dont_recommend.py --source https://example.com/blocklist.txt
-
-# Use a specific built-in source
-python yt_dont_recommend.py --source deslop
-python yt_dont_recommend.py --source aislist
 
 # Process only 10 channels (good for first test)
 python yt_dont_recommend.py --limit 10
@@ -128,7 +131,7 @@ This format is shared with the [DeSlop](https://github.com/NikoboiNFTB/DeSlop) p
 | `deslop`  | DeSlop project (~130+ channels, plain text, actively maintained)  |
 | `aislist` | AiSList / AiBlock extension list (community JSON, broader)        |
 
-You can run multiple sources sequentially — the state tracker prevents re-processing the same channel twice.
+Running without `--source` processes all built-in sources consecutively. The state tracker prevents re-processing the same channel twice across sources or runs.
 
 ## How It Works
 

@@ -82,7 +82,7 @@ BUILTIN_SOURCES = {
     },
 }
 
-DEFAULT_SOURCE = "deslop"
+DEFAULT_SOURCES = list(BUILTIN_SOURCES.keys())  # run all built-in sources by default
 
 # Browser profile directory (persists login state between runs)
 PROFILE_DIR = Path.home() / ".yt-dont-recommend" / "browser-profile"
@@ -990,12 +990,12 @@ def main():
                         help="Fetch and display the blocklist without taking any action")
     parser.add_argument(
         "--source",
-        default=DEFAULT_SOURCE,
+        default=None,
         metavar="SOURCE",
         help=(
-            f"Blocklist source. Built-in names: {builtin_keys}. "
+            f"Blocklist source. Built-in names: {builtin_keys} (comma-separated for multiple). "
             "Also accepts a local file path or an HTTP/HTTPS URL. "
-            f"Default: {DEFAULT_SOURCE}. "
+            f"Defaults to all built-in sources ({', '.join(DEFAULT_SOURCES)}) when not specified. "
             "Text format: one channel path per line (/@handle or /channel/UCxxx), # for comments."
         ),
     )
@@ -1083,27 +1083,39 @@ def main():
         ok = check_selectors(args.test_channel)
         sys.exit(0 if ok else 1)
 
-    channels = resolve_source(args.source)
-    if not channels:
-        logging.error("No channels found. Check your source or its format.")
-        return
+    # Resolve which sources to run
+    if args.source is None:
+        sources = DEFAULT_SOURCES
+    else:
+        sources = [s.strip() for s in args.source.split(",")]
 
+    # Build exclusion set once (shared across all sources)
     exclude_source = args.exclude or (str(DEFAULT_EXCLUDE_FILE) if DEFAULT_EXCLUDE_FILE.exists() else None)
+    exclude_set: set[str] = set()
     if exclude_source:
         exclude_set = {c.lower() for c in resolve_source(exclude_source)}
-        before = len(channels)
-        channels = [c for c in channels if c.lower() not in exclude_set]
         label = "--exclude" if args.exclude else f"default exclude file ({DEFAULT_EXCLUDE_FILE})"
-        logging.info(f"Excluded {before - len(channels)} channel(s) via {label} ({len(channels)} remaining)")
+        logging.info(f"Loaded {len(exclude_set)} exclusion(s) via {label}")
 
-    process_channels(
-        channels,
-        source=args.source,
-        dry_run=args.dry_run,
-        limit=args.limit,
-        headless=args.headless,
-        unblock_policy=args.unblock_policy,
-    )
+    for source in sources:
+        if len(sources) > 1:
+            logging.info(f"--- Source: {source} ---")
+        channels = resolve_source(source)
+        if not channels:
+            logging.warning(f"No channels found for source '{source}' — skipping.")
+            continue
+        if exclude_set:
+            before = len(channels)
+            channels = [c for c in channels if c.lower() not in exclude_set]
+            logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
+        process_channels(
+            channels,
+            source=source,
+            dry_run=args.dry_run,
+            limit=args.limit,
+            headless=args.headless,
+            unblock_policy=args.unblock_policy,
+        )
 
 
 if __name__ == "__main__":
