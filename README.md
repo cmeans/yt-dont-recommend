@@ -8,6 +8,18 @@ No browser extension can do this. Extensions filter content client-side on a sin
 
 Requires Python 3.10+ and Git. Developed and tested on **Linux (Fedora)**; macOS and Windows are untested.
 
+**With [uv](https://docs.astral.sh/uv/) (recommended):**
+
+```bash
+git clone https://github.com/cmeans/yt-dont-recommend.git
+cd yt-dont-recommend
+uv sync
+uv run playwright install chromium
+uv run python yt_dont_recommend.py --login
+```
+
+**With standard pip/venv:**
+
 ```bash
 git clone https://github.com/cmeans/yt-dont-recommend.git
 cd yt-dont-recommend
@@ -20,11 +32,11 @@ python yt_dont_recommend.py --login
 
 A browser window opens — sign into your Google account, then close it. Your session is saved to `~/.yt-dont-recommend/browser-profile/` and reused on every subsequent run.
 
-> **Debian/Ubuntu:** you may also need `.venv/bin/playwright install-deps chromium` before activating the venv.
+> **Debian/Ubuntu:** you may also need `playwright install-deps chromium` (uv: `uv run playwright install-deps chromium`) after the `install chromium` step.
 
 ## Usage
 
-> All examples below assume the virtual environment is active (`source .venv/bin/activate`).
+> Examples below use `python` — either activate the venv first (`source .venv/bin/activate`) or prefix each command with `uv run` if using uv.
 
 ```bash
 # Dry run — see what channels would be processed
@@ -172,10 +184,13 @@ All data lives in `~/.yt-dont-recommend/`:
 
 ```bash
 # Example cron: run every Sunday at 3am
+# uv:
+0 3 * * 0 cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --headless
+# pip/venv:
 0 3 * * 0 cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --headless
 ```
 
-> Cron does not activate your shell's virtual environment, so use `.venv/bin/python` directly.
+> Cron does not activate your shell's virtual environment — use `uv run` or `.venv/bin/python` directly.
 
 Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
 
@@ -196,7 +211,8 @@ This opens a visible browser, tests the current selectors against four contexts 
 Exit code is 0 if the target option was found, 1 if not — suitable for scripting:
 
 ```bash
-# Run check monthly and alert on failure
+# Run check monthly and alert on failure (uv / pip+venv variants)
+0 0 1 * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 0 0 1 * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 ```
 
