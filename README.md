@@ -4,26 +4,46 @@ Automates YouTube's "Don't recommend channel" action in bulk, using any channel 
 
 No browser extension can do this. Extensions filter content client-side on a single browser. This tool affects the server-side recommendation engine.
 
+## Platform
+
+Developed and tested on **Linux (Fedora)**. macOS and Windows are untested — the script may work but is not supported.
+
 ## Prerequisites
 
 - Python 3.10+
-- Playwright for Python
-
-```bash
-pip install playwright --break-system-packages
-playwright install chromium
-```
+- Git (to clone the repo)
 
 ## Setup
 
 ```bash
-# First run: log into YouTube
+# 1. Clone and enter the repo
+git clone https://github.com/cmeans/yt-dont-recommend.git
+cd yt-dont-recommend
+
+# 2. Create a virtual environment
+python3 -m venv .venv
+
+# 3. Install Playwright inside the venv
+.venv/bin/pip install playwright
+
+# 4. Install the Chromium browser
+.venv/bin/playwright install chromium
+
+# On Debian/Ubuntu you may also need system dependencies:
+# .venv/bin/playwright install-deps chromium
+
+# 5. Activate the venv (so you can just type 'python' from here on)
+source .venv/bin/activate
+
+# 6. Log into YouTube — a browser window opens, sign in, then close it
 python yt_dont_recommend.py --login
-# A browser window opens. Log into your Google account, then close the window.
 # Your session is saved to ~/.yt-dont-recommend/browser-profile/
+# and reused on every subsequent run.
 ```
 
 ## Usage
+
+> All examples below assume the virtual environment is active (`source .venv/bin/activate`).
 
 ```bash
 # Dry run — see what channels would be processed
@@ -170,9 +190,11 @@ All data lives in `~/.yt-dont-recommend/`:
 ## Running Periodically
 
 ```bash
-# Example systemd timer or cron: run every Sunday at 3am
-0 3 * * 0 cd /path/to/yt-dont-recommend && python yt_dont_recommend.py --headless
+# Example cron: run every Sunday at 3am
+0 3 * * 0 cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --headless
 ```
+
+> Cron does not activate your shell's virtual environment, so use `.venv/bin/python` directly.
 
 Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
 
@@ -194,7 +216,7 @@ Exit code is 0 if the target option was found, 1 if not — suitable for scripti
 
 ```bash
 # Run check monthly and alert on failure
-0 0 1 * * cd /path/to/yt-dont-recommend && python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
+0 0 1 * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 ```
 
 To test against a specific channel instead of the default (`@YouTube`):
