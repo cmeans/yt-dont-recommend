@@ -164,7 +164,7 @@ All data lives in `~/.yt-dont-recommend/`:
 - **YouTube ToS:** Automating UI interactions may violate YouTube's Terms of Service. Personal use, your own account, your own risk.
 - **Selector fragility:** YouTube's HTML structure changes frequently. If the script starts silently skipping channels, the selectors are probably broken. Run `--check-selectors` to diagnose.
 - **Home feed matching:** The tool can only block channels that appear in your home feed during a run. Channels on the blocklist that never surface in the feed during that session will not be processed. Resume runs until the list is exhausted.
-- **Handle vs. channel ID:** Blocklist entries using `/channel/UCxxx` format only match home feed cards that also expose that ID. Most feeds use `/@handle` hrefs. DeSlop uses handles and matches well; AiSList uses channel IDs and may match less reliably.
+- **Handle vs. channel ID:** Blocklist entries using `UCxxx` IDs only match home feed cards that also expose that ID. Most feeds use `@handle` links. DeSlop uses handles and matches well; AiSList uses channel IDs and may match less reliably.
 - **Start small:** Use `--limit 10` for your first real run to confirm everything is working before processing a full list.
 
 ## Running Periodically
@@ -197,10 +197,10 @@ Exit code is 0 if the target option was found, 1 if not — suitable for scripti
 0 0 1 * * cd /path/to/yt-dont-recommend && python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 ```
 
-To test against a specific channel instead of the default (`/@YouTube`):
+To test against a specific channel instead of the default (`@YouTube`):
 
 ```bash
-python yt_dont_recommend.py --check-selectors --test-channel /@SomeChannel
+python yt_dont_recommend.py --check-selectors --test-channel @SomeChannel
 ```
 
 ## License

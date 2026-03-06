@@ -30,7 +30,7 @@ The tool should work with **any** channel blocklist, not just AI slop lists. Use
 2. **Arbitrary URL**: `--source https://example.com/blocklist.txt` — same text format, fetched over HTTP
 3. **Built-in named sources**: `--source deslop` or `--source aislist` — community AI slop lists with format-specific parsers
 
-The local file path is the most important for shareability. Someone curates a list, puts it in a repo or a gist, others point at it. The standard format is the DeSlop format: one channel path per line (`/@handle` or `/channel/UCxxx`), comments with `#`.
+The local file path is the most important for shareability. Someone curates a list, puts it in a repo or a gist, others point at it. The standard format is the DeSlop format: one channel per line (`@handle` or `UCxxx`), comments with `#`.
 
 ## Confirmed Findings from Live Testing (2026-03-05)
 
@@ -66,12 +66,12 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 
 ```json
 {
-  "processed": ["/@channel1"],
+  "processed": ["@channel1"],
   "blocked_by": {
-    "/@channel1": {"sources": ["deslop"], "blocked_at": "2026-03-05T..."}
+    "@channel1": {"sources": ["deslop"], "blocked_at": "2026-03-05T..."}
   },
   "would_have_blocked": {
-    "/@SomeChannel": {"sources": ["deslop"], "first_seen": "...", "notified": true}
+    "@SomeChannel": {"sources": ["deslop"], "first_seen": "...", "notified": true}
   },
   "last_run": "...",
   "stats": {"success": 1, "skipped": 0, "failed": 0}
@@ -108,7 +108,7 @@ def fetch_subscriptions(page) -> set[str]:
 | `--reset-state` | Clear all state and start over |
 | `--list-sources` | Print built-in source names |
 | `--check-selectors` | Run 4-context selector diagnostic, save report + screenshots |
-| `--test-channel` | Channel to use with `--check-selectors` (default: `/@YouTube`) |
+| `--test-channel` | Channel to use with `--check-selectors` (default: `@YouTube`) |
 | `--verbose` | Extra logging |
 
 ## Standard Blocklist Format
@@ -147,7 +147,7 @@ YouTube changes its DOM frequently. Use `--check-selectors` to diagnose when the
 The tool can only block channels that appear in the home feed during a run. A channel on the blocklist that never surfaces won't be processed until a future run where it does. This is a fundamental limitation of the home-feed-only approach.
 
 ### 3. Handle vs. Channel ID Matching
-Feed cards typically expose `/@handle` hrefs. Blocklist entries using `/channel/UCxxx` format only match if the card also uses that ID. DeSlop (handles) matches well; AiSList (channel IDs) may match less reliably.
+Feed cards typically expose `@handle` links. Blocklist entries using `UCxxx` IDs only match if the card also exposes that ID. DeSlop (handles) matches well; AiSList (channel IDs) may match less reliably.
 
 ### 4. AiSList JSON Format (unverified)
 The `aislist` parser is a best-guess. Verify by running `--source aislist --dry-run` and inspecting the parsed count.

@@ -311,16 +311,16 @@ class TestCheckRemovals:
     def test_unblocks_channel_removed_from_sole_source(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = self._state({"@gone": ["deslop"]})
-        n = ydr.check_removals(state, [], "deslop", "all")
-        assert n == 1
+        result = ydr.check_removals(state, [], "deslop", "all")
+        assert result == ["@gone"]
         assert "@gone" not in state["processed"]
         assert "@gone" not in state["blocked_by"]
 
     def test_all_policy_keeps_block_when_other_source_still_present(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = self._state({"@channel": ["deslop", "aislist"]})
-        n = ydr.check_removals(state, [], "deslop", "all")
-        assert n == 0
+        result = ydr.check_removals(state, [], "deslop", "all")
+        assert result == []
         assert "@channel" in state["processed"]
         # deslop removed from sources list, aislist still there
         assert state["blocked_by"]["@channel"]["sources"] == ["aislist"]
@@ -328,32 +328,32 @@ class TestCheckRemovals:
     def test_any_policy_unblocks_even_with_other_sources(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = self._state({"@channel": ["deslop", "aislist"]})
-        n = ydr.check_removals(state, [], "deslop", "any")
-        assert n == 1
+        result = ydr.check_removals(state, [], "deslop", "any")
+        assert result == ["@channel"]
         assert "@channel" not in state["processed"]
         assert "@channel" not in state["blocked_by"]
 
     def test_channel_still_in_list_is_not_touched(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = self._state({"@still-there": ["deslop"]})
-        n = ydr.check_removals(state, ["@still-there"], "deslop", "all")
-        assert n == 0
+        result = ydr.check_removals(state, ["@still-there"], "deslop", "all")
+        assert result == []
         assert "@still-there" in state["processed"]
 
     def test_channel_from_different_source_not_affected(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = self._state({"@channel": ["aislist"]})
         # Running deslop — aislist channel not in deslop, but deslop didn't block it
-        n = ydr.check_removals(state, [], "deslop", "all")
-        assert n == 0
+        result = ydr.check_removals(state, [], "deslop", "all")
+        assert result == []
         assert "@channel" in state["processed"]
 
     def test_check_removals_is_case_insensitive(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = self._state({"@Channel": ["deslop"]})
         # Current list has different casing — should still be recognised as present
-        n = ydr.check_removals(state, ["@channel"], "deslop", "all")
-        assert n == 0
+        result = ydr.check_removals(state, ["@channel"], "deslop", "all")
+        assert result == []
 
     def test_load_state_backward_compat_adds_missing_fields(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
