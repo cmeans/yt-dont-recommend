@@ -48,8 +48,8 @@ python yt_dont_recommend.py --source https://example.com/blocklist.txt
 # Process only 10 channels (good for first test)
 python yt_dont_recommend.py --limit 10
 
-# Protect specific channels from ever being blocked
-python yt_dont_recommend.py --exclude ~/my-exceptions.txt
+# Protect specific channels from ever being blocked (overrides the default exclude file)
+python yt_dont_recommend.py --exclude ~/.yt-dont-recommend/exclude.txt
 
 # Run in headless mode (no visible browser)
 python yt_dont_recommend.py --headless
@@ -76,12 +76,12 @@ If a community blocklist includes a channel you want to keep, add it to your per
 ~/.yt-dont-recommend/exclude.txt
 ```
 
-This file is loaded automatically on every run — no flag required. The format is the same plain-text format as blocklists:
+This file is loaded automatically on every run — no flag required. The format is the same plain-text format as blocklists, and supports inline `#` comments:
 
 ```
 # Channels I want to keep despite being on community lists
 @SomeChannel
-@AnotherChannel
+@AnotherChannel  # keeping this one — it's a friend's channel
 ```
 
 To use a different file instead (or a remote URL), pass `--exclude`:
@@ -99,7 +99,7 @@ The tool automatically skips any channel you are subscribed to — even if it ap
 
 When a subscribed channel appears on the blocklist, a `WARNING` is logged and the event is recorded in state under `would_have_blocked`. This warning fires only once per channel (not on every run). Use `--stats` to see the full list.
 
-If a channel you subscribe to genuinely should be blocked, add it to `--exclude` instead, which suppresses the warning, or unsubscribe and let the tool handle it on the next run.
+If a channel you subscribe to genuinely should be blocked, add it to your exclusion file (`~/.yt-dont-recommend/exclude.txt`) to suppress the warning, or unsubscribe and let the tool handle it on the next run.
 
 ## Auto-Unblock (False Positive Correction)
 
@@ -113,12 +113,12 @@ Auto-unblock events are logged prominently so they are easy to spot.
 
 ## Blocklist Format
 
-Plain text, one channel path per line. Comments start with `#`.
+Plain text, one channel per line. Full-line comments start with `#`. Inline `#` comments are also supported.
 
 ```
 # My custom blocklist
 @SomeHandle
-@AnotherChannel
+@AnotherChannel           # optional note about why this is here
 UCxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
@@ -129,7 +129,7 @@ This format is shared with the [DeSlop](https://github.com/NikoboiNFTB/DeSlop) p
 | Source    | Description                                                       |
 |-----------|-------------------------------------------------------------------|
 | `deslop`  | DeSlop project (~130+ channels, plain text, actively maintained)  |
-| `aislist` | AiSList / AiBlock extension list (community JSON, broader)        |
+| `aislist` | AiSList community text list (~8400+ channels, broader)            |
 
 Running without `--source` processes all built-in sources consecutively. The state tracker prevents re-processing the same channel twice across sources or runs.
 

@@ -56,6 +56,15 @@ class TestParseTextBlocklist:
         raw = "! this is an aislist comment\n@channel1\n"
         assert ydr.parse_text_blocklist(raw) == ["@channel1"]
 
+    def test_inline_comment_stripped(self):
+        raw = f"{_C1}  # keeping this one\n{_C2}\n"
+        assert ydr.parse_text_blocklist(raw) == [_C1, _C2]
+
+    def test_inline_comment_only_hash_discarded(self):
+        # A line that is nothing but "# reason" after stripping should be ignored
+        raw = f"{_C1}\n# standalone comment\n{_C2}\n"
+        assert ydr.parse_text_blocklist(raw) == [_C1, _C2]
+
     def test_blank_lines_ignored(self):
         raw = f"\n/{_C1}\n\n\n/{_C2}\n\n"
         assert ydr.parse_text_blocklist(raw) == [_C1, _C2]

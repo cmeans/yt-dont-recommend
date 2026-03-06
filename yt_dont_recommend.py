@@ -176,13 +176,23 @@ def save_state(state: dict):
 def parse_text_blocklist(raw: str) -> list[str]:
     """Parse plain text blocklist: one channel path per line.
 
-    Supports # and ! comment prefixes. Normalizes all variants to canonical
-    form: @handle for handles, UCxxx for channel IDs.
+    Supports # and ! comment prefixes (full-line and inline).
+    Normalizes all variants to canonical form: @handle or UCxxx.
+
+    Examples of valid lines:
+        @SomeChannel
+        @SomeChannel  # optional inline note
+        UCxxxxxxxxxxxxxxxxxxxxxxxx
     """
     channels = []
     for line in raw.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        # Strip inline comment: "@handle  # reason" → "@handle"
+        if "#" in line:
+            line = line[:line.index("#")].strip()
+        if not line:
             continue
         # Strip leading slash: /@handle → @handle
         if line.startswith("/@"):
