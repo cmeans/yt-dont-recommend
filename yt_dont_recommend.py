@@ -458,6 +458,61 @@ def check_removals(state: dict, current_channels: list[str],
     return to_unblock
 
 
+def resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[str]:
+    """For any UCxxx entries in channels, resolve to @handle via YouTube's redirect.
+
+    Modern YouTube feed cards expose only @handle links — UCxxx entries in a
+    custom blocklist will never match without this resolution step.
+
+    Results are cached in state['ucxxx_to_handle'] so subsequent runs skip
+    already-resolved entries. Returns the channel list with UCxxx replaced by
+    their resolved @handle equivalents (or left as UCxxx if no handle exists).
+    """
+    cache = state.setdefault("ucxxx_to_handle", {})
+    ucxxx_entries = [
+        ch for ch in channels
+        if re.match(r'^UC[A-Za-z0-9_-]{22}$', ch)
+    ]
+
+    if not ucxxx_entries:
+        return channels
+
+    uncached = [ch for ch in ucxxx_entries if ch not in cache]
+    cached_count = len(ucxxx_entries) - len(uncached)
+
+    if uncached:
+        logging.info(
+            f"Resolving {len(uncached)} UCxxx channel ID(s) to @handles"
+            + (f" ({cached_count} already cached)" if cached_count else "") + "..."
+        )
+        for ucxxx in uncached:
+            try:
+                page.goto(
+                    f"https://www.youtube.com/channel/{ucxxx}",
+                    wait_until="domcontentloaded", timeout=30000,
+                )
+                time.sleep(1.0)
+                path = page.url.replace("https://www.youtube.com", "").split("?")[0].rstrip("/")
+                if path.startswith("/@"):
+                    handle = path[1:]  # strip leading /
+                    cache[ucxxx] = handle
+                    logging.debug(f"Resolved {ucxxx} → {handle}")
+                else:
+                    cache[ucxxx] = ucxxx  # no @handle; keep UCxxx as-is
+                    logging.debug(f"No @handle for {ucxxx} — keeping UCxxx")
+                time.sleep(random.uniform(1.0, 2.0))
+            except Exception as e:
+                logging.warning(f"Could not resolve {ucxxx}: {e}")
+                cache[ucxxx] = ucxxx
+        save_state(state)
+    elif cached_count:
+        logging.debug(f"UCxxx resolution: all {cached_count} entr(ies) already cached")
+
+    # Return channel list with UCxxx replaced by resolved handles
+    return [cache.get(ch, ch) if re.match(r'^UC[A-Za-z0-9_-]{22}$', ch) else ch
+            for ch in channels]
+
+
 def fetch_subscriptions(page) -> set[str]:
     """
     Scrape the YouTube subscriptions management page and return a set of
@@ -600,7 +655,13 @@ def process_channels(channels: list[str], source: str,
 
         subscriptions = fetch_subscriptions(page)
 
-        # Navigate back to home feed after fetching subscriptions
+        # Resolve any UCxxx channel IDs in the blocklist to @handles.
+        # Modern YouTube feed cards expose only @handle links, so UCxxx entries
+        # will never match without this step.
+        resolved_channels = resolve_ucxxx_to_handles(page, list(unblocked), state)
+        channel_lookup = {c.lower(): c for c in resolved_channels}
+
+        # Navigate back to home feed
         page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
         time.sleep(PAGE_LOAD_WAIT)
 

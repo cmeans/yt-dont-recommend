@@ -192,8 +192,8 @@ YouTube changes its DOM frequently. The script detects broken selectors automati
 ### 2. Home Feed Matching Completeness
 The tool can only block channels that appear in the home feed during a run. A channel on the blocklist that never surfaces won't be processed until a future run where it does. This is a fundamental limitation of the home-feed-only approach.
 
-### 3. Handle vs. Channel ID Matching
-Feed cards typically expose `@handle` links. Blocklist entries using `UCxxx` IDs only match if the card also exposes that ID. DeSlop (handles) matches well; AiSList (channel IDs) may match less reliably.
+### 3. Handle vs. Channel ID Matching — RESOLVED
+Live probe confirmed modern YouTube feed cards expose `@handle` links only — no `/channel/UCxxx` links appear at the card level. Both built-in sources (deslop, aislist) use `@handle` format. For custom blocklists that use UCxxx IDs, `resolve_ucxxx_to_handles()` is called automatically before the feed scan: it visits `youtube.com/channel/UCxxx` for each unresolved ID, captures the `@handle` from the redirect, and caches the mapping in `state["ucxxx_to_handle"]`. No UCxxx-format entries reach the feed scanner.
 
 ### 4. Subscription Scraping — VERIFIED (2026-03-06)
 `fetch_subscriptions()` uses selectors `ytd-channel-renderer a#main-link` and scrolling on `youtube.com/feed/channels`. Live-tested: 134 subscriptions found correctly in 1 scroll pass. If subscription protection silently fails in future, these selectors are the first place to look.
