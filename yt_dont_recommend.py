@@ -801,13 +801,21 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
             "This run will pause for up to 2 minutes."
         )
         verify.click()
+        # Verify click may trigger a navigation — wait for the page to settle.
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            pass
+        time.sleep(2)
 
-        # The password challenge renders inline — URL stays on myactivity the whole time.
         # Phase 1: wait for the challenge form to appear (up to 15s).
         challenge_appeared = False
         for _ in range(15):
             time.sleep(1)
-            body = page.evaluate("() => document.body.innerText.substring(0, 500)")
+            try:
+                body = page.evaluate("() => document.body.innerText.substring(0, 500)")
+            except Exception:
+                continue  # page still navigating — try again next tick
             if "Enter your password" in body or "verify it's you" in body.lower():
                 challenge_appeared = True
                 break
@@ -823,7 +831,10 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
             verified = False
             for i in range(60):  # up to 3 minutes (60 × 3s)
                 time.sleep(3)
-                btn = page.query_selector('button[aria-label^="Delete activity item"]')
+                try:
+                    btn = page.query_selector('button[aria-label^="Delete activity item"]')
+                except Exception:
+                    continue  # page still navigating
                 if btn:
                     logging.info(f"Verification complete — feedback entries loaded ({i*3}s).")
                     verified = True
@@ -860,26 +871,21 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
             continue
 
         delete_btn.click()
-        # Poll briefly for the "Confirm you would like to delete this activity" dialog.
-        # It only appears once per browser session ("This will not show again").
-        confirm = None
-        for _ in range(5):
+        # After clicking the delete icon, Google shows a "Deletion complete" success
+        # dialog with a "Got it" button (not a confirm-before-delete prompt).
+        # Dismiss it so it doesn't block subsequent deletions.
+        got_it = None
+        for _ in range(10):
             time.sleep(0.5)
-            confirm = page.query_selector(
-                "dialog button:has-text('Delete'), [role='dialog'] button:has-text('Delete')"
+            got_it = page.query_selector(
+                "button:has-text('Got it'), [role='dialog'] button:has-text('Got it')"
             )
-            if not confirm:
-                # Fallback: any visible Delete button without an aria-label
-                for btn in page.query_selector_all("button:has-text('Delete')"):
-                    if not btn.get_attribute("aria-label"):
-                        confirm = btn
-                        break
-            if confirm:
+            if got_it:
                 break
-        if confirm:
-            logging.debug(f"Confirmation dialog — clicking Delete for {channel}...")
-            confirm.click()
-        time.sleep(1.5)
+        if got_it:
+            logging.debug(f"Dismissing 'Deletion complete' dialog for {channel}...")
+            got_it.click()
+        time.sleep(1.0)
         unblocked_channels.append(channel)
         logging.info(f"UNBLOCKED on YouTube: {channel} ({display_name}) — channel can appear in recommendations again")
 
