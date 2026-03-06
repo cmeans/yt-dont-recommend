@@ -187,7 +187,7 @@ Other potential sources to consider adding:
 ## Open Issues & Risks
 
 ### 1. Selector Fragility (ongoing)
-YouTube changes its DOM frequently. Use `--check-selectors` to diagnose when the script starts silently skipping channels. The selector checker saves a timestamped report and screenshots to `~/.yt-dont-recommend/`.
+YouTube changes its DOM frequently. The script detects broken selectors automatically: if 3+ consecutive feed passes each contain 10+ cards but yield zero parseable channel links, it logs a `WARNING: POSSIBLE SELECTOR FAILURE` and exits early rather than silently wasting all scroll passes. Use `--check-selectors` to diagnose. The selector checker saves a timestamped report and screenshots to `~/.yt-dont-recommend/`.
 
 ### 2. Home Feed Matching Completeness
 The tool can only block channels that appear in the home feed during a run. A channel on the blocklist that never surfaces won't be processed until a future run where it does. This is a fundamental limitation of the home-feed-only approach.

@@ -100,6 +100,11 @@ MAX_DELAY = 7.0
 PAGE_LOAD_WAIT = 3.0
 LONG_PAUSE_EVERY = 25
 LONG_PAUSE_SECONDS = 30
+# Selector health check: if this many consecutive passes each have >=
+# MIN_CARDS_FOR_SELECTOR_CHECK cards but yield zero parseable channel links,
+# the feed card selector is probably broken.
+MIN_CARDS_FOR_SELECTOR_CHECK = 10
+SELECTOR_WARN_AFTER = 3
 
 # Selectors used both for processing and selector checks.
 # YouTube changes its DOM frequently — run --check-selectors if things break.
@@ -603,6 +608,7 @@ def process_channels(channels: list[str], source: str,
 
         blocked_count = 0
         no_progress_scrolls = 0
+        zero_parse_passes = 0
         seen_paths: set[str] = set()
 
         while True:
@@ -618,6 +624,7 @@ def process_channels(channels: list[str], source: str,
 
             cards = page.query_selector_all("ytd-rich-item-renderer")
             found_match_this_pass = False
+            pass_parseable = 0
 
             for card in cards:
                 if limit and blocked_count >= limit:
@@ -626,6 +633,7 @@ def process_channels(channels: list[str], source: str,
                 channel_link = card.query_selector("a[href^='/@'], a[href^='/channel/UC']")
                 if not channel_link:
                     continue
+                pass_parseable += 1
 
                 href = channel_link.get_attribute("href") or ""
                 raw_path = href.split("?")[0].rstrip("/")
@@ -719,6 +727,21 @@ def process_channels(channels: list[str], source: str,
                     state["stats"]["skipped"] += 1
                     logging.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
                     save_state(state)
+
+            # Selector health check: if several consecutive passes have enough
+            # cards but zero parseable channel links, the selector is likely broken.
+            if len(cards) >= MIN_CARDS_FOR_SELECTOR_CHECK and pass_parseable == 0:
+                zero_parse_passes += 1
+                if zero_parse_passes >= SELECTOR_WARN_AFTER:
+                    logging.warning(
+                        f"POSSIBLE SELECTOR FAILURE: {zero_parse_passes} consecutive passes "
+                        f"each had {len(cards)}+ feed cards but zero parseable channel links. "
+                        f"YouTube may have changed its DOM structure. "
+                        f"Run --check-selectors to diagnose."
+                    )
+                    break
+            else:
+                zero_parse_passes = 0
 
             if found_match_this_pass:
                 no_progress_scrolls = 0
