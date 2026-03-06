@@ -5,3 +5,8 @@ requires-python = ">=3.10"
 dependencies = [
     "playwright",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]

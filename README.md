@@ -24,15 +24,15 @@ uv run python yt_dont_recommend.py --login
 git clone https://github.com/cmeans/yt-dont-recommend.git
 cd yt-dont-recommend
 python3 -m venv .venv
-.venv/bin/pip install playwright
-.venv/bin/playwright install chromium
 source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
 python yt_dont_recommend.py --login
 ```
 
 A browser window opens — sign into your Google account, then close it. Your session is saved to `~/.yt-dont-recommend/browser-profile/` and reused on every subsequent run.
 
-> **Debian/Ubuntu:** you may also need `playwright install-deps chromium` (uv: `uv run playwright install-deps chromium`) after the `install chromium` step.
+> **Debian/Ubuntu:** you may also need `playwright install-deps chromium` (or `uv run playwright install-deps chromium`) after the `install chromium` step.
 
 ## Usage
 
