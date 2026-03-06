@@ -195,8 +195,8 @@ The tool can only block channels that appear in the home feed during a run. A ch
 ### 3. Handle vs. Channel ID Matching
 Feed cards typically expose `@handle` links. Blocklist entries using `UCxxx` IDs only match if the card also exposes that ID. DeSlop (handles) matches well; AiSList (channel IDs) may match less reliably.
 
-### 4. Subscription Scraping (untested live)
-`fetch_subscriptions()` uses selectors `ytd-channel-renderer a#main-link` and scrolling on `youtube.com/feed/channels`. These have not been live-tested. If subscription protection silently fails, the selectors here are the first place to look.
+### 4. Subscription Scraping — VERIFIED (2026-03-06)
+`fetch_subscriptions()` uses selectors `ytd-channel-renderer a#main-link` and scrolling on `youtube.com/feed/channels`. Live-tested: 134 subscriptions found correctly in 1 scroll pass. If subscription protection silently fails in future, these selectors are the first place to look.
 
 ### 5. Rate Limiting
 The current delays (3–7s between actions, 30s every 25 channels) are conservative guesses. Back off further if YouTube shows CAPTCHAs or unusual behavior.
