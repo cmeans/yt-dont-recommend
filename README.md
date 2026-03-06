@@ -182,7 +182,7 @@ All data lives in `~/.yt-dont-recommend/`:
 ## Caveats
 
 - **YouTube ToS:** Automating UI interactions may violate YouTube's Terms of Service. Personal use, your own account, your own risk.
-- **Selector fragility:** YouTube's HTML structure changes frequently. If the script starts silently skipping channels, the selectors are probably broken. Run `--check-selectors` to diagnose.
+- **Selector fragility:** YouTube's HTML structure changes frequently. The script detects broken selectors automatically — if several consecutive scroll passes yield no parseable channel links, it logs a `POSSIBLE SELECTOR FAILURE` warning and exits early. Run `--check-selectors` to diagnose and get a timestamped report with screenshots.
 - **Home feed matching:** The tool can only block channels that appear in your home feed during a run. Channels on the blocklist that never surface in the feed during that session will not be processed. Resume runs until the list is exhausted.
 - **Handle vs. channel ID:** YouTube feed cards expose `@handle` links only — `UCxxx` IDs in a blocklist are automatically resolved to `@handles` before scanning. Results are cached in state so re-resolution is skipped on subsequent runs. Both built-in sources already use `@handle` format; this only applies to custom blocklists.
 - **Start small:** Use `--limit 10` for your first real run to confirm everything is working before processing a full list.
