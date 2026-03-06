@@ -1,7 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "yt-dont-recommend"
 version = "0.1.0"
 requires-python = ">=3.10"
+description = "Bulk-train YouTube's recommendation algorithm via 'Don't recommend channel' — works on Fire TV, mobile, and smart TVs"
+readme = "README.md"
+license = { file = "LICENSE" }
+urls = { Homepage = "https://github.com/cmeans/yt-dont-recommend" }
 dependencies = [
     "playwright",
 ]
@@ -10,3 +18,9 @@ dependencies = [
 dev = [
     "pytest",
 ]
+
+[project.scripts]
+yt-dont-recommend = "yt_dont_recommend:main"
+
+[tool.hatch.build.targets.wheel]
+include = ["yt_dont_recommend.py"]
