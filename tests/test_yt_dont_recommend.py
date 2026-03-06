@@ -8,7 +8,7 @@ require a live YouTube session and are not tested here.
 
 Run with:
     pip install pytest --break-system-packages
-    pytest test_yt_dont_recommend.py -v
+    pytest tests/ -v
 """
 
 import json
@@ -18,6 +18,14 @@ from unittest.mock import patch
 
 import yt_dont_recommend as ydr
 
+# Canonical channel IDs used in tests (no leading /).
+# When a test needs to exercise the /@ or /channel/ prefix normalization path,
+# construct the raw input programmatically: f"/{_C1}" rather than hardcoding "/@channel1".
+_C1 = "@channel1"
+_C2 = "@channel2"
+_HANDLE = "@HandleChannel"
+_UC = "UCxxxxxxxxxxxxxxxxxxxxxxxx"
+
 
 # ---------------------------------------------------------------------------
 # parse_text_blocklist
@@ -25,8 +33,8 @@ import yt_dont_recommend as ydr
 
 class TestParseTextBlocklist:
     def test_basic_handles(self):
-        raw = "/@channel1\n/@channel2\n"
-        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
+        raw = f"/{_C1}\n/{_C2}\n"
+        assert ydr.parse_text_blocklist(raw) == [_C1, _C2]
 
     def test_bare_at_handles(self):
         raw = "@channel1\n@channel2\n"
@@ -41,20 +49,20 @@ class TestParseTextBlocklist:
         assert ydr.parse_text_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
 
     def test_comments_ignored(self):
-        raw = "# this is a comment\n/@channel1\n# another comment\n"
-        assert ydr.parse_text_blocklist(raw) == ["@channel1"]
+        raw = f"# this is a comment\n/{_C1}\n# another comment\n"
+        assert ydr.parse_text_blocklist(raw) == [_C1]
 
     def test_exclamation_comments_ignored(self):
         raw = "! this is an aislist comment\n@channel1\n"
         assert ydr.parse_text_blocklist(raw) == ["@channel1"]
 
     def test_blank_lines_ignored(self):
-        raw = "\n/@channel1\n\n\n/@channel2\n\n"
-        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
+        raw = f"\n/{_C1}\n\n\n/{_C2}\n\n"
+        assert ydr.parse_text_blocklist(raw) == [_C1, _C2]
 
     def test_whitespace_stripped(self):
-        raw = "  /@channel1  \n  /@channel2  \n"
-        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
+        raw = f"  /{_C1}  \n  /{_C2}  \n"
+        assert ydr.parse_text_blocklist(raw) == [_C1, _C2]
 
     def test_empty_string(self):
         assert ydr.parse_text_blocklist("") == []
@@ -67,16 +75,16 @@ class TestParseTextBlocklist:
         raw = (
             "# DeSlop-style list\n"
             "\n"
-            "/@HandleChannel\n"
-            "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx\n"
+            f"/{_HANDLE}\n"
+            f"/channel/{_UC}\n"
             "# end\n"
         )
         result = ydr.parse_text_blocklist(raw)
-        assert result == ["@HandleChannel", "UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        assert result == [_HANDLE, _UC]
 
     def test_no_trailing_newline(self):
-        raw = "/@channel1"
-        assert ydr.parse_text_blocklist(raw) == ["@channel1"]
+        raw = f"/{_C1}"
+        assert ydr.parse_text_blocklist(raw) == [_C1]
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +139,9 @@ class TestParseJsonBlocklist:
 
     def test_invalid_json_falls_back_to_text_parse(self):
         # If JSON parsing fails, it should fall back to treating content as plain text
-        raw = "/@channel1\n/@channel2\n"
+        raw = f"/{_C1}\n/{_C2}\n"
         result = ydr.parse_json_blocklist(raw)
-        assert result == ["@channel1", "@channel2"]
+        assert result == [_C1, _C2]
 
     def test_empty_list(self):
         assert ydr.parse_json_blocklist("[]") == []
@@ -217,9 +225,9 @@ class TestStateManagement:
 class TestResolveSource:
     def test_local_text_file(self, tmp_path):
         f = tmp_path / "list.txt"
-        f.write_text("/@channel1\n# comment\n/@channel2\n")
+        f.write_text(f"/{_C1}\n# comment\n/{_C2}\n")
         result = ydr.resolve_source(str(f))
-        assert result == ["@channel1", "@channel2"]
+        assert result == [_C1, _C2]
 
     def test_local_json_file(self, tmp_path):
         f = tmp_path / "list.json"
@@ -230,9 +238,9 @@ class TestResolveSource:
     def test_local_file_tilde_expansion(self, tmp_path, monkeypatch):
         # ~ should be expanded to home dir; fake it by using an absolute path
         f = tmp_path / "list.txt"
-        f.write_text("/@channel1\n")
+        f.write_text(f"/{_C1}\n")
         result = ydr.resolve_source(str(f))
-        assert result == ["@channel1"]
+        assert result == [_C1]
 
     def test_missing_local_file_exits(self):
         with pytest.raises(SystemExit) as exc_info:
@@ -241,9 +249,9 @@ class TestResolveSource:
 
     def test_builtin_source_deslop_fetches_and_parses(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = "/@channel1\n# comment\n/@channel2\n"
+            mock_fetch.return_value = f"/{_C1}\n# comment\n/{_C2}\n"
             result = ydr.resolve_source("deslop")
-        assert result == ["@channel1", "@channel2"]
+        assert result == [_C1, _C2]
         mock_fetch.assert_called_once_with(ydr.BUILTIN_SOURCES["deslop"]["url"])
 
     def test_builtin_source_aislist_fetches_and_parses(self):
@@ -256,9 +264,9 @@ class TestResolveSource:
 
     def test_remote_url_text(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = "/@channel1\n/@channel2\n"
+            mock_fetch.return_value = f"/{_C1}\n/{_C2}\n"
             result = ydr.resolve_source("https://example.com/list.txt")
-        assert result == ["@channel1", "@channel2"]
+        assert result == [_C1, _C2]
 
     def test_remote_url_json_sniffed_by_leading_bracket(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
@@ -274,9 +282,9 @@ class TestResolveSource:
 
     def test_http_url_also_accepted(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = "/@channel1\n"
+            mock_fetch.return_value = f"/{_C1}\n"
             result = ydr.resolve_source("http://example.com/list.txt")
-        assert result == ["@channel1"]
+        assert result == [_C1]
 
     def test_unknown_string_treated_as_file_path(self):
         # A string that's not a built-in key and not http(s):// should be

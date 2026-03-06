@@ -32,6 +32,52 @@ The tool should work with **any** channel blocklist, not just AI slop lists. Use
 
 The local file path is the most important for shareability. Someone curates a list, puts it in a repo or a gist, others point at it. The standard format is the DeSlop format: one channel per line (`@handle` or `UCxxx`), comments with `#`.
 
+## End-to-End Test Cycle
+
+The full block/unblock test cycle requires these steps in order. Some steps have mandatory wait periods tied to YouTube's algorithm latency.
+
+### Step 1 — Check the feed first
+Before running the script, confirm at least one target channel is present in the home feed:
+```
+.venv/bin/python /tmp/feed-check.py
+```
+**Do not skip this.** If no target channels are in the feed, the script will scroll through the entire feed and find nothing — which is wasted time and an inconclusive test. See Step 2 if the feed has no hits.
+
+### Step 2 — Prime the feed (if needed)
+If no target channels appear, watch and like 2–3 videos from a target channel in Chrome (the same Google account). YouTube's feed refresh typically picks this up within one feed reload, but can take up to ~10 minutes. Re-run `feed-check.py` to confirm before proceeding.
+
+### Step 3 — Block
+```
+.venv/bin/python yt_dont_recommend.py --source /tmp/test-blocklist.txt
+```
+Watch the log output to confirm the channel was blocked. The script exits after exhausting the feed scroll.
+
+### Step 4 — Verify the block on myactivity
+Optionally, open `myactivity.google.com/page?page=youtube_user_feedback` in Chrome and confirm a "Don't recommend" entry exists for the channel.
+
+### Step 5 — Trigger unblock
+Empty the blocklist file (or remove the channel from it) and re-run:
+```
+echo "# empty" > /tmp/test-blocklist.txt
+.venv/bin/python yt_dont_recommend.py --source /tmp/test-blocklist.txt
+```
+The script will detect the removal, navigate to myactivity, and prompt for Google password verification in the browser window. Once verified, it finds and deletes the "Don't recommend" entry and dismisses the "Deletion complete" dialog automatically.
+
+> **Password verification latency**: Google requires re-authentication to access myactivity feedback entries. The browser window will show the password prompt; the script polls for up to 3 minutes. This is normal — enter the password and wait.
+
+### Step 6 — Confirm the channel is back in the feed
+Re-run `feed-check.py` immediately after the unblock completes:
+```
+.venv/bin/python /tmp/feed-check.py
+```
+A hit here confirms the full cycle worked. If the channel doesn't appear, wait a few minutes and check again — YouTube may cache the "Don't recommend" signal briefly before the deletion propagates.
+
+> **Algorithm propagation latency**: After unblocking, YouTube's recommendation engine can take a few minutes (rarely longer) to start surfacing the channel again. The myactivity deletion is instant; the feed reflection may lag.
+
+### Cycle is only complete when Step 6 produces a hit.
+
+---
+
 ## Confirmed Findings from Live Testing (2026-03-05)
 
 ### "Don't Recommend" context — RESOLVED
@@ -88,7 +134,7 @@ def process_channels(channels: list[str], source: str,
                      headless: bool = False, unblock_policy: str = "all"):
 
 def check_removals(state: dict, current_channels: list[str],
-                   source: str, unblock_policy: str) -> int:
+                   source: str, unblock_policy: str) -> list[str]:
 
 def fetch_subscriptions(page) -> set[str]:
 ```
@@ -130,9 +176,9 @@ This matches the DeSlop format and is trivial to create, share, and parse.
 | Key       | Format | Verified | URL |
 |-----------|--------|----------|-----|
 | `deslop`  | text   | YES      | `https://raw.githubusercontent.com/NikoboiNFTB/DeSlop/refs/heads/main/block/list.txt` |
-| `aislist` | json   | NO       | `https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/blacklist.json` |
+| `aislist` | text   | YES      | `https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/aislist_blocklist.txt` |
 
-DeSlop has ~130+ channels. AiSList may be larger but its JSON schema is unconfirmed.
+DeSlop has ~130+ channels. AiSList has ~8400+ channels.
 
 Other potential sources to consider adding:
 - surasshu/cevval AI music blocklist (BlockTube JSON export with channel IDs)
@@ -149,16 +195,13 @@ The tool can only block channels that appear in the home feed during a run. A ch
 ### 3. Handle vs. Channel ID Matching
 Feed cards typically expose `@handle` links. Blocklist entries using `UCxxx` IDs only match if the card also exposes that ID. DeSlop (handles) matches well; AiSList (channel IDs) may match less reliably.
 
-### 4. AiSList JSON Format (unverified)
-The `aislist` parser is a best-guess. Verify by running `--source aislist --dry-run` and inspecting the parsed count.
-
-### 5. Subscription Scraping (untested live)
+### 4. Subscription Scraping (untested live)
 `fetch_subscriptions()` uses selectors `ytd-channel-renderer a#main-link` and scrolling on `youtube.com/feed/channels`. These have not been live-tested. If subscription protection silently fails, the selectors here are the first place to look.
 
-### 6. Rate Limiting
+### 5. Rate Limiting
 The current delays (3–7s between actions, 30s every 25 channels) are conservative guesses. Back off further if YouTube shows CAPTCHAs or unusual behavior.
 
-### 7. YouTube ToS
+### 6. YouTube ToS
 Automating UI interactions violates YouTube's Terms of Service. This is for personal use on the user's own account — same risk category as SmartTube or ad blockers.
 
 ## Original Developer's Environment
