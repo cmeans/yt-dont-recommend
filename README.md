@@ -18,7 +18,9 @@ uv run playwright install chromium
 uv run python yt_dont_recommend.py --login
 ```
 
-**With standard pip/venv:**
+---
+
+**With pip/venv:**
 
 ```bash
 git clone https://github.com/cmeans/yt-dont-recommend.git
@@ -30,9 +32,13 @@ playwright install chromium
 python yt_dont_recommend.py --login
 ```
 
+---
+
 A browser window opens — sign into your Google account, then close it. Your session is saved to `~/.yt-dont-recommend/browser-profile/` and reused on every subsequent run.
 
-> **Debian/Ubuntu:** you may also need `playwright install-deps chromium` (or `uv run playwright install-deps chromium`) after the `install chromium` step.
+> **Debian/Ubuntu:** after `playwright install chromium`, you may also need:
+> - uv: `uv run playwright install-deps chromium`
+> - pip/venv: `playwright install-deps chromium`
 
 ## Usage
 
@@ -182,11 +188,13 @@ All data lives in `~/.yt-dont-recommend/`:
 
 ## Running Periodically
 
+uv:
 ```bash
-# Example cron: run every Sunday at 3am
-# uv:
 0 3 * * 0 cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --headless
-# pip/venv:
+```
+
+pip/venv:
+```bash
 0 3 * * 0 cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --headless
 ```
 
@@ -210,9 +218,13 @@ This opens a visible browser, tests the current selectors against four contexts 
 
 Exit code is 0 if the target option was found, 1 if not — suitable for scripting:
 
+uv:
 ```bash
-# Run check monthly and alert on failure (uv / pip+venv variants)
 0 0 1 * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
+```
+
+pip/venv:
+```bash
 0 0 1 * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 ```
 
