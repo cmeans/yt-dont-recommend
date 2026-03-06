@@ -210,17 +210,26 @@ All data lives in `~/.yt-dont-recommend/`:
 
 ## Running Periodically
 
-uv:
+Use [cron](https://en.wikipedia.org/wiki/Cron) to schedule automatic runs. Edit your crontab with `crontab -e` and add one of the following lines.
+
+> Cron runs without your shell environment — use absolute paths throughout.
+
+**Installed via uv tool or pipx** (no project directory needed):
+```bash
+# Every Sunday at 3am
+0 3 * * 0 /path/to/yt-dont-recommend --headless
+```
+Find the full path with `which yt-dont-recommend`.
+
+**Running from a cloned repo (uv):**
 ```bash
 0 3 * * 0 cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --headless
 ```
 
-pip/venv:
+**Running from a cloned repo (pip/venv):**
 ```bash
 0 3 * * 0 cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --headless
 ```
-
-> Cron does not activate your shell's virtual environment — use `uv run` or `.venv/bin/python` directly.
 
 Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
 
@@ -240,12 +249,17 @@ This opens a visible browser, tests the current selectors against four contexts 
 
 Exit code is 0 if the target option was found, 1 if not — suitable for scripting:
 
-uv:
+Installed (uv tool / pipx):
+```bash
+0 0 1 * * /path/to/yt-dont-recommend --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
+```
+
+Cloned repo (uv):
 ```bash
 0 0 1 * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 ```
 
-pip/venv:
+Cloned repo (pip/venv):
 ```bash
 0 0 1 * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
 ```
