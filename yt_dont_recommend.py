@@ -1432,6 +1432,8 @@ def check_attention_flag() -> None:
     print("  Run --check-selectors to diagnose selector failures.")
     print("  Run --clear-alerts once the issue is resolved.")
     print(f"{sep}\n")
+    if sys.stdin.isatty():
+        input("Press Enter to continue...")
 
 
 # --- Schedule management ---
