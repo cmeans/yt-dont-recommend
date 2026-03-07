@@ -319,10 +319,22 @@ yt-dont-recommend --clear-alerts
 
 [ntfy.sh](https://ntfy.sh) is a free, open-source push notification service. No account required. Install the app on your phone or desktop, subscribe to your private topic, and get notified wherever you are.
 
+Generate a private topic and show subscribe instructions:
+
 ```bash
-yt-dont-recommend --setup-notify    # generate a private topic and show subscribe instructions
-yt-dont-recommend --test-notify     # send a test notification to confirm it's working
-yt-dont-recommend --remove-notify   # remove the topic
+yt-dont-recommend --setup-notify
+```
+
+Send a test notification to confirm it's working:
+
+```bash
+yt-dont-recommend --test-notify
+```
+
+To remove the topic:
+
+```bash
+yt-dont-recommend --remove-notify
 ```
 
 Your topic is a random private string — it is not guessable by others.
