@@ -344,9 +344,20 @@ def do_login():
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
-    logging.info("Opening browser for YouTube login...")
-    logging.info("Log into your Google account in the browser window.")
-    logging.info("Once you can see your YouTube home page, close the browser.")
+    print("\nLogin setup")
+    print("-----------")
+    print("A browser window will open and navigate to Google's sign-in page.")
+    print()
+    print("Steps:")
+    print("  1. Sign into your Google account in the browser window.")
+    print("  2. Wait until you can see your YouTube home page.")
+    print("  3. Close the browser window.")
+    print()
+    print("Your session will be saved automatically and reused on every")
+    print("subsequent run — you only need to do this once.")
+    print()
+    input("Press Enter to open the browser...")
+    print()
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -358,7 +369,6 @@ def do_login():
         page = context.pages[0] if context.pages else context.new_page()
         page.goto("https://accounts.google.com/ServiceLogin?service=youtube")
 
-        logging.info("Waiting for you to complete login... (close browser when done)")
         try:
             page.wait_for_event("close", timeout=0)
         except Exception:
