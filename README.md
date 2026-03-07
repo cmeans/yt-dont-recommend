@@ -26,6 +26,36 @@ After `--login` your session is saved to `~/.yt-dont-recommend/browser-profile/`
 
 ---
 
+## Upgrading
+
+**With uv:**
+
+```bash
+uv tool upgrade yt-dont-recommend
+```
+
+**With pipx:**
+
+```bash
+pipx upgrade yt-dont-recommend
+```
+
+Your session and state (`~/.yt-dont-recommend/`) are preserved. If Playwright warns that the browser binary is outdated after an upgrade, re-run the install command for your package manager.
+
+**With uv:**
+
+```bash
+uvx playwright install chromium
+```
+
+**With pipx:**
+
+```bash
+playwright install chromium
+```
+
+---
+
 ## Development Setup
 
 Requires Python 3.10+ and Git. Developed and tested on **Linux (Fedora)**; macOS and Windows are untested.
