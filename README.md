@@ -101,49 +101,47 @@ For a full list of options:
 yt-dont-recommend --help
 ```
 
-> Examples below use `python` — either activate the venv first (`source .venv/bin/activate`) or prefix each command with `uv run` if using uv.
-
 ```bash
 # Dry run — see what channels would be processed
-python yt_dont_recommend.py --dry-run
+yt-dont-recommend --dry-run
 
 # Process all built-in sources consecutively (default)
-python yt_dont_recommend.py
+yt-dont-recommend
 
 # Use a specific built-in source
-python yt_dont_recommend.py --source deslop
-python yt_dont_recommend.py --source aislist
+yt-dont-recommend --source deslop
+yt-dont-recommend --source aislist
 
 # Use multiple sources explicitly (comma-separated)
-python yt_dont_recommend.py --source deslop,aislist
+yt-dont-recommend --source deslop,aislist
 
 # Use a local blocklist file
-python yt_dont_recommend.py --source /path/to/my-list.txt
+yt-dont-recommend --source /path/to/my-list.txt
 
 # Use a remote blocklist URL
-python yt_dont_recommend.py --source https://example.com/blocklist.txt
+yt-dont-recommend --source https://example.com/blocklist.txt
 
 # Process only 10 channels (good for first test)
-python yt_dont_recommend.py --limit 10
+yt-dont-recommend --limit 10
 
 # Protect specific channels from ever being blocked (overrides the default exclude file)
-python yt_dont_recommend.py --exclude ~/.yt-dont-recommend/exclude.txt
+yt-dont-recommend --exclude ~/.yt-dont-recommend/exclude.txt
 
 # Run in headless mode (no visible browser)
-python yt_dont_recommend.py --headless
+yt-dont-recommend --headless
 
 # Check progress (includes subscription-protected channels)
-python yt_dont_recommend.py --stats
+yt-dont-recommend --stats
 
 # Control when a channel is auto-unblocked after being removed from a list
-python yt_dont_recommend.py --unblock-policy all   # default: unblock only when gone from all sources
-python yt_dont_recommend.py --unblock-policy any   # unblock as soon as gone from any source
+yt-dont-recommend --unblock-policy all   # default: unblock only when gone from all sources
+yt-dont-recommend --unblock-policy any   # unblock as soon as gone from any source
 
 # Start over
-python yt_dont_recommend.py --reset-state
+yt-dont-recommend --reset-state
 
 # List built-in sources
-python yt_dont_recommend.py --list-sources
+yt-dont-recommend --list-sources
 ```
 
 ## Exclusion List
@@ -165,8 +163,8 @@ This file is loaded automatically on every run — no flag required. The format 
 To use a different file instead (or a remote URL), pass `--exclude`:
 
 ```bash
-python yt_dont_recommend.py --exclude /path/to/other-list.txt
-python yt_dont_recommend.py --exclude https://example.com/my-exclusions.txt
+yt-dont-recommend --exclude /path/to/other-list.txt
+yt-dont-recommend --exclude https://example.com/my-exclusions.txt
 ```
 
 `--exclude` does not accept built-in source names.
@@ -298,34 +296,17 @@ YouTube changes its DOM structure frequently. When the script starts silently sk
 Run the selector checker to diagnose:
 
 ```bash
-python yt_dont_recommend.py --check-selectors
+yt-dont-recommend --check-selectors
 ```
 
 This opens a visible browser, tests the current selectors against four contexts (home feed, search results, channel header, video watch page), prints every menu item found, and saves a timestamped report with screenshots to `~/.yt-dont-recommend/`.
 
 **Confirmed behavior (as of 2026-03-05):** "Don't recommend channel" appears **only** in the home feed. It does not appear in search results, on channel pages, or on the video watch page. The tool's home feed scanner reflects this.
 
-Exit code is 0 if the target option was found, 1 if not — suitable for scripting:
-
-Installed (uv tool / pipx):
-```bash
-0 0 1 * * /path/to/yt-dont-recommend --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
-```
-
-Cloned repo (uv):
-```bash
-0 0 1 * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
-```
-
-Cloned repo (pip/venv):
-```bash
-0 0 1 * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --check-selectors || echo "Selectors broken — check ~/.yt-dont-recommend/" | mail -s "yt-dont-recommend alert" you@example.com
-```
-
 To test against a specific channel instead of the default (`@YouTube`):
 
 ```bash
-python yt_dont_recommend.py --check-selectors --test-channel @SomeChannel
+yt-dont-recommend --check-selectors --test-channel @SomeChannel
 ```
 
 ## License
