@@ -174,6 +174,9 @@ To use a different file instead (or a remote URL), pass `--exclude`:
 
 ```bash
 yt-dont-recommend --exclude /path/to/other-list.txt
+```
+
+```bash
 yt-dont-recommend --exclude https://example.com/my-exclusions.txt
 ```
 
@@ -266,9 +269,16 @@ yt-dont-recommend --schedule install
 
 That's it. No crontab editing, no path hunting. Schedules runs at 3:00 AM and 3:00 PM daily using launchd (macOS) or cron (Linux), with the correct binary path filled in automatically.
 
+Check what's installed:
+
 ```bash
-yt-dont-recommend --schedule status   # check what's installed
-yt-dont-recommend --schedule remove   # remove the schedule
+yt-dont-recommend --schedule status
+```
+
+Remove the schedule:
+
+```bash
+yt-dont-recommend --schedule remove
 ```
 
 Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
