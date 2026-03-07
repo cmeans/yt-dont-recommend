@@ -95,6 +95,12 @@ A browser window opens — sign into your Google account, then close it. Your se
 
 ## Usage
 
+For a full list of options:
+
+```bash
+yt-dont-recommend --help
+```
+
 > Examples below use `python` — either activate the venv first (`source .venv/bin/activate`) or prefix each command with `uv run` if using uv.
 
 ```bash
