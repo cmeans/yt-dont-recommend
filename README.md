@@ -349,6 +349,40 @@ yt-dont-recommend --remove-notify
 
 Your topic is a random private string — it is not guessable by others.
 
+## Updates
+
+The tool checks PyPI for a new version once per day. When a newer version is found it logs the information and sends a push notification if ntfy.sh is configured.
+
+Check manually at any time:
+
+```bash
+yt-dont-recommend --check-update
+```
+
+### Auto-upgrade
+
+Enable automatic upgrades — the tool will upgrade itself when a new version is detected:
+
+```bash
+yt-dont-recommend --auto-upgrade enable
+```
+
+The new binary takes effect on the next run. Disable at any time:
+
+```bash
+yt-dont-recommend --auto-upgrade disable
+```
+
+### Reverting an upgrade
+
+If something goes wrong after an upgrade, revert to the previous version:
+
+```bash
+yt-dont-recommend --revert
+```
+
+The previous version is saved automatically before each auto-upgrade. If `--revert` cannot detect your package manager (uv or pipx), it will print the manual install command instead.
+
 ## Checking and Updating Selectors
 
 YouTube changes its DOM structure frequently. When the script starts silently skipping everything (SKIP entries in the log), the selectors are probably broken.

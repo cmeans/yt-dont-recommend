@@ -428,3 +428,78 @@ class TestExcludeFiltering:
         channels = ["@a", "@b"]
         result = self._apply_exclude(channels, "@nothere\n")
         assert result == ["@a", "@b"]
+
+
+class TestVersionChecking:
+    def test_version_tuple_simple(self):
+        assert ydr._version_tuple("1.2.3") == (1, 2, 3)
+
+    def test_version_tuple_single(self):
+        assert ydr._version_tuple("2") == (2,)
+
+    def test_version_tuple_invalid_returns_zero(self):
+        assert ydr._version_tuple("bad") == (0,)
+
+    def test_check_for_update_returns_none_when_pypi_unavailable(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        with patch("yt_dont_recommend._get_latest_pypi_version", return_value=None):
+            result = ydr.check_for_update(state, force=True)
+        assert result is None
+
+    def test_check_for_update_returns_none_when_already_latest(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.1.0"), \
+             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
+            result = ydr.check_for_update(state, force=True)
+        assert result is None
+
+    def test_check_for_update_returns_version_when_newer(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.2.0"), \
+             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
+            result = ydr.check_for_update(state, force=True)
+        assert result == "0.2.0"
+
+    def test_check_for_update_respects_interval(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        from datetime import datetime
+        state = ydr.load_state()
+        # Simulate a recent check that found a newer version
+        state["last_version_check"] = datetime.now().isoformat()
+        state["latest_known_version"] = "0.2.0"
+        with patch("yt_dont_recommend._get_latest_pypi_version") as mock_pypi, \
+             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
+            result = ydr.check_for_update(state, force=False)
+            mock_pypi.assert_not_called()  # should use cached value, not hit PyPI
+        assert result == "0.2.0"
+
+    def test_check_for_update_notifies_ntfy_once(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        state["notify_topic"] = "test-topic"
+        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.2.0"), \
+             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"), \
+             patch("yt_dont_recommend._ntfy_notify") as mock_ntfy:
+            ydr.check_for_update(state, force=True)
+            assert mock_ntfy.call_count == 1
+            # Second call with same version should not re-notify
+            ydr.check_for_update(state, force=True)
+            assert mock_ntfy.call_count == 1
+
+    def test_state_defaults_include_version_fields(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["last_version_check"] is None
+        assert state["latest_known_version"] is None
+        assert state["notified_version"] is None
+        assert state["auto_upgrade"] is False
+        assert state["previous_version"] is None
+
+    def test_revert_with_no_previous_version_prints_message(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        ydr.do_revert()
+        captured = capsys.readouterr()
+        assert "No previous version" in captured.out

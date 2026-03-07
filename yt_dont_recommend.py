@@ -113,6 +113,10 @@ SELECTOR_WARN_AFTER = 3
 # Attention flag file — written when something requires user action between runs
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
+# Version
+__version__ = "0.1.4"
+VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
+
 # Schedule management
 _SCHEDULE_HOURS = (3, 15)  # 3:00 AM and 3:00 PM
 _LAUNCHD_LABEL = "com.user.yt-dont-recommend"
@@ -186,6 +190,11 @@ def load_state() -> dict:
         for k in stale:
             cache[k] = None
         s.setdefault("notify_topic", None)
+        s.setdefault("last_version_check", None)
+        s.setdefault("latest_known_version", None)
+        s.setdefault("notified_version", None)
+        s.setdefault("auto_upgrade", False)
+        s.setdefault("previous_version", None)
         return s
     return {
         "processed": [],
@@ -194,6 +203,11 @@ def load_state() -> dict:
         "last_run": None,
         "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
         "notify_topic": None,
+        "last_version_check": None,
+        "latest_known_version": None,
+        "notified_version": None,
+        "auto_upgrade": False,
+        "previous_version": None,
     }
 
 
@@ -1469,6 +1483,162 @@ def check_attention_flag() -> None:
         input("Press Enter to continue...")
 
 
+# --- Version checking and upgrades ---
+
+def _get_current_version() -> str:
+    """Return the running version, preferring importlib.metadata for installed builds."""
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("yt-dont-recommend")
+    except Exception:
+        return __version__
+
+
+def _get_latest_pypi_version() -> str | None:
+    """Fetch the latest version from PyPI. Returns None on any failure."""
+    try:
+        req = Request(
+            "https://pypi.org/pypi/yt-dont-recommend/json",
+            headers={"User-Agent": f"yt-dont-recommend/{_get_current_version()}"},
+        )
+        with urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        return data["info"]["version"]
+    except Exception:
+        return None
+
+
+def _version_tuple(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except Exception:
+        return (0,)
+
+
+def _detect_installer() -> str | None:
+    """Detect whether the tool was installed via uv tool or pipx."""
+    bin_path = _find_installed_binary()
+    if "uv" in bin_path and "tools" in bin_path:
+        return "uv"
+    if "pipx" in bin_path:
+        return "pipx"
+    return None
+
+
+def check_for_update(state: dict, force: bool = False) -> str | None:
+    """Check PyPI for a newer version. Returns the latest version string if newer, else None.
+
+    Runs at most once per VERSION_CHECK_INTERVAL seconds unless force=True.
+    Sends an ntfy notification the first time a new version is detected.
+    Updates state in-place (caller must save_state if desired).
+    """
+    now = datetime.now().timestamp()
+    if not force:
+        last = state.get("last_version_check")
+        if last:
+            try:
+                elapsed = now - datetime.fromisoformat(last).timestamp()
+                if elapsed < VERSION_CHECK_INTERVAL:
+                    # Still within interval — return cached result without hitting PyPI
+                    latest = state.get("latest_known_version")
+                    current = _get_current_version()
+                    if latest and _version_tuple(latest) > _version_tuple(current):
+                        return latest
+                    return None
+            except Exception:
+                pass
+
+    latest = _get_latest_pypi_version()
+    state["last_version_check"] = datetime.now().isoformat()
+    if not latest:
+        return None
+
+    state["latest_known_version"] = latest
+    current = _get_current_version()
+
+    if _version_tuple(latest) > _version_tuple(current):
+        # Only notify via ntfy once per new version
+        if state.get("notified_version") != latest:
+            topic = state.get("notify_topic")
+            if topic:
+                _ntfy_notify(
+                    topic,
+                    f"yt-dont-recommend {latest} is available (current: {current}). "
+                    f"Run: yt-dont-recommend --check-update"
+                )
+            state["notified_version"] = latest
+        return latest
+
+    return None
+
+
+def do_auto_upgrade(state: dict) -> bool:
+    """Upgrade to the latest version using the detected package manager.
+
+    Saves the current version as previous_version before upgrading so
+    --revert can restore it. Returns True if the upgrade succeeded.
+    The new binary takes effect on the next invocation.
+    """
+    installer = _detect_installer()
+    current = _get_current_version()
+
+    if installer == "uv":
+        cmd = ["uv", "tool", "upgrade", "yt-dont-recommend"]
+    elif installer == "pipx":
+        cmd = ["pipx", "upgrade", "yt-dont-recommend"]
+    else:
+        logging.warning(
+            "Auto-upgrade: cannot detect package manager (uv or pipx). "
+            "Upgrade manually: uv tool upgrade yt-dont-recommend"
+        )
+        return False
+
+    logging.info(f"Auto-upgrading yt-dont-recommend via {installer}...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        state["previous_version"] = current
+        save_state(state)
+        logging.info("Upgrade complete — new version takes effect on next run.")
+        return True
+    else:
+        logging.warning(f"Auto-upgrade failed: {result.stderr.strip()}")
+        return False
+
+
+def do_revert() -> None:
+    """Revert to the version recorded in state before the last auto-upgrade."""
+    state = load_state()
+    prev = state.get("previous_version")
+    if not prev:
+        print("No previous version recorded — nothing to revert to.")
+        return
+
+    installer = _detect_installer()
+    current = _get_current_version()
+
+    if installer == "uv":
+        cmd = ["uv", "tool", "install", "--force", f"yt-dont-recommend=={prev}"]
+    elif installer == "pipx":
+        cmd = ["pipx", "install", "--force", f"yt-dont-recommend=={prev}"]
+    else:
+        print(
+            f"Cannot auto-revert — unknown installer.\n"
+            f"Install manually:\n"
+            f"  uv tool install --force yt-dont-recommend=={prev}\n"
+            f"  pipx install --force yt-dont-recommend=={prev}"
+        )
+        return
+
+    print(f"Reverting from {current} to {prev}...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        state["previous_version"] = None
+        save_state(state)
+        print(f"Reverted to {prev}. Takes effect on next run.")
+    else:
+        print(f"Revert failed: {result.stderr.strip()}")
+
+
 # --- ntfy.sh notification setup ---
 
 def setup_notify() -> None:
@@ -1710,6 +1880,14 @@ def main():
                         ))
     parser.add_argument("--clear-alerts", action="store_true",
                         help="Clear the pending alerts flag file and exit")
+    parser.add_argument("--check-update", action="store_true",
+                        help="Check PyPI for a newer version and exit")
+    parser.add_argument(
+        "--auto-upgrade", choices=["enable", "disable"], metavar="enable|disable",
+        help="Enable or disable automatic upgrades when a new version is detected",
+    )
+    parser.add_argument("--revert", action="store_true",
+                        help="Revert to the version installed before the last auto-upgrade")
     parser.add_argument("--setup-notify", action="store_true",
                         help="Generate a private ntfy.sh topic for push notifications and show subscribe instructions")
     parser.add_argument("--remove-notify", action="store_true",
@@ -1749,6 +1927,36 @@ def main():
 
     if args.test_notify:
         test_notify()
+        return
+
+    if args.check_update:
+        state = load_state()
+        latest = check_for_update(state, force=True)
+        save_state(state)
+        current = _get_current_version()
+        if latest:
+            print(f"New version available: {latest} (you have {current})")
+            installer = _detect_installer()
+            if installer == "uv":
+                print("Upgrade with: uv tool upgrade yt-dont-recommend")
+            elif installer == "pipx":
+                print("Upgrade with: pipx upgrade yt-dont-recommend")
+            else:
+                print("Upgrade with: uv tool upgrade yt-dont-recommend")
+        else:
+            print(f"You are running the latest version ({current}).")
+        return
+
+    if args.auto_upgrade:
+        state = load_state()
+        state["auto_upgrade"] = (args.auto_upgrade == "enable")
+        save_state(state)
+        status = "enabled" if state["auto_upgrade"] else "disabled"
+        print(f"Auto-upgrade {status}.")
+        return
+
+    if args.revert:
+        do_revert()
         return
 
     check_attention_flag()
@@ -1798,6 +2006,16 @@ def main():
     if args.check_selectors:
         ok = check_selectors(args.test_channel)
         sys.exit(0 if ok else 1)
+
+    # Periodic version check (at most once per 24 h; non-blocking on network failure)
+    state = load_state()
+    latest = check_for_update(state)
+    if latest:
+        current = _get_current_version()
+        logging.info(f"New version available: {latest} (you have {current}) — run --check-update for details")
+        if state.get("auto_upgrade"):
+            do_auto_upgrade(state)
+        save_state(state)
 
     # Resolve which sources to run
     if args.source is None:
