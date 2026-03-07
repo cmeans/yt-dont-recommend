@@ -9,13 +9,14 @@ requires-python = ">=3.10"
 description = "Bulk-train YouTube's recommendation algorithm via 'Don't recommend channel' — works on Fire TV, mobile, and smart TVs"
 readme = "README.md"
 license = { file = "LICENSE" }
+dependencies = [
+    "playwright",
+]
+
 [project.urls]
 Homepage = "https://github.com/cmeans/yt-dont-recommend"
 "Bug Tracker" = "https://github.com/cmeans/yt-dont-recommend/issues"
 Changelog = "https://github.com/cmeans/yt-dont-recommend/releases"
-dependencies = [
-    "playwright",
-]
 
 [project.optional-dependencies]
 dev = [
