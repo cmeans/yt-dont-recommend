@@ -4,6 +4,16 @@ Automates YouTube's "Don't recommend channel" action in bulk, using any channel 
 
 No browser extension can do this. Extensions filter content client-side on a single browser. This tool affects the server-side recommendation engine.
 
+## Platform Support
+
+| Platform | Status |
+|----------|--------|
+| Linux    | ✅ Tested and confirmed working (Fedora 43) |
+| macOS    | ⚠️ Code includes macOS support (launchd scheduling etc.) but has not been tested — proceed with caution and please [report issues](https://github.com/cmeans/yt-dont-recommend/issues) |
+| Windows  | ❌ Not supported |
+
+Python 3.10 or later is required on all platforms.
+
 ## Install
 
 **With [uv](https://docs.astral.sh/uv/):**
@@ -58,7 +68,7 @@ playwright install chromium
 
 ## Development Setup
 
-Requires Python 3.10+ and Git. Developed and tested on **Linux (Fedora)**; macOS and Windows are untested.
+Requires Python 3.10+ and Git.
 
 **With [uv](https://docs.astral.sh/uv/) (recommended):**
 
