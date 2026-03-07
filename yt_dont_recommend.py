@@ -57,6 +57,7 @@ import logging.handlers
 import plistlib
 import random
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -184,6 +185,7 @@ def load_state() -> dict:
         stale = [k for k, v in cache.items() if k == v]
         for k in stale:
             cache[k] = None
+        s.setdefault("notify_topic", None)
         return s
     return {
         "processed": [],
@@ -191,6 +193,7 @@ def load_state() -> dict:
         "would_have_blocked": {},
         "last_run": None,
         "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
+        "notify_topic": None,
     }
 
 
@@ -1399,13 +1402,33 @@ def _desktop_notify(message: str) -> None:
         pass
 
 
+def _ntfy_notify(topic: str, message: str) -> None:
+    """POST a notification to ntfy.sh. Fails silently if unavailable."""
+    try:
+        req = Request(
+            f"https://ntfy.sh/{topic}",
+            data=message.encode("utf-8"),
+            headers={
+                "Title": "yt-dont-recommend",
+                "Priority": "high",
+                "Tags": "warning",
+            },
+            method="POST",
+        )
+        with urlopen(req, timeout=10):
+            pass
+    except Exception:
+        pass
+
+
 def write_attention(message: str) -> None:
     """Record an alert that requires user action.
 
-    Appends a timestamped entry to the attention flag file and attempts
-    a desktop notification. The flag file persists across runs until
-    cleared with --clear-alerts, so unattended (cron/launchd) failures
-    are visible the next time the user runs any command.
+    Appends a timestamped entry to the attention flag file, attempts a
+    desktop notification, and sends an ntfy.sh push notification if
+    configured. The flag file persists across runs until cleared with
+    --clear-alerts, so unattended (cron/launchd) failures are visible
+    the next time the user runs any command.
     """
     ATTENTION_FILE.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().isoformat(timespec="seconds")
@@ -1413,6 +1436,10 @@ def write_attention(message: str) -> None:
         f.write(f"[{timestamp}] {message}\n")
     logging.warning(f"ATTENTION: {message}")
     _desktop_notify(message)
+    state = load_state()
+    topic = state.get("notify_topic")
+    if topic:
+        _ntfy_notify(topic, message)
 
 
 def check_attention_flag() -> None:
@@ -1434,6 +1461,56 @@ def check_attention_flag() -> None:
     print(f"{sep}\n")
     if sys.stdin.isatty():
         input("Press Enter to continue...")
+
+
+# --- ntfy.sh notification setup ---
+
+def setup_notify() -> None:
+    """Generate a private ntfy.sh topic and save it to state."""
+    state = load_state()
+    if state.get("notify_topic"):
+        topic = state["notify_topic"]
+        print(f"\nNotifications already configured.")
+        print(f"Topic : {topic}")
+        print(f"URL   : https://ntfy.sh/{topic}")
+        print(f"\nTo reconfigure, run --remove-notify first.")
+        return
+
+    topic = f"ydr-{secrets.token_hex(16)}"
+    state["notify_topic"] = topic
+    save_state(state)
+
+    print(f"\nNotification topic generated.")
+    print(f"\nSubscribe in the ntfy app or browser:")
+    print(f"  https://ntfy.sh/{topic}")
+    print(f"\nSteps:")
+    print(f"  1. Install the ntfy app (https://ntfy.sh) on your phone or desktop.")
+    print(f"  2. Subscribe to the topic above.")
+    print(f"  3. Run: yt-dont-recommend --test-notify")
+    print(f"\nYour topic is private — it is a random string not guessable by others.")
+
+
+def remove_notify() -> None:
+    """Remove the ntfy.sh topic from state."""
+    state = load_state()
+    if not state.get("notify_topic"):
+        print("No notification topic configured.")
+        return
+    state["notify_topic"] = None
+    save_state(state)
+    print("Notification topic removed.")
+
+
+def test_notify() -> None:
+    """Send a test notification to confirm the setup is working."""
+    state = load_state()
+    topic = state.get("notify_topic")
+    if not topic:
+        print("No notification topic configured. Run --setup-notify first.")
+        return
+    print(f"Sending test notification to https://ntfy.sh/{topic} ...")
+    _ntfy_notify(topic, "Test notification — yt-dont-recommend is configured correctly.")
+    print("Sent. Check your ntfy app.")
 
 
 # --- Schedule management ---
@@ -1627,6 +1704,12 @@ def main():
                         ))
     parser.add_argument("--clear-alerts", action="store_true",
                         help="Clear the pending alerts flag file and exit")
+    parser.add_argument("--setup-notify", action="store_true",
+                        help="Generate a private ntfy.sh topic for push notifications and show subscribe instructions")
+    parser.add_argument("--remove-notify", action="store_true",
+                        help="Remove the configured ntfy.sh notification topic")
+    parser.add_argument("--test-notify", action="store_true",
+                        help="Send a test notification to confirm ntfy.sh setup is working")
     parser.add_argument(
         "--schedule",
         choices=["install", "remove", "status"],
@@ -1648,6 +1731,18 @@ def main():
             print("Alerts cleared.")
         else:
             print("No alerts to clear.")
+        return
+
+    if args.setup_notify:
+        setup_notify()
+        return
+
+    if args.remove_notify:
+        remove_notify()
+        return
+
+    if args.test_notify:
+        test_notify()
         return
 
     check_attention_flag()
