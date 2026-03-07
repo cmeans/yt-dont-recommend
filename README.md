@@ -242,13 +242,14 @@ All data lives in `~/.yt-dont-recommend/`:
 | Path | Purpose |
 |------|---------|
 | `browser-profile/` | Chromium profile with your login session |
-| `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings |
+| `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings, notification topic |
 | `run.log` | Timestamped log of all actions (rotates at 1 MB, 5 backups kept) |
+| `needs-attention.txt` | Alert flag written when action is required (e.g. selector failure); auto-cleared on a successful run |
 
 ## Caveats
 
 - **YouTube ToS:** Automating UI interactions may violate YouTube's Terms of Service. Personal use, your own account, your own risk.
-- **Selector fragility:** YouTube's HTML structure changes frequently. The script detects broken selectors automatically — if several consecutive scroll passes yield no parseable channel links, it logs a `POSSIBLE SELECTOR FAILURE` warning and exits early. Run `--check-selectors` to diagnose and get a timestamped report with screenshots.
+- **Selector fragility:** YouTube's HTML structure changes frequently. The script detects broken selectors automatically — if several consecutive scroll passes yield no parseable channel links, it writes an alert and exits early. The alert is shown prominently on the next interactive run and cleared automatically once a successful run confirms the selector is working again. Run `--check-selectors` to diagnose and get a timestamped report with screenshots.
 - **Home feed matching:** The tool can only block channels that appear in your home feed during a run. Channels on the blocklist that never surface in the feed during that session will not be processed. Resume runs until the list is exhausted.
 - **Handle vs. channel ID:** YouTube feed cards expose `@handle` links only — `UCxxx` IDs in a blocklist are automatically resolved to `@handles` before scanning. Results are cached in state so re-resolution is skipped on subsequent runs. Both built-in sources already use `@handle` format; this only applies to custom blocklists.
 - **Start small:** Use `--limit 10` for your first real run to confirm everything is working before processing a full list.
@@ -298,6 +299,33 @@ Find the full path with `which yt-dont-recommend`.
 ```bash
 0 3,15 * * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --headless
 ```
+
+## Notifications
+
+When something requires your attention (e.g. a selector failure during an unattended run), the tool:
+
+1. Writes a timestamped alert to `~/.yt-dont-recommend/needs-attention.txt`
+2. Shows it prominently the next time you run any command (with a pause so you can read it)
+3. Fires a desktop notification via `osascript` (macOS) or `notify-send` (Linux) — best-effort, silent if unavailable
+4. Sends a push notification via [ntfy.sh](https://ntfy.sh) if configured (optional, recommended for unattended use)
+
+The alert is cleared automatically when a subsequent run confirms the selector is working again, or manually with:
+
+```bash
+yt-dont-recommend --clear-alerts
+```
+
+### Push notifications via ntfy.sh (optional)
+
+[ntfy.sh](https://ntfy.sh) is a free, open-source push notification service. No account required. Install the app on your phone or desktop, subscribe to your private topic, and get notified wherever you are.
+
+```bash
+yt-dont-recommend --setup-notify    # generate a private topic and show subscribe instructions
+yt-dont-recommend --test-notify     # send a test notification to confirm it's working
+yt-dont-recommend --remove-notify   # remove the topic
+```
+
+Your topic is a random private string — it is not guessable by others.
 
 ## Checking and Updating Selectors
 

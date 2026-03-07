@@ -728,6 +728,7 @@ def process_channels(channels: list[str], source: str,
         blocked_count = 0
         no_progress_scrolls = 0
         zero_parse_passes = 0
+        selector_confirmed = False
         seen_paths: set[str] = set()
 
         while True:
@@ -860,6 +861,11 @@ def process_channels(channels: list[str], source: str,
                     break
             else:
                 zero_parse_passes = 0
+                if not selector_confirmed and pass_parseable > 0:
+                    selector_confirmed = True
+                    if ATTENTION_FILE.exists():
+                        ATTENTION_FILE.unlink()
+                        logging.info("Selector working — previous attention alert cleared.")
 
             if found_match_this_pass:
                 no_progress_scrolls = 0
