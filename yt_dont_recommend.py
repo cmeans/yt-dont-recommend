@@ -109,6 +109,9 @@ LONG_PAUSE_SECONDS = 30
 MIN_CARDS_FOR_SELECTOR_CHECK = 10
 SELECTOR_WARN_AFTER = 3
 
+# Attention flag file — written when something requires user action between runs
+ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
+
 # Schedule management
 _SCHEDULE_HOURS = (3, 15)  # 3:00 AM and 3:00 PM
 _LAUNCHD_LABEL = "com.user.yt-dont-recommend"
@@ -846,11 +849,10 @@ def process_channels(channels: list[str], source: str,
             if len(cards) >= MIN_CARDS_FOR_SELECTOR_CHECK and pass_parseable == 0:
                 zero_parse_passes += 1
                 if zero_parse_passes >= SELECTOR_WARN_AFTER:
-                    logging.warning(
-                        f"POSSIBLE SELECTOR FAILURE: {zero_parse_passes} consecutive passes "
-                        f"each had {len(cards)}+ feed cards but zero parseable channel links. "
-                        f"YouTube may have changed its DOM structure. "
-                        f"Run --check-selectors to diagnose."
+                    write_attention(
+                        f"Possible selector failure: {zero_parse_passes} consecutive feed passes "
+                        f"each had {len(cards)}+ cards but zero parseable channel links. "
+                        f"YouTube may have changed its DOM. Run --check-selectors to diagnose."
                     )
                     break
             else:
@@ -1377,6 +1379,61 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     return home_ok or channel_ok
 
 
+# --- Attention notifications ---
+
+def _desktop_notify(message: str) -> None:
+    """Attempt a desktop notification. Fails silently if unavailable."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(
+                ["osascript", "-e",
+                 f'display notification "{message}" with title "yt-dont-recommend"'],
+                capture_output=True, timeout=5,
+            )
+        else:
+            subprocess.run(
+                ["notify-send", "--urgency=normal", "yt-dont-recommend", message],
+                capture_output=True, timeout=5,
+            )
+    except Exception:
+        pass
+
+
+def write_attention(message: str) -> None:
+    """Record an alert that requires user action.
+
+    Appends a timestamped entry to the attention flag file and attempts
+    a desktop notification. The flag file persists across runs until
+    cleared with --clear-alerts, so unattended (cron/launchd) failures
+    are visible the next time the user runs any command.
+    """
+    ATTENTION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with open(ATTENTION_FILE, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {message}\n")
+    logging.warning(f"ATTENTION: {message}")
+    _desktop_notify(message)
+
+
+def check_attention_flag() -> None:
+    """Print any pending alerts from previous runs, if present."""
+    if not ATTENTION_FILE.exists():
+        return
+    alerts = ATTENTION_FILE.read_text(encoding="utf-8").strip()
+    if not alerts:
+        ATTENTION_FILE.unlink()
+        return
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print("  ACTION REQUIRED — alerts from previous runs:")
+    print(sep)
+    print(alerts)
+    print(sep)
+    print("  Run --check-selectors to diagnose selector failures.")
+    print("  Run --clear-alerts once the issue is resolved.")
+    print(f"{sep}\n")
+
+
 # --- Schedule management ---
 
 def _find_installed_binary() -> str:
@@ -1566,6 +1623,8 @@ def main():
                             "Channel to use for the --check-selectors channel page test "
                             "(default: @YouTube)"
                         ))
+    parser.add_argument("--clear-alerts", action="store_true",
+                        help="Clear the pending alerts flag file and exit")
     parser.add_argument(
         "--schedule",
         choices=["install", "remove", "status"],
@@ -1580,6 +1639,16 @@ def main():
 
     args = parser.parse_args()
     setup_logging(args.verbose)
+
+    if args.clear_alerts:
+        if ATTENTION_FILE.exists():
+            ATTENTION_FILE.unlink()
+            print("Alerts cleared.")
+        else:
+            print("No alerts to clear.")
+        return
+
+    check_attention_flag()
 
     if args.schedule:
         schedule_cmd(args.schedule)
