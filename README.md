@@ -241,30 +241,49 @@ All data lives in `~/.yt-dont-recommend/`:
 
 ## Running Periodically
 
-Use [cron](https://en.wikipedia.org/wiki/Cron) to schedule automatic runs. Edit your crontab with `crontab -e` and add one of the following lines.
+YouTube's home feed refreshes throughout the day, so twice-daily runs are recommended. After the initial processing pass, runs that find nothing new are fast.
 
-YouTube's home feed refreshes throughout the day, so daily or twice-daily runs are recommended. After the initial processing pass, runs that find nothing new are fast.
+### Automatic setup (recommended)
+
+```bash
+yt-dont-recommend --schedule install
+```
+
+That's it. No crontab editing, no path hunting. Schedules runs at 3:00 AM and 3:00 PM daily using launchd (macOS) or cron (Linux), with the correct binary path filled in automatically.
+
+```bash
+yt-dont-recommend --schedule status   # check what's installed
+yt-dont-recommend --schedule remove   # remove the schedule
+```
+
+Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
+
+### Manual cron setup (advanced)
+
+If you prefer to manage cron yourself, use `crontab -e` and add one of the following.
 
 > Cron runs without your shell environment — use absolute paths throughout.
 
-**Installed via uv tool or pipx** (no project directory needed):
+**Installed via uv tool or pipx:**
+
 ```bash
 # Twice daily — 3am and 3pm
 0 3,15 * * * /path/to/yt-dont-recommend --headless
 ```
+
 Find the full path with `which yt-dont-recommend`.
 
-**Running from a cloned repo (uv):**
+**Cloned repo (uv):**
+
 ```bash
 0 3,15 * * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --headless
 ```
 
-**Running from a cloned repo (pip/venv):**
+**Cloned repo (pip/venv):**
+
 ```bash
 0 3,15 * * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --headless
 ```
-
-Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
 
 ## Checking and Updating Selectors
 

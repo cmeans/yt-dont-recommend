@@ -54,8 +54,11 @@ import argparse
 import json
 import logging
 import logging.handlers
+import plistlib
 import random
 import re
+import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime, date
@@ -105,6 +108,12 @@ LONG_PAUSE_SECONDS = 30
 # the feed card selector is probably broken.
 MIN_CARDS_FOR_SELECTOR_CHECK = 10
 SELECTOR_WARN_AFTER = 3
+
+# Schedule management
+_SCHEDULE_HOURS = (3, 15)  # 3:00 AM and 3:00 PM
+_LAUNCHD_LABEL = "com.user.yt-dont-recommend"
+_LAUNCHD_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
+_CRON_MARKER = "# managed by yt-dont-recommend"
 
 # Selectors used both for processing and selector checks.
 # YouTube changes its DOM frequently — run --check-selectors if things break.
@@ -1358,6 +1367,129 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     return home_ok or channel_ok
 
 
+# --- Schedule management ---
+
+def _find_installed_binary() -> str:
+    """Return the absolute path to use for the schedule entry.
+
+    When running as an installed binary (uv tool / pipx), sys.argv[0] is already
+    the right answer — just resolve it to an absolute path. Falls back to PATH
+    lookup when running in dev mode as 'python yt_dont_recommend.py'.
+    """
+    argv0 = Path(sys.argv[0]).resolve()
+    # Installed binary: no .py extension, file exists
+    if argv0.suffix != ".py" and argv0.exists():
+        return str(argv0)
+    # Dev mode: look for the installed command on PATH
+    found = shutil.which("yt-dont-recommend")
+    if found:
+        return found
+    # Last resort: invoke via the current Python interpreter
+    return f"{sys.executable} {argv0}"
+
+
+def _schedule_macos(action: str, bin_path: str) -> None:
+    plist_path = _LAUNCHD_PLIST
+
+    if action == "status":
+        if not plist_path.exists():
+            print("No schedule installed.")
+            return
+        print(f"Installed:  {plist_path}")
+        result = subprocess.run(
+            ["launchctl", "list", _LAUNCHD_LABEL],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            print("Status:     loaded (will run at 3:00 AM and 3:00 PM daily)")
+        else:
+            print("Status:     plist present but not loaded — try re-running --schedule install")
+        return
+
+    if action == "remove":
+        if not plist_path.exists():
+            print("No schedule to remove.")
+            return
+        subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
+        plist_path.unlink()
+        print("Schedule removed.")
+        return
+
+    # install
+    if plist_path.exists():
+        print("Already scheduled. Run '--schedule remove' first if you want to reinstall.")
+        return
+
+    plist = {
+        "Label": _LAUNCHD_LABEL,
+        "ProgramArguments": [bin_path, "--headless"],
+        "StartCalendarInterval": [
+            {"Hour": h, "Minute": 0} for h in _SCHEDULE_HOURS
+        ],
+        "StandardOutPath": "/dev/null",
+        "StandardErrorPath": "/dev/null",
+        "RunAtLoad": False,
+    }
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(plist_path, "wb") as f:
+        plistlib.dump(plist, f)
+    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
+    print(f"Scheduled to run at 3:00 AM and 3:00 PM daily.")
+    print(f"Plist: {plist_path}")
+    print(f"\nRun logs: {LOG_FILE}")
+
+
+def _schedule_linux(action: str, bin_path: str) -> None:
+    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    existing_lines = result.stdout.splitlines() if result.returncode == 0 else []
+    managed = [l for l in existing_lines if _CRON_MARKER in l]
+    other = [l for l in existing_lines if _CRON_MARKER not in l]
+
+    if action == "status":
+        if managed:
+            print("Scheduled:")
+            for line in managed:
+                print(f"  {line}")
+        else:
+            print("No schedule installed.")
+        return
+
+    if action == "remove":
+        if not managed:
+            print("No schedule to remove.")
+            return
+        new_crontab = "\n".join(other)
+        if new_crontab and not new_crontab.endswith("\n"):
+            new_crontab += "\n"
+        subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
+        print("Schedule removed.")
+        return
+
+    # install
+    if managed:
+        print("Already scheduled. Run '--schedule remove' first if you want to reinstall.")
+        return
+
+    hours = ",".join(str(h) for h in _SCHEDULE_HOURS)
+    cron_line = f"0 {hours} * * * {bin_path} --headless >> /dev/null 2>&1  {_CRON_MARKER}"
+    new_lines = [l for l in other if l.strip()] + [cron_line]
+    new_crontab = "\n".join(new_lines) + "\n"
+    subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
+    print(f"Scheduled to run at 3:00 AM and 3:00 PM daily.")
+    print(f"Entry: {cron_line}")
+    print(f"\nRun logs: {LOG_FILE}")
+    print("To verify: crontab -l")
+
+
+def schedule_cmd(action: str) -> None:
+    """Install, remove, or show status of the automatic run schedule."""
+    bin_path = _find_installed_binary()
+    if sys.platform == "darwin":
+        _schedule_macos(action, bin_path)
+    else:
+        _schedule_linux(action, bin_path)
+
+
 # --- Main ---
 
 def main():
@@ -1424,9 +1556,24 @@ def main():
                             "Channel to use for the --check-selectors channel page test "
                             "(default: @YouTube)"
                         ))
+    parser.add_argument(
+        "--schedule",
+        choices=["install", "remove", "status"],
+        metavar="ACTION",
+        help=(
+            "Manage the automatic run schedule (no cron knowledge required). "
+            "Actions: install, remove, status. "
+            "Uses launchd on macOS, cron on Linux. "
+            "Schedules runs at 3:00 AM and 3:00 PM daily with --headless."
+        ),
+    )
 
     args = parser.parse_args()
     setup_logging(args.verbose)
+
+    if args.schedule:
+        schedule_cmd(args.schedule)
+        return
 
     if args.list_sources:
         print("\nBuilt-in blocklist sources:\n")
