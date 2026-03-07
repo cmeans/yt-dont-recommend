@@ -156,13 +156,29 @@ def load_state() -> dict:
         # Ensure new fields exist for older state files (backward compat)
         s.setdefault("blocked_by", {})
         s.setdefault("would_have_blocked", {})
+        # Migrate old stat key names to descriptive names
+        stats = s.setdefault("stats", {})
+        if "success" in stats:
+            stats["total_blocked"] = stats.pop("success")
+        if "skipped" in stats:
+            stats["total_skipped"] = stats.pop("skipped")
+        if "failed" in stats:
+            stats["total_failed"] = stats.pop("failed")
+        stats.setdefault("total_blocked", 0)
+        stats.setdefault("total_skipped", 0)
+        stats.setdefault("total_failed", 0)
+        # Drop ucxxx_to_handle self-mappings left by earlier versions
+        cache = s.get("ucxxx_to_handle", {})
+        stale = [k for k, v in cache.items() if k == v]
+        for k in stale:
+            cache[k] = None
         return s
     return {
         "processed": [],
         "blocked_by": {},
         "would_have_blocked": {},
         "last_run": None,
-        "stats": {"success": 0, "skipped": 0, "failed": 0},
+        "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
     }
 
 
@@ -464,9 +480,12 @@ def resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[str
     Modern YouTube feed cards expose only @handle links — UCxxx entries in a
     custom blocklist will never match without this resolution step.
 
-    Results are cached in state['ucxxx_to_handle'] so subsequent runs skip
-    already-resolved entries. Returns the channel list with UCxxx replaced by
-    their resolved @handle equivalents (or left as UCxxx if no handle exists).
+    Results are cached in state['ucxxx_to_handle']:
+      - Resolved:   UCxxx → "@handle"  (string)
+      - No handle:  UCxxx → None       (channel predates YouTube's handle system)
+
+    Channels with no resolvable handle are dropped from the return list —
+    they can never match feed cards so there is no point tracking them.
     """
     cache = state.setdefault("ucxxx_to_handle", {})
     ucxxx_entries = [
@@ -498,19 +517,33 @@ def resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[str
                     cache[ucxxx] = handle
                     logging.debug(f"Resolved {ucxxx} → {handle}")
                 else:
-                    cache[ucxxx] = ucxxx  # no @handle; keep UCxxx as-is
-                    logging.debug(f"No @handle for {ucxxx} — keeping UCxxx")
+                    cache[ucxxx] = None  # no @handle; cannot match feed cards
+                    logging.debug(f"No @handle for {ucxxx} — will be skipped")
                 time.sleep(random.uniform(1.0, 2.0))
             except Exception as e:
                 logging.warning(f"Could not resolve {ucxxx}: {e}")
-                cache[ucxxx] = ucxxx
+                cache[ucxxx] = None
         save_state(state)
-    elif cached_count:
-        logging.debug(f"UCxxx resolution: all {cached_count} entr(ies) already cached")
 
-    # Return channel list with UCxxx replaced by resolved handles
-    return [cache.get(ch, ch) if re.match(r'^UC[A-Za-z0-9_-]{22}$', ch) else ch
-            for ch in channels]
+    # Summarise unresolvable channels once (at debug level — don't spam on every run)
+    unresolvable = [ch for ch in ucxxx_entries if cache.get(ch) is None]
+    if unresolvable:
+        logging.debug(
+            f"{len(unresolvable)} UCxxx ID(s) have no @handle on YouTube and "
+            f"will be skipped (cannot match feed cards): {unresolvable}"
+        )
+
+    # Return list with UCxxx replaced by resolved handles; drop unresolvable entries
+    result = []
+    for ch in channels:
+        if re.match(r'^UC[A-Za-z0-9_-]{22}$', ch):
+            resolved = cache.get(ch)
+            if resolved:
+                result.append(resolved)
+            # else: no handle — silently drop
+        else:
+            result.append(ch)
+    return result
 
 
 def fetch_subscriptions(page) -> set[str]:
@@ -749,14 +782,14 @@ def process_channels(channels: list[str], source: str,
                     success = _click_dont_recommend(page, card)
                 except Exception as e:
                     logging.error(f"FAIL {canonical}: {e}")
-                    state["stats"]["failed"] += 1
+                    state["stats"]["total_failed"] += 1
                     save_state(state)
                     continue
 
                 if success:
                     state["processed"].append(canonical)
                     processed_set.add(canonical)
-                    state["stats"]["success"] += 1
+                    state["stats"]["total_blocked"] += 1
                     blocked_count += 1
                     found_match_this_pass = True
 
@@ -785,7 +818,7 @@ def process_channels(channels: list[str], source: str,
 
                     break  # rescan after DOM changes
                 else:
-                    state["stats"]["skipped"] += 1
+                    state["stats"]["total_skipped"] += 1
                     logging.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
                     save_state(state)
 
@@ -1409,7 +1442,10 @@ def main():
         whb = state.get("would_have_blocked", {})
         print(f"\nBlocked channels   : {len(state['processed'])}")
         print(f"Last run           : {state.get('last_run', 'never')}")
-        print(f"Stats              : {state.get('stats', {})}")
+        s = state.get("stats", {})
+        print(f"Total blocked      : {s.get('total_blocked', 0)}")
+        print(f"Total skipped      : {s.get('total_skipped', 0)}  (appeared in feed but menu action failed)")
+        print(f"Total failed       : {s.get('total_failed', 0)}  (error during block attempt)")
         if whb:
             print(f"\nSubscribed channels in blocklist (skipped, notified once):")
             for ch, info in whb.items():

@@ -198,18 +198,18 @@ class TestStateManagement:
         state = ydr.load_state()
         assert state["processed"] == []
         assert state["last_run"] is None
-        assert state["stats"] == {"success": 0, "skipped": 0, "failed": 0}
+        assert state["stats"] == {"total_blocked": 0, "total_skipped": 0, "total_failed": 0}
 
     def test_save_then_load_roundtrip(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
         state["processed"].append("@channel1")
-        state["stats"]["success"] = 1
+        state["stats"]["total_blocked"] = 1
         ydr.save_state(state)
 
         loaded = ydr.load_state()
         assert "@channel1" in loaded["processed"]
-        assert loaded["stats"]["success"] == 1
+        assert loaded["stats"]["total_blocked"] == 1
         assert loaded["last_run"] is not None
 
     def test_save_state_sets_last_run(self, tmp_path, monkeypatch):
@@ -322,7 +322,7 @@ class TestCheckRemovals:
             },
             "would_have_blocked": {},
             "last_run": None,
-            "stats": {"success": len(processed), "skipped": 0, "failed": 0},
+            "stats": {"total_blocked": len(processed), "total_skipped": 0, "total_failed": 0},
         }
 
     def test_unblocks_channel_removed_from_sole_source(self, tmp_path, monkeypatch):

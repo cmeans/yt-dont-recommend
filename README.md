@@ -10,7 +10,7 @@ No browser extension can do this. Extensions filter content client-side on a sin
 
 ```bash
 uv tool install yt-dont-recommend
-playwright install chromium    # one-time: installs the Chromium browser
+uvx playwright install chromium    # one-time: installs the Chromium browser
 yt-dont-recommend --login
 ```
 
@@ -58,9 +58,10 @@ python yt_dont_recommend.py --login
 
 A browser window opens — sign into your Google account, then close it. Your session is saved to `~/.yt-dont-recommend/browser-profile/` and reused on every subsequent run.
 
-> **Debian/Ubuntu:** after `playwright install chromium`, you may also need:
-> - uv: `uv run playwright install-deps chromium`
-> - pip/venv: `playwright install-deps chromium`
+> **Debian/Ubuntu:** after installing Chromium, you may also need system dependencies:
+> - uv tool: `uvx playwright install-deps chromium`
+> - uv (dev): `uv run playwright install-deps chromium`
+> - pipx / pip/venv: `playwright install-deps chromium`
 
 ## Usage
 
