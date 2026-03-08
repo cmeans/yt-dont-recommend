@@ -383,6 +383,12 @@ yt-dont-recommend --revert
 
 The previous version is saved automatically before each auto-upgrade. If `--revert` cannot detect your package manager (uv or pipx), it will print the manual install command instead.
 
+`--revert` automatically disables auto-upgrade so the tool doesn't immediately re-upgrade itself. Re-enable it once you're satisfied the issue is resolved:
+
+```bash
+yt-dont-recommend --auto-upgrade enable
+```
+
 ## Checking and Updating Selectors
 
 YouTube changes its DOM structure frequently. When the script starts silently skipping everything (SKIP entries in the log), the selectors are probably broken.

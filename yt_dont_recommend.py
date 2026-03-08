@@ -1633,8 +1633,11 @@ def do_revert() -> None:
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
         state["previous_version"] = None
+        state["auto_upgrade"] = False
         save_state(state)
         print(f"Reverted to {prev}. Takes effect on next run.")
+        print("Auto-upgrade has been disabled to prevent immediately re-upgrading.")
+        print("Re-enable with: yt-dont-recommend --auto-upgrade enable")
     else:
         print(f"Revert failed: {result.stderr.strip()}")
 
