@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.11"
+__version__ = "0.1.12"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # Schedule management
@@ -304,7 +304,7 @@ def parse_json_blocklist(raw: str) -> list[str]:
 
 
 def fetch_remote(url: str) -> str:
-    req = Request(url, headers={"User-Agent": "yt-dont-recommend/1.0"})
+    req = Request(url, headers={"User-Agent": f"yt-dont-recommend/{_get_current_version()}"})
     try:
         with urlopen(req, timeout=30) as resp:
             return resp.read().decode("utf-8")
@@ -385,7 +385,8 @@ def do_login():
         context = p.chromium.launch_persistent_context(
             str(PROFILE_DIR),
             headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=["--disable-blink-features=AutomationControlled", "--disable-infobars"],
+            ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 800},
         )
         page = context.pages[0] if context.pages else context.new_page()
@@ -695,7 +696,8 @@ def process_channels(channels: list[str], source: str,
         context = p.chromium.launch_persistent_context(
             str(PROFILE_DIR),
             headless=headless,
-            args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
+            args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--disable-infobars"],
+            ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 800},
         )
         for extra in context.pages[1:]:
@@ -887,7 +889,7 @@ def process_channels(channels: list[str], source: str,
                 no_progress_scrolls = 0
             else:
                 page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
-                time.sleep(2.0)
+                time.sleep(random.uniform(1.5, 3.0))
                 no_progress_scrolls += 1
 
         context.close()
@@ -1187,7 +1189,8 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
         context = p.chromium.launch_persistent_context(
             str(PROFILE_DIR),
             headless=False,  # always visible for diagnostics
-            args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
+            args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--disable-infobars"],
+            ignore_default_args=["--enable-automation"],
             viewport={"width": 1280, "height": 800},
         )
         for extra in context.pages[1:]:
