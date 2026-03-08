@@ -381,7 +381,7 @@ If something goes wrong after an upgrade, revert to the previous version:
 yt-dont-recommend --revert
 ```
 
-The previous version is saved automatically before each auto-upgrade. If `--revert` cannot detect your package manager (uv or pipx), it will print the manual install command instead.
+The previous version is tracked automatically on every run, so `--revert` works whether the upgrade was automatic or done manually with `uv` or `pipx`. If `--revert` cannot detect your package manager, it will print the manual install command instead.
 
 `--revert` automatically disables auto-upgrade so the tool doesn't immediately re-upgrade itself. Re-enable it once you're satisfied the issue is resolved:
 
