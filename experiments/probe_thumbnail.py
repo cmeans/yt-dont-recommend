@@ -108,26 +108,27 @@ Title: {title}
 Thumbnail description:
 {description}
 
-A thumbnail is clickbait when it MANUFACTURES drama to deceive — not merely \
-because it looks exciting. Apply these rules strictly:
+Score HIGH (is_clickbait: true, confidence >= 0.80) ONLY when the description \
+explicitly contains at least one of these strong signals:
+  S1. Exaggerated-shock expression — mouth open, eyes wide in a clearly \
+      performed/staged way (not natural surprise or enthusiasm)
+  S2. Sensational overlay text — words like "SHOCKING", "EXPOSED", "YOU WON'T \
+      BELIEVE", "can you spot the fake?", "GONE WRONG", or similar
+  S3. Arrows, red circles, or highlight boxes pointing at something to \
+      manufacture alarm
+  S4. A split-panel comparison clearly designed to mislead or provoke anxiety
 
-FLAG as clickbait only if the description contains:
-- Exaggerated-shock or wide-eyed expressions that feel staged/performed
-- Sensational text overlays designed to withhold info or cause alarm \
-  (e.g. "you won't believe", "EXPOSED", "can you spot the fake?", "SHOCKING")
-- Red circles, arrows, or highlight boxes on something dramatic
-- A split-panel comparison designed to provoke anxiety
-- Thumbnail imagery that clearly contradicts or exaggerates what the title says
+Score LOW (is_clickbait: false, confidence <= 0.30) when:
+  - Background colour (red, bright, dark) is the only dramatic element
+  - A person is present but their expression is neutral, smiling, or serious
+  - The imagery matches the topic (rockets for space, spheres for astronomy, \
+    a host on a news-style set, a character from a show)
+  - Any "drama" is in the subject matter, not manufactured by the thumbnail design
 
-DO NOT flag for:
-- Exciting or dramatic subject matter that matches the title (rockets, space, \
-  action scenes, science experiments)
-- A presenter/host appearing naturally on screen
-- Bold channel branding or normal title-card text
-- Serious or intense expressions that fit the topic (news, documentary)
+When in doubt, score LOW. Reserve HIGH confidence for clear deception signals.
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
-{{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence citing the specific deceptive element"}}
+{{"is_clickbait": true, "confidence": 0.9, "reasoning": "cite the specific signal (S1/S2/S3/S4) you found"}}
 or
 {{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
 """
