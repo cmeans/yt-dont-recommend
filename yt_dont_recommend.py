@@ -1825,6 +1825,8 @@ def main():
         epilog="First run: use --login to authenticate. Then run normally to process.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {_get_current_version()}")
     parser.add_argument("--login", action="store_true",
                         help="Open browser to log into YouTube (do this first)")
     parser.add_argument("--dry-run", action="store_true",
