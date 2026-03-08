@@ -114,13 +114,17 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.19"
+__version__ = "0.1.20"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.
 # Policy: only ADD new keys (never rename/remove/reinterpret existing ones).
 # load_state() warns when it reads a state file written by a newer version.
 STATE_VERSION = 1
+
+# Set to True by write_attention() so main() can exit with code 1 when
+# something serious enough to alert the user occurred during the run.
+_had_attention = False
 
 # Schedule management
 _SCHEDULE_HOURS = (3, 15)  # 3:00 AM and 3:00 PM
@@ -1480,6 +1484,8 @@ def _ntfy_notify(topic: str, message: str) -> None:
 
 
 def write_attention(message: str) -> None:
+    global _had_attention
+    _had_attention = True
     """Record an alert that requires user action.
 
     Appends a timestamped entry to the attention flag file, attempts a
@@ -2313,6 +2319,9 @@ def main():
         )
         if result is not None:
             run_subscriptions = result
+
+    if _had_attention:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
