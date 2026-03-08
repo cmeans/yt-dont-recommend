@@ -497,6 +497,34 @@ class TestVersionChecking:
         assert state["notified_version"] is None
         assert state["auto_upgrade"] is False
         assert state["previous_version"] is None
+        assert state["current_version"] is None
+
+    def test_version_tracked_at_startup_enables_revert_after_manual_upgrade(
+        self, tmp_path, monkeypatch
+    ):
+        """Version tracking at startup should populate previous_version so that
+        --revert works even when the upgrade was done manually (not via auto-upgrade)."""
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+
+        # Simulate: tool previously ran at 0.1.6
+        state = ydr.load_state()
+        state["current_version"] = "0.1.6"
+        ydr.save_state(state)
+
+        # Now "running" 0.1.7 (e.g. after manual uv tool install)
+        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.7")
+
+        # The startup tracking block (replicated here) should rotate the version
+        state = ydr.load_state()
+        _running = ydr._get_current_version()
+        if state.get("current_version") != _running:
+            state["previous_version"] = state.get("current_version")
+            state["current_version"] = _running
+            ydr.save_state(state)
+
+        state = ydr.load_state()
+        assert state["current_version"] == "0.1.7"
+        assert state["previous_version"] == "0.1.6"
 
     def test_revert_with_no_previous_version_prints_message(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")

@@ -327,7 +327,7 @@ yt-dont-recommend --clear-alerts
 
 ### Push notifications via ntfy.sh (optional)
 
-[ntfy.sh](https://ntfy.sh) is a free, open-source push notification service. No account required. Install the app on your phone or desktop, subscribe to your private topic, and get notified wherever you are.
+[ntfy.sh](https://ntfy.sh) is a free, open-source push notification service. No account required — the free tier is all you need. Install the app on your phone or desktop, subscribe to your private topic, and get notified wherever you are.
 
 Generate a private topic and show subscribe instructions:
 

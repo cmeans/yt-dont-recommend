@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # Schedule management
@@ -195,6 +195,7 @@ def load_state() -> dict:
         s.setdefault("notified_version", None)
         s.setdefault("auto_upgrade", False)
         s.setdefault("previous_version", None)
+        s.setdefault("current_version", None)
         return s
     return {
         "processed": [],
@@ -208,6 +209,7 @@ def load_state() -> dict:
         "notified_version": None,
         "auto_upgrade": False,
         "previous_version": None,
+        "current_version": None,
     }
 
 
@@ -1608,7 +1610,11 @@ def do_auto_upgrade(state: dict) -> bool:
 
 
 def do_revert() -> None:
-    """Revert to the version recorded in state before the last auto-upgrade."""
+    """Revert to the previously installed version.
+
+    Works whether the upgrade was automatic or manual — previous_version is
+    updated at startup whenever the running version differs from what's in state.
+    """
     state = load_state()
     prev = state.get("previous_version")
     if not prev:
@@ -2014,6 +2020,14 @@ def main():
 
     # Periodic version check (at most once per 24 h; non-blocking on network failure)
     state = load_state()
+
+    # Track version across runs so --revert works regardless of how the upgrade happened
+    _running = _get_current_version()
+    if state.get("current_version") != _running:
+        state["previous_version"] = state.get("current_version")
+        state["current_version"] = _running
+        save_state(state)
+
     latest = check_for_update(state)
     if latest:
         current = _get_current_version()
