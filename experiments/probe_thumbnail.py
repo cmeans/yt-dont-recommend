@@ -13,6 +13,8 @@ Run:
     .venv/bin/python experiments/probe_thumbnail.py --model gemma3:4b
     .venv/bin/python experiments/probe_thumbnail.py --model llava:7b
     .venv/bin/python experiments/probe_thumbnail.py --model moondream
+    .venv/bin/python experiments/probe_thumbnail.py --two-step
+    .venv/bin/python experiments/probe_thumbnail.py --no-title
 """
 
 import argparse
@@ -70,6 +72,56 @@ Consider both together: does the combination feel designed to manipulate rather 
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
 {{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence describing the key signal(s)"}}
+or
+{{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
+"""
+
+# Two-step prompts (Visual Description Grounding approach from research).
+# Step 1 forces the model to commit to visual facts before any classification.
+# Step 2 classifies based only on that committed description + the title.
+# This breaks the hallucination loop where the model rationalises a label
+# from the title and then invents matching visual evidence.
+
+PROMPT_DESCRIBE = """\
+Look carefully at this image and describe only what you actually see.
+
+Be specific and factual. Include:
+- How many people are visible and their facial expressions (neutral, happy, \
+shocked, exaggerated, etc.)
+- Any text visible in the image (quote it exactly)
+- Any graphic elements: arrows, circles, highlight boxes, comparison panels
+- The overall composition and colour scheme
+- Whether the image looks natural/candid or staged/composed
+
+Do not classify or judge — only describe what is literally present.
+"""
+
+PROMPT_CLASSIFY_FROM_DESCRIPTION = """\
+You are a YouTube clickbait detector.
+
+Video title: {title}
+
+Visual description of the thumbnail:
+{description}
+
+Based on the description above and the title, assess whether this is clickbait.
+
+Clickbait signals:
+- Shocked or exaggerated facial expressions designed to manufacture alarm
+- Sensational text overlays ("YOU WON'T BELIEVE", "SHOCKING", "EXPOSED", \
+"can you spot the fake?")
+- Red circles, arrows, or highlight boxes drawing attention to something dramatic
+- Side-by-side comparisons designed to provoke anxiety or curiosity
+- Thumbnail imagery that mismatches or exaggerates what the title implies
+- Staged or manufactured drama unrelated to actual content
+
+Legitimate signals:
+- Neutral or natural expressions
+- Clean informative imagery matching the topic
+- No manufactured drama or sensational overlays
+
+Reply with raw JSON only — no code fences, no explanation outside the JSON:
+{{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence citing specific visual evidence"}}
 or
 {{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
 """
@@ -143,8 +195,22 @@ def extract_json(raw: str) -> dict:
             "reasoning": raw[:80], "_parse": "failed"}
 
 
+def _chat(model: str, content: str, img_b64: str | None = None) -> str:
+    """Single ollama.chat call. Returns raw response text."""
+    msg: dict = {"role": "user", "content": content}
+    if img_b64:
+        msg["images"] = [img_b64]
+    response = ollama.chat(
+        model=model,
+        messages=[msg],
+        options={"temperature": 0},
+    )
+    return response.message.content
+
+
 def classify_thumbnail(model: str, video_id: str, title: str,
-                        no_title: bool = False) -> tuple[dict, float, str]:
+                        no_title: bool = False,
+                        two_step: bool = False) -> tuple[dict, float, str]:
     """Fetch thumbnail and classify with vision model. Returns (result, elapsed, status)."""
     img_data, fetch_status = fetch_thumbnail_b64(video_id)
     if img_data is None:
@@ -152,21 +218,26 @@ def classify_thumbnail(model: str, video_id: str, title: str,
                 "reasoning": "thumbnail unavailable"}, 0.0, fetch_status
 
     img_b64 = base64.b64encode(img_data).decode()
-    prompt  = PROMPT_NO_TITLE if no_title else PROMPT_WITH_TITLE.format(title=title)
-
     t0 = time.monotonic()
-    response = ollama.chat(
-        model=model,
-        messages=[{
-            "role":    "user",
-            "content": prompt,
-            "images":  [img_b64],
-        }],
-        options={"temperature": 0},
-    )
-    elapsed = time.monotonic() - t0
 
-    result = extract_json(response.message.content)
+    if two_step:
+        # Step 1 — describe only what is visually present (image required)
+        description = _chat(model, PROMPT_DESCRIBE, img_b64)
+
+        # Step 2 — classify from the committed description (no image, text only)
+        classify_prompt = PROMPT_CLASSIFY_FROM_DESCRIPTION.format(
+            title=title,
+            description=description.strip(),
+        )
+        raw = _chat(model, classify_prompt)
+        result = extract_json(raw)
+        result["_description"] = description.strip()[:200]
+    else:
+        prompt = PROMPT_NO_TITLE if no_title else PROMPT_WITH_TITLE.format(title=title)
+        raw    = _chat(model, prompt, img_b64)
+        result = extract_json(raw)
+
+    elapsed = time.monotonic() - t0
     result["video_id"] = video_id
     result["model"]    = model
     return result, elapsed, "ok"
@@ -180,10 +251,19 @@ def main():
                         help="Confidence threshold to flag as clickbait (default: 0.75)")
     parser.add_argument("--no-title", action="store_true",
                         help="Classify thumbnail visually only — omit title from prompt")
+    parser.add_argument("--two-step", action="store_true",
+                        help="Two-step: describe image first, then classify from description "
+                             "(reduces hallucination)")
     args = parser.parse_args()
 
-    print(f"\nModel: {args.model}  |  Threshold: {args.threshold}  |  "
-          f"Mode: {'thumbnail-only (no title)' if args.no_title else 'thumbnail + title'}\n")
+    if args.two_step:
+        mode = "two-step (describe → classify)"
+    elif args.no_title:
+        mode = "thumbnail-only (no title)"
+    else:
+        mode = "thumbnail + title"
+
+    print(f"\nModel: {args.model}  |  Threshold: {args.threshold}  |  Mode: {mode}\n")
     print(f"{'Title':<52} {'Exp':>3} {'CB?':>5} {'Conf':>5} {'Time':>6}  "
           f"{'Parse':<7}  Reasoning")
     print("-" * 130)
@@ -192,7 +272,9 @@ def main():
 
     for video_id, title, expected in SAMPLE_VIDEOS:
         result, elapsed, status = classify_thumbnail(
-            args.model, video_id, title, no_title=args.no_title
+            args.model, video_id, title,
+            no_title=args.no_title,
+            two_step=args.two_step,
         )
 
         is_cb  = result.get("is_clickbait")
@@ -217,6 +299,8 @@ def main():
 
         print(f"{title[:51]:<52} {exp_str:>3} {flag:>5} {conf_str:>5} "
               f"{elapsed:>5.1f}s  {parse:<7}  {reason} {note}")
+        if args.two_step and "_description" in result:
+            print(f"  └─ saw: {result['_description'][:120]}")
 
     print("-" * 130)
 
