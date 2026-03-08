@@ -1583,7 +1583,9 @@ def do_auto_upgrade(state: dict) -> bool:
     current = _get_current_version()
 
     if installer == "uv":
-        cmd = ["uv", "tool", "upgrade", "yt-dont-recommend"]
+        # Use install@latest rather than upgrade — works whether or not the
+        # version is pinned (e.g. after a --revert which pins to a specific version)
+        cmd = ["uv", "tool", "install", "yt-dont-recommend@latest"]
     elif installer == "pipx":
         cmd = ["pipx", "upgrade", "yt-dont-recommend"]
     else:
@@ -1942,12 +1944,10 @@ def main():
         if latest:
             print(f"New version available: {latest} (you have {current})")
             installer = _detect_installer()
-            if installer == "uv":
-                print("Upgrade with: uv tool upgrade yt-dont-recommend")
-            elif installer == "pipx":
+            if installer == "pipx":
                 print("Upgrade with: pipx upgrade yt-dont-recommend")
             else:
-                print("Upgrade with: uv tool upgrade yt-dont-recommend")
+                print("Upgrade with: uv tool install yt-dont-recommend@latest")
         else:
             print(f"You are running the latest version ({current}).")
         return

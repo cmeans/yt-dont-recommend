@@ -41,7 +41,7 @@ After `--login` your session is saved to `~/.yt-dont-recommend/browser-profile/`
 **With uv:**
 
 ```bash
-uv tool upgrade yt-dont-recommend
+uv tool install yt-dont-recommend@latest
 ```
 
 **With pipx:**
