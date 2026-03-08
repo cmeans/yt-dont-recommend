@@ -8,7 +8,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,3 +22,20 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/ -v
+
+  smoke-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install package
+        run: uv tool install .
+
+      - name: Smoke test CLI
+        run: |
+          yt-dont-recommend --version
+          yt-dont-recommend --help
+          yt-dont-recommend --list-sources
+          yt-dont-recommend --schedule status
