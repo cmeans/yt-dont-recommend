@@ -32,7 +32,7 @@ except ImportError:
 # Mix of clear clickbait, borderline, and legitimate.
 SAMPLE_VIDEOS = [
     # The trigger case — thumbnail is the primary signal
-    ("kHHiKB5YNMU", "If YOU Can't Tell What's AI, You NEED To See This!", True),
+    ("vIJXfUy5cT4", "If YOU Can't Tell What's AI, You NEED To See This!", True),
     # Clear clickbait (thumbnails likely have shocked faces, arrows, ALL CAPS)
     ("wm-AMmwtZAg", "THIS Is #1 FASTEST Way To BURN Dangerous Fat",        True),
     # Borderline title — thumbnail may clarify
@@ -48,7 +48,7 @@ THUMBNAIL_URLS = [
     "https://img.youtube.com/vi/{vid}/hqdefault.jpg",   # fallback
 ]
 
-PROMPT = """\
+PROMPT_WITH_TITLE = """\
 You are a YouTube clickbait detector. Analyse this video thumbnail and title together.
 
 Title: {title}
@@ -70,6 +70,28 @@ Consider both together: does the combination feel designed to manipulate rather 
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
 {{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence describing the key signal(s)"}}
+or
+{{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
+"""
+
+PROMPT_NO_TITLE = """\
+You are a YouTube clickbait detector. Analyse this video thumbnail on its visual content alone.
+
+Clickbait signals to look for:
+- Shocked, exaggerated, or distressed facial expressions
+- Bold text overlays making sensational claims ("YOU WON'T BELIEVE", "SHOCKING", "EXPOSED")
+- Red circles, arrows, or highlight boxes drawing attention to something dramatic
+- Side-by-side comparisons designed to provoke curiosity or anxiety
+- AI-generated or misleading imagery used for shock value
+- Overly dramatic or staged composition
+
+Legitimate thumbnail signals:
+- Clear, informative imagery that matches the topic
+- Neutral or natural facial expressions
+- Clean composition without manufactured drama
+
+Reply with raw JSON only — no code fences, no explanation outside the JSON:
+{{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence describing the visual signal(s)"}}
 or
 {{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
 """
@@ -122,7 +144,7 @@ def extract_json(raw: str) -> dict:
 
 
 def classify_thumbnail(model: str, video_id: str, title: str,
-                        threshold: float) -> tuple[dict, float, str]:
+                        no_title: bool = False) -> tuple[dict, float, str]:
     """Fetch thumbnail and classify with vision model. Returns (result, elapsed, status)."""
     img_data, fetch_status = fetch_thumbnail_b64(video_id)
     if img_data is None:
@@ -130,7 +152,7 @@ def classify_thumbnail(model: str, video_id: str, title: str,
                 "reasoning": "thumbnail unavailable"}, 0.0, fetch_status
 
     img_b64 = base64.b64encode(img_data).decode()
-    prompt  = PROMPT.format(title=title)
+    prompt  = PROMPT_NO_TITLE if no_title else PROMPT_WITH_TITLE.format(title=title)
 
     t0 = time.monotonic()
     response = ollama.chat(
@@ -156,9 +178,12 @@ def main():
                         help="Multimodal Ollama model (default: gemma3:4b)")
     parser.add_argument("--threshold", type=float, default=0.75,
                         help="Confidence threshold to flag as clickbait (default: 0.75)")
+    parser.add_argument("--no-title", action="store_true",
+                        help="Classify thumbnail visually only — omit title from prompt")
     args = parser.parse_args()
 
-    print(f"\nModel: {args.model}  |  Threshold: {args.threshold}\n")
+    print(f"\nModel: {args.model}  |  Threshold: {args.threshold}  |  "
+          f"Mode: {'thumbnail-only (no title)' if args.no_title else 'thumbnail + title'}\n")
     print(f"{'Title':<52} {'Exp':>3} {'CB?':>5} {'Conf':>5} {'Time':>6}  "
           f"{'Parse':<7}  Reasoning")
     print("-" * 130)
@@ -167,7 +192,7 @@ def main():
 
     for video_id, title, expected in SAMPLE_VIDEOS:
         result, elapsed, status = classify_thumbnail(
-            args.model, video_id, title, args.threshold
+            args.model, video_id, title, no_title=args.no_title
         )
 
         is_cb  = result.get("is_clickbait")
