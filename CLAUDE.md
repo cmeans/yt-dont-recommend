@@ -120,7 +120,8 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
     "@SomeChannel": {"sources": ["deslop"], "first_seen": "...", "notified": true}
   },
   "last_run": "...",
-  "stats": {"success": 1, "skipped": 0, "failed": 0}
+  "stats": {"total_blocked": 1, "total_skipped": 0, "total_failed": 0},
+  "source_sizes": {"deslop": 121, "aislist": 8400}
 }
 ```
 
@@ -150,7 +151,8 @@ def fetch_subscriptions(page) -> set[str]:
 | `--dry-run` | Show what would be processed without acting |
 | `--headless` | Run without a visible browser window |
 | `--unblock-policy {all,any}` | When to auto-unblock channels removed from lists (default: `all`) |
-| `--stats` | Show processed count, success/skip/fail, and `would_have_blocked` entries |
+| `--stats` | Show blocked count, per-source breakdown, success/skip/fail totals, and `would_have_blocked` entries |
+| `--export-state [FILE]` | Dump all blocked channels as a standard plain-text blocklist with source annotations; writes to FILE or stdout |
 | `--reset-state` | Clear all state and start over |
 | `--list-sources` | Print built-in source names |
 | `--check-selectors` | Run 4-context selector diagnostic, save report + screenshots |
