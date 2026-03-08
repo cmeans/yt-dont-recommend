@@ -93,8 +93,8 @@ The correct `aria-label` for the home feed "More actions" button is `'More actio
 
 The tool's processing approach is the **home feed scanner**: navigate to `youtube.com`, scan `ytd-rich-item-renderer` cards for channels matching the blocklist, click the three-dot menu, select "Don't recommend channel", scroll for more cards, repeat.
 
-### AiSList JSON format — UNVERIFIED
-The `aislist` parser is a best-guess. The schema has not been confirmed against the live file. Start with `--source deslop` (verified).
+### AiSList format — VERIFIED
+The `aislist` source is plain text with `!` comments, ~8400+ channels. Format confirmed against the live file. Both built-in sources are verified and working.
 
 ## Architecture
 
