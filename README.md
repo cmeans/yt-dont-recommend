@@ -140,8 +140,14 @@ yt-dont-recommend --exclude ~/.yt-dont-recommend/exclude.txt
 # Run in headless mode (no visible browser)
 yt-dont-recommend --headless
 
-# Check progress (includes subscription-protected channels)
+# Check progress — includes per-source breakdown and subscription-protected channels
 yt-dont-recommend --stats
+
+# Export blocked channels as a plain-text blocklist (stdout)
+yt-dont-recommend --export-state
+
+# Export to a file
+yt-dont-recommend --export-state ~/my-blocks.txt
 
 # Control when a channel is auto-unblocked after being removed from a list
 yt-dont-recommend --unblock-policy all   # default: unblock only when gone from all sources

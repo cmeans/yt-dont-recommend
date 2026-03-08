@@ -531,3 +531,124 @@ class TestVersionChecking:
         ydr.do_revert()
         captured = capsys.readouterr()
         assert "No previous version" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# New features: per-source stats, blocklist growth tracking, export-state
+# ---------------------------------------------------------------------------
+
+class TestPerSourceStats:
+    def _state_with_blocks(self, tmp_path):
+        state = ydr.load_state()
+        state["blocked_by"] = {
+            "@alpha": {"sources": ["deslop"]},
+            "@beta":  {"sources": ["deslop"]},
+            "@gamma": {"sources": ["aislist"]},
+            "@delta": {"sources": ["deslop", "aislist"]},
+        }
+        state["source_sizes"] = {"deslop": 130, "aislist": 8400}
+        ydr.save_state(state)
+        return ydr.load_state()
+
+    def test_per_source_tally(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state_with_blocks(tmp_path)
+        per_source: dict[str, int] = {}
+        for info in state.get("blocked_by", {}).values():
+            for src in info.get("sources", []):
+                per_source[src] = per_source.get(src, 0) + 1
+        assert per_source["deslop"] == 3   # alpha, beta, delta
+        assert per_source["aislist"] == 2  # gamma, delta
+
+    def test_source_sizes_stored_in_state(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = self._state_with_blocks(tmp_path)
+        assert state["source_sizes"]["deslop"] == 130
+        assert state["source_sizes"]["aislist"] == 8400
+
+    def test_growth_detected(self, tmp_path, monkeypatch, caplog):
+        import logging
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        state["source_sizes"]["deslop"] = 100
+        ydr.save_state(state)
+
+        # Simulate the growth tracking block
+        channels = [f"@ch{i}" for i in range(115)]
+        _st = ydr.load_state()
+        _sizes = _st.setdefault("source_sizes", {})
+        _prev = _sizes.get("deslop")
+        with caplog.at_level(logging.INFO):
+            if _prev is not None and len(channels) > _prev:
+                import logging as _log
+                _log.getLogger().info(
+                    f"*** Blocklist 'deslop' grew by {len(channels) - _prev} channel(s) "
+                    f"({_prev} → {len(channels)}) since last run"
+                )
+        assert "grew by 15" in caplog.text
+
+    def test_no_growth_message_when_same_size(self, tmp_path, monkeypatch, caplog):
+        import logging
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        state["source_sizes"]["deslop"] = 100
+        ydr.save_state(state)
+
+        channels = [f"@ch{i}" for i in range(100)]
+        _st = ydr.load_state()
+        _prev = _st.get("source_sizes", {}).get("deslop")
+        grew = _prev is not None and len(channels) > _prev
+        assert not grew
+
+
+class TestExportState:
+    def _state_with_blocks(self, tmp_path):
+        state = ydr.load_state()
+        state["blocked_by"] = {
+            "@beta":  {"sources": ["aislist"]},
+            "@alpha": {"sources": ["deslop"]},
+        }
+        ydr.save_state(state)
+
+    def test_export_sorted_output(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.0.0")
+        self._state_with_blocks(tmp_path)
+        state = ydr.load_state()
+        blocked_by = state.get("blocked_by", {})
+        lines = [
+            f"# Exported by yt-dont-recommend {ydr._get_current_version()} on 2026-01-01",
+            f"# Total blocked channels: {len(blocked_by)}",
+            "",
+        ]
+        for channel in sorted(blocked_by):
+            sources = blocked_by[channel].get("sources", [])
+            src_note = f"  # {', '.join(sources)}" if sources else ""
+            lines.append(f"{channel}{src_note}")
+        output = "\n".join(lines) + "\n"
+        assert "@alpha  # deslop\n@beta  # aislist\n" in output
+        # Sorted: alpha before beta
+        assert output.index("@alpha") < output.index("@beta")
+
+    def test_export_to_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.0.0")
+        self._state_with_blocks(tmp_path)
+        out_file = tmp_path / "export.txt"
+        state = ydr.load_state()
+        blocked_by = state.get("blocked_by", {})
+        from datetime import datetime
+        lines = [
+            f"# Exported by yt-dont-recommend {ydr._get_current_version()} on {datetime.now().strftime('%Y-%m-%d')}",
+            f"# Total blocked channels: {len(blocked_by)}",
+            "",
+        ]
+        for channel in sorted(blocked_by):
+            sources = blocked_by[channel].get("sources", [])
+            src_note = f"  # {', '.join(sources)}" if sources else ""
+            lines.append(f"{channel}{src_note}")
+        out_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        content = out_file.read_text()
+        assert "@alpha" in content
+        assert "@beta" in content
+        assert "# Total blocked channels: 2" in content

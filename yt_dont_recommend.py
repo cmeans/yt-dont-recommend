@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.12"
+__version__ = "0.1.13"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # Schedule management
@@ -196,6 +196,7 @@ def load_state() -> dict:
         s.setdefault("auto_upgrade", False)
         s.setdefault("previous_version", None)
         s.setdefault("current_version", None)
+        s.setdefault("source_sizes", {})
         return s
     return {
         "processed": [],
@@ -210,6 +211,7 @@ def load_state() -> dict:
         "auto_upgrade": False,
         "previous_version": None,
         "current_version": None,
+        "source_sizes": {},
     }
 
 
@@ -1883,6 +1885,8 @@ def main():
                         help="Show available built-in blocklist sources")
     parser.add_argument("--stats", action="store_true",
                         help="Show processing statistics and exit")
+    parser.add_argument("--export-state", nargs="?", const="-", metavar="FILE",
+                        help="Export blocked channels as a plain-text blocklist. Writes to FILE, or stdout if omitted.")
     parser.add_argument("--check-selectors", action="store_true",
                         help=(
                             "Test whether the DOM selectors still work against live YouTube. "
@@ -2007,12 +2011,43 @@ def main():
         print(f"Total blocked      : {s.get('total_blocked', 0)}")
         print(f"Total skipped      : {s.get('total_skipped', 0)}  (appeared in feed but menu action failed)")
         print(f"Total failed       : {s.get('total_failed', 0)}  (error during block attempt)")
+        # Per-source breakdown from blocked_by
+        per_source: dict[str, int] = {}
+        for info in state.get("blocked_by", {}).values():
+            for src in info.get("sources", []):
+                per_source[src] = per_source.get(src, 0) + 1
+        if per_source:
+            print(f"\nBlocked by source  :")
+            for src, count in sorted(per_source.items(), key=lambda x: -x[1]):
+                size = state.get("source_sizes", {}).get(src)
+                size_str = f"  (list size: {size})" if size is not None else ""
+                print(f"  {src:<16s} {count:>5d}{size_str}")
         if whb:
             print(f"\nSubscribed channels in blocklist (skipped, notified once):")
             for ch, info in whb.items():
                 print(f"  {ch}  (sources: {info.get('sources', [])}, first seen: {info.get('first_seen', '?')[:10]})")
         print(f"\nState file         : {STATE_FILE}")
         print(f"Log file           : {LOG_FILE}")
+        return
+
+    if args.export_state is not None:
+        state = load_state()
+        blocked_by = state.get("blocked_by", {})
+        lines = [
+            f"# Exported by yt-dont-recommend {_get_current_version()} on {datetime.now().strftime('%Y-%m-%d')}",
+            f"# Total blocked channels: {len(blocked_by)}",
+            "",
+        ]
+        for channel in sorted(blocked_by):
+            sources = blocked_by[channel].get("sources", [])
+            src_note = f"  # {', '.join(sources)}" if sources else ""
+            lines.append(f"{channel}{src_note}")
+        output = "\n".join(lines) + "\n"
+        if args.export_state == "-":
+            print(output, end="")
+        else:
+            Path(args.export_state).write_text(output, encoding="utf-8")
+            print(f"Exported {len(blocked_by)} channels to {args.export_state}")
         return
 
     if args.reset_state:
@@ -2063,6 +2098,16 @@ def main():
         except RuntimeError as e:
             logging.error(f"Could not load source '{source}': {e} — skipping.")
             continue
+        # Track source size and notify on growth
+        _st = load_state()
+        _sizes = _st.setdefault("source_sizes", {})
+        _prev = _sizes.get(source)
+        if _prev is not None and len(channels) > _prev:
+            _growth = len(channels) - _prev
+            logging.info(f"*** Blocklist '{source}' grew by {_growth} channel(s) ({_prev} → {len(channels)}) since last run")
+        _sizes[source] = len(channels)
+        save_state(_st)
+        del _st, _sizes, _prev
         if exclude_set:
             before = len(channels)
             channels = [c for c in channels if c.lower() not in exclude_set]
