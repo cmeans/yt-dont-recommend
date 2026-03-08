@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.18"
+__version__ = "0.1.19"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.
@@ -294,6 +294,8 @@ def parse_json_blocklist(raw: str) -> list[str]:
                     for key in ("channelHandle", "handle", "channelId", "id", "url"):
                         if key in entry:
                             val = entry[key]
+                            if not isinstance(val, str):
+                                continue
                             if val.startswith("http"):
                                 path = urlparse(val).path  # e.g. /@handle
                                 if path.startswith("/@"):
@@ -650,11 +652,13 @@ def fetch_subscriptions(page) -> set[str]:
     if subscriptions:
         logging.info(f"Found {len(subscriptions)} subscribed channels")
     else:
-        logging.warning(
+        msg = (
             "No subscriptions found — the subscriptions page may have changed its layout. "
             "Subscription protection is disabled for this run. "
-            "Run --check-selectors and check manually."
+            "Check manually and run --check-selectors."
         )
+        logging.warning(msg)
+        write_attention(msg)
     return subscriptions
 
 
@@ -1433,7 +1437,7 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
     pr(f"\nReport saved: {report_path}")
 
-    return home_ok or channel_ok
+    return home_ok or header_ok
 
 
 # --- Attention notifications ---

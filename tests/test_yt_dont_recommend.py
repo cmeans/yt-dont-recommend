@@ -167,6 +167,16 @@ class TestParseJsonBlocklist:
         assert "@string-channel" in result
         assert "UCxxxxxxxxxxxxxxxxxxxxxxxx" in result
 
+    def test_null_value_in_dict_entry_skipped(self):
+        # null channel values should be skipped without raising AttributeError
+        raw = json.dumps([{"channelHandle": None}, {"channelHandle": "@valid"}])
+        assert ydr.parse_json_blocklist(raw) == ["@valid"]
+
+    def test_numeric_value_in_dict_entry_skipped(self):
+        # numeric channel IDs should be skipped without raising AttributeError
+        raw = json.dumps([{"channelId": 12345}, {"channelHandle": "@valid"}])
+        assert ydr.parse_json_blocklist(raw) == ["@valid"]
+
 
 # ---------------------------------------------------------------------------
 # channel_to_url
