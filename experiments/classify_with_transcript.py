@@ -48,12 +48,11 @@ SAMPLE_VIDEOS = [
     ("roNZr_i8iOY", "Surprise! Milky Way Might Not Have a Black Hole After All",       False),
     ("B6ZAQUqSkkA", "Rose meets the Doctor | The End of Time | Doctor Who",             False),
     ("zzTFCarWGEc", "Another Forever War Just Got the Green Light | Kat Abughazaleh",  False),
-    # No transcript available (disabled)
+    # No transcript available (disabled) — exercises --no-transcript path
     ("0qo78R_yYFA", "SpaceX Interplanetary Transport System",                           False),
-    # Synthetic clickbait titles paired with real IDs for transcript testing
-    # (the ID just provides a real transcript; title is the thing being classified)
-    ("cygLFHOi9S4", "You WON'T BELIEVE What SpaceX Just Did (SHOCKING Revelation)",   True),
-    ("roNZr_i8iOY", "Scientists LIED About Black Holes — The Truth Will SHOCK You",    True),
+    # Real clickbait videos with transcripts — exercises transcript stage
+    ("wm-AMmwtZAg", "THIS Is #1 FASTEST Way To BURN Dangerous Fat",                    True),
+    ("vIJXfUy5cT4", "If YOU Can't Tell What's AI, You NEED To See This!",              True),
 ]
 
 
