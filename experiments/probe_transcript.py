@@ -40,13 +40,16 @@ def approx_tokens(text: str) -> int:
     return len(text) // CHARS_PER_TOKEN
 
 
+_api = YouTubeTranscriptApi()
+
+
 def fetch_transcript(video_id: str) -> tuple[str | None, float, str]:
     """Fetch transcript text. Returns (text_or_None, elapsed_seconds, status)."""
     t0 = time.monotonic()
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US"])
+        fetched = _api.fetch(video_id, languages=["en", "en-US"])
         elapsed = time.monotonic() - t0
-        text = " ".join(seg["text"] for seg in transcript)
+        text = " ".join(seg.text for seg in fetched)
         return text, elapsed, "ok"
     except TranscriptsDisabled:
         elapsed = time.monotonic() - t0
@@ -61,10 +64,10 @@ def fetch_transcript(video_id: str) -> tuple[str | None, float, str]:
 
 def list_available_languages(video_id: str) -> list[str]:
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = _api.list(video_id)
         langs = []
         for t in transcript_list:
-            tag = f"{t.language_code}"
+            tag = t.language_code
             if t.is_generated:
                 tag += "(auto)"
             langs.append(tag)
