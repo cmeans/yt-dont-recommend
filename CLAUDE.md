@@ -170,7 +170,8 @@ def fetch_subscriptions(page) -> set[str]:
 | `--setup-notify` | Generate a private ntfy.sh topic and show subscribe instructions |
 | `--remove-notify` | Remove the configured ntfy.sh topic |
 | `--test-notify` | Send a test push notification |
-| `--schedule install\|remove\|status` | Manage scheduled runs via launchd (macOS) or cron (Linux) |
+| `--schedule install\|remove\|status` | Manage scheduled runs via launchd (macOS) or cron (Linux); install is idempotent |
+| `--schedule-hours EXPR` | Override run hours for `--schedule install`. Formats: `6,18` (comma-separated 24h integers), `*/4` (every N hours, step 1–23), `hourly`. Default: 3,15. |
 | `--uninstall` | Remove schedule, offer to delete data dir, print package manager uninstall command |
 | `--version` | Print installed version and exit |
 | `--verbose` | Extra logging |

@@ -331,6 +331,21 @@ yt-dont-recommend --schedule install
 
 That's it. No crontab editing, no path hunting. Schedules runs at 3:00 AM and 3:00 PM daily using launchd (macOS) or cron (Linux), with the correct binary path filled in automatically.
 
+To use different hours, pass `--schedule-hours`:
+
+```bash
+# Specific hours (24h, comma-separated)
+yt-dont-recommend --schedule install --schedule-hours 6,18
+
+# Every 4 hours
+yt-dont-recommend --schedule install --schedule-hours "*/4"
+
+# Every hour
+yt-dont-recommend --schedule install --schedule-hours hourly
+```
+
+Re-running `--schedule install` replaces any existing schedule — no need to remove first.
+
 Check what's installed:
 
 ```bash
