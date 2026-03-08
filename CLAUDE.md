@@ -34,14 +34,12 @@ The local file path is the most important for shareability. Someone curates a li
 
 ## End-to-End Test Cycle
 
+> **Note:** `feed-check.py` referenced below is an informal dev script written ad-hoc during testing. It is not in the repo. The principle — confirm a target channel is visible in the home feed before running — still applies.
+
 The full block/unblock test cycle requires these steps in order. Some steps have mandatory wait periods tied to YouTube's algorithm latency.
 
 ### Step 1 — Check the feed first
-Before running the script, confirm at least one target channel is present in the home feed:
-```
-.venv/bin/python /tmp/feed-check.py
-```
-**Do not skip this.** If no target channels are in the feed, the script will scroll through the entire feed and find nothing — which is wasted time and an inconclusive test. See Step 2 if the feed has no hits.
+Before running the script, confirm at least one target channel is present in the home feed. Do this manually or with a quick ad-hoc script. **Do not skip this.** If no target channels are in the feed, the script will scroll through the entire feed and find nothing — which is wasted time and an inconclusive test. See Step 2 if the feed has no hits.
 
 ### Step 2 — Prime the feed (if needed)
 If no target channels appear, watch and like 2–3 videos from a target channel in Chrome (the same Google account). YouTube's feed refresh typically picks this up within one feed reload, but can take up to ~10 minutes. Re-run `feed-check.py` to confirm before proceeding.
@@ -66,11 +64,7 @@ The script will detect the removal, navigate to myactivity, and prompt for Googl
 > **Password verification latency**: Google requires re-authentication to access myactivity feedback entries. The browser window will show the password prompt; the script polls for up to 3 minutes. This is normal — enter the password and wait.
 
 ### Step 6 — Confirm the channel is back in the feed
-Re-run `feed-check.py` immediately after the unblock completes:
-```
-.venv/bin/python /tmp/feed-check.py
-```
-A hit here confirms the full cycle worked. If the channel doesn't appear, wait a few minutes and check again — YouTube may cache the "Don't recommend" signal briefly before the deletion propagates.
+Check the home feed manually (or via an ad-hoc script) immediately after the unblock completes. A hit here confirms the full cycle worked. If the channel doesn't appear, wait a few minutes and check again — YouTube may cache the "Don't recommend" signal briefly before the deletion propagates.
 
 > **Algorithm propagation latency**: After unblocking, YouTube's recommendation engine can take a few minutes (rarely longer) to start surfacing the channel again. The myactivity deletion is instant; the feed reflection may lag.
 
@@ -101,12 +95,15 @@ The `aislist` source is plain text with `!` comments, ~8400+ channels. Format co
 Single-file Python script (`yt_dont_recommend.py`). Key components:
 
 - **Blocklist fetching**: `resolve_source()` handles built-in keys, HTTP(S) URLs, and local file paths. `parse_text_blocklist()` and `parse_json_blocklist()` handle format variants. JSON format is auto-detected by leading `{` or `[`.
-- **State management**: `~/.yt-dont-recommend/processed.json` tracks which channels have been handled (crash-safe, saved after each action). State schema includes `blocked_by` (per-channel source tracking) and `would_have_blocked` (subscription-protected channels).
-- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs).
+- **State management**: `~/.yt-dont-recommend/processed.json` tracks which channels have been handled (crash-safe, saved after each action). See State Schema below for all keys.
+- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs). Launch args: `--disable-blink-features=AutomationControlled`, `--disable-infobars`, `ignore_default_args=["--enable-automation"]`.
 - **Subscription protection**: `fetch_subscriptions(page)` scrapes `youtube.com/feed/channels`, returns a lowercase set of handles. Called once per run in `process_channels()`. Subscribed channels are skipped with a one-time WARNING logged and stored in `state["would_have_blocked"]`.
 - **Blocklist removal detection**: `check_removals()` runs at the start of each `process_channels()` call, compares the current list against `state["blocked_by"]`, and auto-unblocks channels no longer on the list, per `--unblock-policy`.
+- **Blocklist growth tracking**: Each run records source list sizes in `state["source_sizes"]`. When a source has grown since the last run, it logs prominently.
+- **Attention/notification system**: `write_attention(message)` writes `needs-attention.txt`, fires a desktop notification (`osascript`/`notify-send`), and sends an ntfy.sh push if configured. Triggered by: selector failure, expired login session, unblock selector failure, auto-upgrade failure. Auto-cleared on the next successful run.
+- **Version tracking**: At startup, the running version is compared to `state["current_version"]`; on change, the old value is rotated to `state["previous_version"]`. This makes `--revert` work regardless of whether the upgrade was automatic or manual.
 - **Logging**: `RotatingFileHandler` — `run.log` caps at 1 MB with 5 backups (`run.log.1`–`run.log.5`).
-- **Rate limiting**: Random 3–7s delays between actions, 30s pause every 25 channels.
+- **Rate limiting**: Random 3–7s delays between actions, 30s pause every 25 channels. Scroll delay randomised 1.5–3.0s.
 
 ### State Schema
 
@@ -114,14 +111,23 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 {
   "processed": ["@channel1"],
   "blocked_by": {
-    "@channel1": {"sources": ["deslop"], "blocked_at": "2026-03-05T..."}
+    "@channel1": {"sources": ["deslop"], "blocked_at": "2026-03-05T...", "display_name": "Channel Name"}
   },
   "would_have_blocked": {
     "@SomeChannel": {"sources": ["deslop"], "first_seen": "...", "notified": true}
   },
   "last_run": "...",
   "stats": {"total_blocked": 1, "total_skipped": 0, "total_failed": 0},
-  "source_sizes": {"deslop": 121, "aislist": 8400}
+  "source_sizes": {"deslop": 121, "aislist": 8400},
+  "ucxxx_to_handle": {"UCxxx...": "@handle"},
+  "pending_unblock": {},
+  "notify_topic": "ydr-<random-hex>",
+  "last_version_check": "2026-03-08T...",
+  "latest_known_version": "0.1.13",
+  "notified_version": "0.1.13",
+  "auto_upgrade": false,
+  "previous_version": "0.1.12",
+  "current_version": "0.1.13"
 }
 ```
 
@@ -157,6 +163,15 @@ def fetch_subscriptions(page) -> set[str]:
 | `--list-sources` | Print built-in source names |
 | `--check-selectors` | Run 4-context selector diagnostic, save report + screenshots |
 | `--test-channel` | Channel to use with `--check-selectors` (default: `@YouTube`) |
+| `--clear-alerts` | Clear the `needs-attention.txt` flag file |
+| `--check-update` | Force a PyPI version check and print result |
+| `--auto-upgrade enable\|disable` | Enable or disable automatic upgrades when a new version is detected |
+| `--revert` | Revert to the previously installed version (works for manual or auto upgrades) |
+| `--setup-notify` | Generate a private ntfy.sh topic and show subscribe instructions |
+| `--remove-notify` | Remove the configured ntfy.sh topic |
+| `--test-notify` | Send a test push notification |
+| `--schedule install\|remove\|status` | Manage scheduled runs via launchd (macOS) or cron (Linux) |
+| `--version` | Print installed version and exit |
 | `--verbose` | Extra logging |
 
 ## Standard Blocklist Format

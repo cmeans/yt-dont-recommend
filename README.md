@@ -9,7 +9,7 @@ No browser extension can do this. Extensions filter content client-side on a sin
 | Platform | Status |
 |----------|--------|
 | Linux    | ✅ Tested and confirmed working (Fedora 43) |
-| macOS    | ⚠️ Code includes macOS support (launchd scheduling etc.) but has not been tested — proceed with caution and please [report issues](https://github.com/cmeans/yt-dont-recommend/issues) |
+| macOS    | ⚠️ Core blocking functionality and launchd scheduling are implemented but have not been tested end-to-end — proceed with caution and please [report issues](https://github.com/cmeans/yt-dont-recommend/issues) |
 | Windows  | ❌ Not supported |
 
 Python 3.10 or later is required on all platforms.
@@ -140,7 +140,8 @@ yt-dont-recommend --exclude ~/.yt-dont-recommend/exclude.txt
 # Run in headless mode (no visible browser)
 yt-dont-recommend --headless
 
-# Check progress — includes per-source breakdown and subscription-protected channels
+# Check progress — per-source breakdown, totals, and subscription-protected channels
+# "skipped" = appeared in feed but menu action failed; "failed" = error during attempt
 yt-dont-recommend --stats
 
 # Export blocked channels as a plain-text blocklist (stdout)
@@ -231,16 +232,17 @@ Running without `--source` processes all built-in sources consecutively. The sta
 ## How It Works
 
 1. Fetches the blocklist (local file, URL, or built-in source)
-2. Checks whether any previously blocked channels have since been removed from the list and auto-unblocks them per `--unblock-policy`
-3. Opens Chromium using your saved YouTube login session
-4. Scrapes your subscriptions so subscribed channels are never blocked
-5. Scans the YouTube home feed for cards matching blocklist channels
-6. For each match:
+2. Logs if the source has grown since the last run (new channels added by list maintainers)
+3. Checks whether any previously blocked channels have since been removed from the list and auto-unblocks them per `--unblock-policy`
+4. Opens Chromium using your saved YouTube login session
+5. Scrapes your subscriptions so subscribed channels are never blocked
+6. Scans the YouTube home feed for cards matching blocklist channels
+7. For each match:
    - Clicks the "More actions" menu on the video card
    - Clicks "Don't recommend channel"
    - Saves progress immediately (crash-safe, always resumable)
-7. Scrolls for more cards and repeats until the list is exhausted or `--limit` is reached
-8. Rate-limits itself: 3–7s between actions, 30s break every 25 channels
+8. Scrolls for more cards and repeats until the list is exhausted or `--limit` is reached
+9. Rate-limits itself: 3–7s between actions, 30s break every 25 channels
 
 > **Why the home feed?** Live testing confirmed that "Don't recommend channel" only appears in home feed recommendation contexts. It does not appear on a channel's own `/videos` page, in search results, or on the video watch page.
 
