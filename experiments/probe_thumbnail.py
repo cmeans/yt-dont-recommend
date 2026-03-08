@@ -100,37 +100,48 @@ COMPOSITION: [brief factual note on layout, background colour, any staging]
 """
 
 PROMPT_CLASSIFY_FROM_DESCRIPTION = """\
-You are a YouTube clickbait detector. Use ONLY the visual description below \
-and the title to decide.
+You are a YouTube clickbait detector.
 
-Title: {title}
+Title (for context only — do not analyse the title wording): {title}
 
-Thumbnail description:
+Thumbnail visual description:
 {description}
 
-Score HIGH (is_clickbait: true, confidence >= 0.80) ONLY when the description \
-explicitly contains at least one of these strong signals:
-  S1. Exaggerated-shock expression — mouth open, eyes wide in a clearly \
-      performed/staged way (not natural surprise or enthusiasm)
-  S2. Sensational overlay text — words like "SHOCKING", "EXPOSED", "YOU WON'T \
-      BELIEVE", "can you spot the fake?", "GONE WRONG", or similar
-  S3. Arrows, red circles, or highlight boxes pointing at something to \
-      manufacture alarm
-  S4. A split-panel comparison clearly designed to mislead or provoke anxiety
+Your job is to find clickbait signals in the VISUAL DESCRIPTION only.
+The title is provided so you can check if the thumbnail mismatches the topic —
+not as a source of clickbait signals itself.
 
-Score LOW (is_clickbait: false, confidence <= 0.30) when:
-  - Background colour (red, bright, dark) is the only dramatic element
+STRONG signals — flag HIGH (confidence >= 0.85) only if the description \
+explicitly shows:
+  S1. Exaggerated-shock expression: gaping mouth, wildly wide eyes in a \
+      clearly PERFORMED/STAGED way. NOT: smiling, serious, neutral, natural \
+      surprise, or a character in a dramatic scene.
+  S2. Sensational TEXT overlay: quoted words like "SHOCKING", "EXPOSED", \
+      "YOU WON'T BELIEVE", "can you spot the fake?", "GONE WRONG", etc. \
+      S2 applies ONLY to text — never to a person's expression.
+  S3. Graphic manipulation: red circles, arrows, or highlight boxes \
+      explicitly pointed at something to manufacture alarm.
+  S4. Side-by-side split panel: two DISTINCT images placed next to each \
+      other for comparison. NOT: a person in front of a busy or colourful \
+      background, a cluttered set, multiple posters on a wall.
+
+DEFAULT to LOW (is_clickbait: false, confidence <= 0.30) when:
+  - No S1/S2/S3/S4 signal is explicitly present in the description
+  - The only "drama" comes from the subject matter itself \
+    (a rocket, a galaxy, a black hole, a character from a show)
   - A person is present but their expression is neutral, smiling, or serious
-  - The imagery matches the topic (rockets for space, spheres for astronomy, \
-    a host on a news-style set, a character from a show)
-  - Any "drama" is in the subject matter, not manufactured by the thumbnail design
+  - Background is colourful, dark, or dramatic but has no text overlay or \
+    graphic manipulation
+  - A scientific visualisation (sphere, nebula, planet, diagram) matches \
+    the topic of the title
 
-When in doubt, score LOW. Reserve HIGH confidence for clear deception signals.
+If you cannot point to a specific S1/S2/S3/S4 item in the description, \
+output is_clickbait: false.
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
-{{"is_clickbait": true, "confidence": 0.9, "reasoning": "cite the specific signal (S1/S2/S3/S4) you found"}}
+{{"is_clickbait": true, "confidence": 0.9, "reasoning": "S2: thumbnail shows text overlay reading X"}}
 or
-{{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
+{{"is_clickbait": false, "confidence": 0.1, "reasoning": "no S1-S4 signals found"}}
 """
 
 PROMPT_NO_TITLE = """\
