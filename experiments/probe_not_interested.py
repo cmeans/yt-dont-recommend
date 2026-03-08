@@ -170,15 +170,18 @@ def main():
             dump_page_popups(page)
 
             # --- Try to find "Not interested" anywhere on the page ---
-            # New YouTube DOM uses yt-sheet-view-model / yt-list-item-view-model
-            # Try broad selector set covering both old and new structures
+            # New YouTube DOM uses yt-list-item-view-model[role="menuitem"] inside
+            # yt-sheet-view-model. Use textContent (not inner_text) since these
+            # are custom elements, not HTMLElements.
             all_items = page.query_selector_all(
-                "yt-formatted-string, tp-yt-paper-item, "
-                "yt-list-item-view-model, yt-sheet-view-model *"
+                "yt-list-item-view-model, "
+                "yt-formatted-string, tp-yt-paper-item"
             )
             matching = [
                 el for el in all_items
-                if "not interested" in (el.inner_text() or "").lower()
+                if "not interested" in (
+                    el.evaluate("el => el.textContent") or ""
+                ).lower()
             ]
             if matching:
                 print(f"     ✅ 'Not interested' found ({len(matching)} element(s))")
