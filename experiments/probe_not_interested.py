@@ -187,6 +187,42 @@ def main():
                 print(f"     ✅ 'Not interested' found ({len(matching)} element(s))")
                 for m in matching:
                     print(f"        HTML: {m.evaluate('el => el.outerHTML')[:300]}")
+
+                # --- Click it on the first card only to observe confirmation UI ---
+                if probed == 0:
+                    btn = matching[0].query_selector(
+                        "button.yt-list-item-view-model__button-or-anchor"
+                    )
+                    if btn:
+                        print(f"     Clicking 'Not interested'...")
+                        btn.click()
+                        time.sleep(2.0)
+                        # Dump any confirmation/undo toast that appeared
+                        toast_text = page.evaluate("""() => {
+                            const toasts = document.querySelectorAll(
+                                'yt-notification-action-renderer, '
+                                + 'ytd-toast-renderer, '
+                                + 'tp-yt-paper-toast, '
+                                + 'yt-snack-bar-renderer'
+                            );
+                            return Array.from(toasts).map(el => ({
+                                tag: el.tagName,
+                                text: el.textContent.trim().slice(0, 200)
+                            }));
+                        }""")
+                        print(f"     Post-click toast/confirmation: {toast_text}")
+                        # Also dump any new overlay / dialog
+                        overlay_html = page.evaluate("""() => {
+                            const els = document.querySelectorAll(
+                                'tp-yt-iron-dropdown[aria-hidden="false"], '
+                                + 'ytd-popup-container *[role="dialog"]'
+                            );
+                            return Array.from(els).map(el => el.outerHTML.slice(0, 400));
+                        }""")
+                        if overlay_html:
+                            print(f"     Post-click overlay HTML: {overlay_html}")
+                    else:
+                        print(f"     ⚠️  button inside 'Not interested' item NOT FOUND")
             else:
                 # Broad JS text dump — search all text nodes inside the dropdown
                 visible_text = page.evaluate("""() => {
