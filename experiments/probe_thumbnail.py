@@ -27,8 +27,13 @@ from pathlib import Path
 
 try:
     import ollama
+    from ollama import Client as OllamaClient
 except ImportError:
     raise ImportError("Run: .venv/bin/pip install ollama")
+
+# Module-level client — timeout set at parse time in main(), default 90s.
+_client: OllamaClient | None = None
+INFERENCE_TIMEOUT = 90  # overridden by --timeout
 
 # (video_id, title, expected_clickbait)
 # Mix of clear clickbait, borderline, and legitimate.
@@ -200,7 +205,7 @@ def _chat(model: str, content: str, img_b64: str | None = None) -> str:
     msg: dict = {"role": "user", "content": content}
     if img_b64:
         msg["images"] = [img_b64]
-    response = ollama.chat(
+    response = _client.chat(
         model=model,
         messages=[msg],
         options={"temperature": 0},
@@ -254,14 +259,20 @@ def main():
     parser.add_argument("--two-step", action="store_true",
                         help="Two-step: describe image first, then classify from description "
                              "(reduces hallucination)")
+    parser.add_argument("--timeout", type=int, default=90,
+                        help="Per-inference timeout in seconds (default: 90). "
+                             "Two-step uses 2x this budget.")
     args = parser.parse_args()
 
+    global _client
+    _client = OllamaClient(timeout=args.timeout)
+
     if args.two_step:
-        mode = "two-step (describe → classify)"
+        mode = f"two-step (describe → classify, {args.timeout}s timeout per call)"
     elif args.no_title:
-        mode = "thumbnail-only (no title)"
+        mode = f"thumbnail-only (no title, {args.timeout}s timeout)"
     else:
-        mode = "thumbnail + title"
+        mode = f"thumbnail + title ({args.timeout}s timeout)"
 
     print(f"\nModel: {args.model}  |  Threshold: {args.threshold}  |  Mode: {mode}\n")
     print(f"{'Title':<52} {'Exp':>3} {'CB?':>5} {'Conf':>5} {'Time':>6}  "
@@ -271,11 +282,16 @@ def main():
     flagged = correct = parse_failures = 0
 
     for video_id, title, expected in SAMPLE_VIDEOS:
-        result, elapsed, status = classify_thumbnail(
-            args.model, video_id, title,
-            no_title=args.no_title,
-            two_step=args.two_step,
-        )
+        try:
+            result, elapsed, status = classify_thumbnail(
+                args.model, video_id, title,
+                no_title=args.no_title,
+                two_step=args.two_step,
+            )
+        except Exception as e:
+            err = str(e)[:60]
+            print(f"{title[:51]:<52}  ERROR: {err}")
+            continue
 
         is_cb  = result.get("is_clickbait")
         conf   = result.get("confidence")
