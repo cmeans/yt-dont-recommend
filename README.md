@@ -247,7 +247,7 @@ All data lives in `~/.yt-dont-recommend/`:
 | `browser-profile/` | Chromium profile with your login session |
 | `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings, notification topic |
 | `run.log` | Timestamped log of all actions (rotates at 1 MB, 5 backups kept) |
-| `needs-attention.txt` | Alert flag written when action is required (e.g. selector failure); auto-cleared on a successful run |
+| `needs-attention.txt` | Alert flag written when action is required (e.g. selector failure, expired login session); auto-cleared on a successful run |
 
 ## Caveats
 
@@ -312,7 +312,7 @@ Find the full path with `which yt-dont-recommend`.
 
 ## Notifications
 
-When something requires your attention (e.g. a selector failure during an unattended run), the tool:
+When something requires your attention (e.g. a selector failure or expired login session during an unattended run), the tool:
 
 1. Writes a timestamped alert to `~/.yt-dont-recommend/needs-attention.txt`
 2. Shows it prominently the next time you run any command (with a pause so you can read it)
