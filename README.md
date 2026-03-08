@@ -4,6 +4,29 @@ Automates YouTube's "Don't recommend channel" action in bulk, using any channel 
 
 No browser extension can do this. Extensions filter content client-side on a single browser. This tool affects the server-side recommendation engine.
 
+---
+
+- [Platform Support](#platform-support)
+- [Install](#install)
+- [Upgrading](#upgrading)
+- [Development Setup](#development-setup)
+- [Usage](#usage)
+- [Exclusion List](#exclusion-list)
+- [Subscription Protection](#subscription-protection)
+- [Auto-Unblock (False Positive Correction)](#auto-unblock-false-positive-correction)
+- [Blocklist Format](#blocklist-format)
+- [Built-in Sources](#built-in-sources)
+- [How It Works](#how-it-works)
+- [State & Logs](#state--logs)
+- [Caveats](#caveats)
+- [Running Periodically](#running-periodically)
+- [Notifications](#notifications)
+- [Updates](#updates)
+- [Checking and Updating Selectors](#checking-and-updating-selectors)
+- [License](#license)
+
+---
+
 ## Platform Support
 
 | Platform | Status |
