@@ -33,10 +33,12 @@ No browser extension can do this. Extensions filter content client-side on a sin
 | Platform | Status |
 |----------|--------|
 | Linux    | ✅ Tested and confirmed working (Fedora 43) |
-| macOS    | ⚠️ Core blocking functionality and launchd scheduling are implemented but have not been tested end-to-end — proceed with caution and please [report issues](https://github.com/cmeans/yt-dont-recommend/issues) |
+| macOS    | ⚠️ Implemented and CI-verified (install, import, CLI), but no end-to-end run confirmed yet — looking for a volunteer! |
 | Windows  | ❌ Not supported |
 
 Python 3.10 or later is required on all platforms.
+
+**macOS testers wanted:** If you're on a Mac and willing to try it, install instructions are the same as Linux. If it works, please [open an issue](https://github.com/cmeans/yt-dont-recommend/issues) and let us know your macOS version — it would let us mark macOS as fully supported.
 
 ## Install
 
