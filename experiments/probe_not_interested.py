@@ -94,14 +94,16 @@ def dump_page_popups(page) -> None:
     popups = page.query_selector_all(
         "ytd-menu-popup-renderer, "
         "tp-yt-iron-dropdown, "
-        "tp-yt-paper-listbox"
+        "tp-yt-paper-listbox, "
+        "yt-sheet-view-model"
     )
     print(f"     Popup elements found: {len(popups)}")
     for popup in popups:
         try:
             visible = popup.is_visible()
             html = popup.evaluate("el => el.innerHTML")
-            print(f"     Popup visible={visible}, HTML (first 400):\n     {html[:400]}\n")
+            # Dump more HTML so we can see the actual menu item structure
+            print(f"     Popup visible={visible}, HTML (first 1500):\n     {html[:1500]}\n")
         except Exception as e:
             print(f"     Popup read error: {e}")
 
@@ -168,24 +170,36 @@ def main():
             dump_page_popups(page)
 
             # --- Try to find "Not interested" anywhere on the page ---
-            all_items = page.query_selector_all("yt-formatted-string, tp-yt-paper-item")
+            # New YouTube DOM uses yt-sheet-view-model / yt-list-item-view-model
+            # Try broad selector set covering both old and new structures
+            all_items = page.query_selector_all(
+                "yt-formatted-string, tp-yt-paper-item, "
+                "yt-list-item-view-model, yt-sheet-view-model *"
+            )
             matching = [
                 el for el in all_items
-                if "not interested" in el.inner_text().lower()
+                if "not interested" in (el.inner_text() or "").lower()
             ]
             if matching:
                 print(f"     ✅ 'Not interested' found ({len(matching)} element(s))")
                 for m in matching:
                     print(f"        HTML: {m.evaluate('el => el.outerHTML')[:300]}")
             else:
-                # Show all visible text on the page near a popup
+                # Broad JS text dump — search all text nodes inside the dropdown
                 visible_text = page.evaluate("""() => {
-                    const items = document.querySelectorAll(
-                        'ytd-menu-popup-renderer yt-formatted-string, ' +
-                        'tp-yt-paper-listbox yt-formatted-string, ' +
-                        'tp-yt-iron-dropdown yt-formatted-string'
+                    // All text nodes anywhere inside any open dropdown/sheet
+                    const containers = document.querySelectorAll(
+                        'tp-yt-iron-dropdown, yt-sheet-view-model, ' +
+                        'ytd-menu-popup-renderer, tp-yt-paper-listbox'
                     );
-                    return Array.from(items).map(el => el.textContent.trim()).filter(Boolean);
+                    const texts = [];
+                    containers.forEach(c => {
+                        c.querySelectorAll('*').forEach(el => {
+                            const t = el.textContent.trim();
+                            if (t && t.length < 80 && el.children.length === 0) texts.push(t);
+                        });
+                    });
+                    return [...new Set(texts)];
                 }""")
                 print(f"     ❌ 'Not interested' not found")
                 print(f"     All popup text via JS: {visible_text}")
