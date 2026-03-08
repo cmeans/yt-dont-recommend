@@ -556,13 +556,39 @@ class TestVersionChecking:
         state = ydr.load_state()
         _running = ydr._get_current_version()
         if state.get("current_version") != _running:
-            state["previous_version"] = state.get("current_version")
+            prior = state.get("current_version")
+            if prior is not None:
+                state["previous_version"] = prior
             state["current_version"] = _running
             ydr.save_state(state)
 
         state = ydr.load_state()
         assert state["current_version"] == "0.1.7"
         assert state["previous_version"] == "0.1.6"
+
+    def test_version_tracking_does_not_overwrite_previous_with_none(
+        self, tmp_path, monkeypatch
+    ):
+        """On first run (current_version is None), previous_version should not
+        be set to None — it should be left untouched."""
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.20")
+
+        # Fresh state — current_version is None
+        state = ydr.load_state()
+        assert state["current_version"] is None
+
+        _running = ydr._get_current_version()
+        if state.get("current_version") != _running:
+            prior = state.get("current_version")
+            if prior is not None:
+                state["previous_version"] = prior
+            state["current_version"] = _running
+            ydr.save_state(state)
+
+        state = ydr.load_state()
+        assert state["current_version"] == "0.1.20"
+        assert state["previous_version"] is None  # not overwritten with None
 
     def test_revert_with_no_previous_version_prints_message(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")

@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.20"
+__version__ = "0.1.21"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.
@@ -2110,7 +2110,9 @@ def main():
     _state = load_state()
     _running = _get_current_version()
     if _state.get("current_version") != _running:
-        _state["previous_version"] = _state.get("current_version")
+        prior = _state.get("current_version")
+        if prior is not None:
+            _state["previous_version"] = prior
         _state["current_version"] = _running
         save_state(_state)
     del _state, _running
