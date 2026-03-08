@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.16"
+__version__ = "0.1.17"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # Schedule management
@@ -314,12 +314,15 @@ def fetch_remote(url: str) -> str:
         raise RuntimeError(f"Failed to fetch {url}: {e}") from e
 
 
-def resolve_source(source: str) -> list[str]:
+def resolve_source(source: str, quiet: bool = False) -> list[str]:
     """
     Resolve --source to a list of channel paths. Accepts:
       - A built-in key ("deslop", "aislist")
       - A local file path
       - An HTTP/HTTPS URL
+
+    quiet=True suppresses per-file INFO lines (used when loading the exclude file,
+    where the caller logs a single consolidated message instead).
     """
     if source in BUILTIN_SOURCES:
         info = BUILTIN_SOURCES[source]
@@ -330,22 +333,26 @@ def resolve_source(source: str) -> list[str]:
         return channels
 
     if source.startswith("http://") or source.startswith("https://"):
-        logging.info(f"Fetching remote blocklist: {source}")
+        if not quiet:
+            logging.info(f"Fetching remote blocklist: {source}")
         raw = fetch_remote(source)
         stripped = raw.lstrip()
         channels = parse_json_blocklist(raw) if stripped.startswith(("{", "[")) else parse_text_blocklist(raw)
-        logging.info(f"Fetched {len(channels)} channels from {source}")
+        if not quiet:
+            logging.info(f"Fetched {len(channels)} channels from {source}")
         return channels
 
     path = Path(source).expanduser().resolve()
     if not path.exists():
         logging.error(f"File not found: {path}")
         sys.exit(1)
-    logging.info(f"Reading local blocklist: {path}")
+    if not quiet:
+        logging.info(f"Reading local blocklist: {path}")
     raw = path.read_text(encoding="utf-8")
     stripped = raw.lstrip()
     channels = parse_json_blocklist(raw) if stripped.startswith(("{", "[")) else parse_text_blocklist(raw)
-    logging.info(f"Read {len(channels)} channels from {path.name}")
+    if not quiet:
+        logging.info(f"Read {len(channels)} channels from {path.name}")
     return channels
 
 
@@ -638,7 +645,8 @@ def fetch_subscriptions(page) -> set[str]:
 
 def process_channels(channels: list[str], source: str,
                      dry_run: bool = False, limit: int | None = None,
-                     headless: bool = False, unblock_policy: str = "all"):
+                     headless: bool = False, unblock_policy: str = "all",
+                     subscriptions: set[str] | None = None) -> set[str] | None:
     """
     Scan the YouTube home feed and click 'Don't recommend channel' on any
     card whose channel is in the blocklist.
@@ -729,9 +737,12 @@ def process_channels(channels: list[str], source: str,
 
         if not unblocked:
             context.close()
-            return
+            return subscriptions
 
-        subscriptions = fetch_subscriptions(page)
+        if subscriptions is None:
+            subscriptions = fetch_subscriptions(page)
+        else:
+            logging.info(f"Reusing {len(subscriptions)} subscriptions from previous source.")
 
         # Resolve any UCxxx channel IDs in the blocklist to @handles.
         # Modern YouTube feed cards expose only @handle links, so UCxxx entries
@@ -757,7 +768,7 @@ def process_channels(channels: list[str], source: str,
                 break
             if no_progress_scrolls >= MAX_NO_PROGRESS_SCROLLS:
                 logging.info(
-                    f"No blocklisted channels found after {no_progress_scrolls} "
+                    f"No additional blocklisted channels found after {no_progress_scrolls} "
                     "consecutive scrolls — feed exhausted for this run."
                 )
                 break
@@ -900,6 +911,7 @@ def process_channels(channels: list[str], source: str,
         logging.info(f"DRY RUN complete. Would have blocked {blocked_count} channel(s) from this source.")
     else:
         logging.info(f"Done. Blocked {blocked_count} channel(s) this run. Stats: {state['stats']}")
+    return subscriptions
 
 
 def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
@@ -2244,10 +2256,11 @@ def main():
     exclude_source = args.exclude or (str(DEFAULT_EXCLUDE_FILE) if DEFAULT_EXCLUDE_FILE.exists() else None)
     exclude_set: set[str] = set()
     if exclude_source:
-        exclude_set = {c.lower() for c in resolve_source(exclude_source)}
+        exclude_set = {c.lower() for c in resolve_source(exclude_source, quiet=True)}
         label = "--exclude" if args.exclude else f"default exclude file ({DEFAULT_EXCLUDE_FILE})"
         logging.info(f"Loaded {len(exclude_set)} exclusion(s) via {label}")
 
+    run_subscriptions: set[str] | None = None  # shared across sources; fetched once on first active source
     for source in sources:
         if len(sources) > 1:
             logging.info(f"--- Source: {source} ---")
@@ -2270,14 +2283,17 @@ def main():
             before = len(channels)
             channels = [c for c in channels if c.lower() not in exclude_set]
             logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
-        process_channels(
+        result = process_channels(
             channels,
             source=source,
             dry_run=args.dry_run,
             limit=args.limit,
             headless=args.headless,
             unblock_policy=args.unblock_policy,
+            subscriptions=run_subscriptions,
         )
+        if result is not None:
+            run_subscriptions = result
 
 
 if __name__ == "__main__":
