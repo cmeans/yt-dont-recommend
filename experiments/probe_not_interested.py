@@ -18,7 +18,6 @@ import sys
 import time
 from pathlib import Path
 
-# Reuse the profile location from the main app
 PROFILE_DIR = Path.home() / ".yt-dont-recommend" / "browser-profile"
 
 if not PROFILE_DIR.exists():
@@ -27,12 +26,11 @@ if not PROFILE_DIR.exists():
 
 from playwright.sync_api import sync_playwright
 
-PAGE_LOAD_WAIT = 5   # seconds after navigation before querying
-RENDER_WAIT   = 8   # seconds to wait for lazy content to render
+PAGE_LOAD_WAIT = 5
+RENDER_WAIT   = 8
 
 
 def extract_video_id(href: str) -> str | None:
-    """Extract video ID from a /watch?v=... href."""
     if not href:
         return None
     if "v=" in href:
@@ -41,7 +39,6 @@ def extract_video_id(href: str) -> str | None:
 
 
 def wait_for_content(page) -> None:
-    """Wait until at least one card has a non-empty title."""
     deadline = time.monotonic() + RENDER_WAIT
     while time.monotonic() < deadline:
         titles = page.query_selector_all(
@@ -57,36 +54,56 @@ def wait_for_content(page) -> None:
 
 
 def get_title(card) -> str:
-    """Try several selectors to extract the video title from a card."""
-    for sel in (
-        "h3 yt-formatted-string#video-title",
-        "yt-formatted-string#video-title",
-        "#video-title",
-        "h3 a#video-title-link",
-        "#title-wrapper yt-formatted-string",
-    ):
-        el = card.query_selector(sel)
-        if el:
-            text = el.inner_text().strip()
-            if text:
-                return text
-    return "(no title)"
+    # Try via JavaScript to capture whatever text is in the card's title area
+    title = card.evaluate("""el => {
+        const candidates = [
+            el.querySelector('#video-title'),
+            el.querySelector('h3 a'),
+            el.querySelector('yt-formatted-string#video-title'),
+            el.querySelector('#title-wrapper yt-formatted-string'),
+            el.querySelector('h3 yt-formatted-string'),
+            el.querySelector('a#video-title-link'),
+        ];
+        for (const c of candidates) {
+            if (c && c.textContent.trim()) return c.textContent.trim();
+        }
+        return null;
+    }""")
+    return title or "(no title)"
 
 
 def get_href(card) -> str | None:
-    """Try several selectors to extract the video href from a card."""
-    for sel in (
-        "a#video-title-link",
-        "a#thumbnail",
-        "h3 a",
-        "ytd-thumbnail a",
-    ):
+    for sel in ("a#video-title-link", "a#thumbnail", "h3 a", "ytd-thumbnail a"):
         el = card.query_selector(sel)
         if el:
             href = el.get_attribute("href")
             if href:
                 return href
     return None
+
+
+def dump_card_html(card) -> None:
+    """Print a trimmed snapshot of the card's inner HTML for selector debugging."""
+    html = card.evaluate("el => el.innerHTML")
+    # Just show the first 600 chars — enough to see structure
+    print(f"     CARD HTML (first 600 chars):\n     {html[:600]}\n")
+
+
+def dump_page_popups(page) -> None:
+    """After clicking a menu, dump any visible popup/overlay HTML."""
+    popups = page.query_selector_all(
+        "ytd-menu-popup-renderer, "
+        "tp-yt-iron-dropdown, "
+        "tp-yt-paper-listbox"
+    )
+    print(f"     Popup elements found: {len(popups)}")
+    for popup in popups:
+        try:
+            visible = popup.is_visible()
+            html = popup.evaluate("el => el.innerHTML")
+            print(f"     Popup visible={visible}, HTML (first 400):\n     {html[:400]}\n")
+        except Exception as e:
+            print(f"     Popup read error: {e}")
 
 
 def main():
@@ -108,71 +125,77 @@ def main():
 
         probed = 0
         for i, card in enumerate(cards):
-            title = get_title(card)
-            href  = get_href(card)
+            href     = get_href(card)
             video_id = extract_video_id(href) if href else None
+            title    = get_title(card)
 
-            if title == "(no title)" and not video_id:
-                continue  # skip unrendered / ad / shelf cards
+            if not video_id:
+                continue  # skip ads / shelves / unrendered slots
 
-            print(f"[{i+1}] {title!r}")
-            print(f"     video_id: {video_id}")
+            print(f"[{i+1}] title={title!r}  video_id={video_id}")
 
-            # Scroll card into view so the menu button is reachable
+            # On the first card, dump the raw HTML so we can see structure
+            if probed == 0:
+                dump_card_html(card)
+
             card.scroll_into_view_if_needed()
-            time.sleep(0.3)
+            time.sleep(0.5)
 
-            # --- Open the three-dot menu ---
+            # --- Find and click the three-dot menu ---
             menu_btn = card.query_selector(
                 "button[aria-label='More actions'], "
                 "yt-icon-button[aria-label='More actions'], "
                 "ytd-menu-renderer yt-icon-button"
             )
             if not menu_btn:
-                print("     menu button: NOT FOUND\n")
+                print("     ❌ menu button NOT FOUND\n")
+                # Dump HTML to understand structure
+                dump_card_html(card)
                 continue
+
+            print(f"     menu button found: {menu_btn.evaluate('el => el.outerHTML')[:150]}")
 
             try:
                 menu_btn.hover()
-                time.sleep(0.2)
+                time.sleep(0.3)
                 menu_btn.click()
-                time.sleep(1.0)
+                time.sleep(1.2)
             except Exception as e:
                 print(f"     menu click failed: {e}\n")
                 continue
 
-            # --- Read all menu items ---
-            items = page.query_selector_all(
-                "ytd-menu-popup-renderer yt-formatted-string, "
-                "tp-yt-paper-listbox yt-formatted-string, "
-                "ytd-menu-popup-renderer tp-yt-paper-item"
-            )
-            item_texts = [it.inner_text().strip() for it in items if it.inner_text().strip()]
-            print(f"     menu items: {item_texts}")
+            # --- Dump whatever popups appeared ---
+            dump_page_popups(page)
 
-            not_interested = next(
-                (it for it in items if "not interested" in it.inner_text().lower()),
-                None
-            )
-            if not_interested:
-                print("     ✅ 'Not interested' FOUND")
-                try:
-                    html = not_interested.evaluate("el => el.outerHTML")
-                    print(f"     HTML snippet: {html[:300]}")
-                    # Also print the parent for context
-                    parent_html = not_interested.evaluate("el => el.parentElement.outerHTML")
-                    print(f"     Parent HTML:  {parent_html[:300]}")
-                except Exception:
-                    pass
+            # --- Try to find "Not interested" anywhere on the page ---
+            all_items = page.query_selector_all("yt-formatted-string, tp-yt-paper-item")
+            matching = [
+                el for el in all_items
+                if "not interested" in el.inner_text().lower()
+            ]
+            if matching:
+                print(f"     ✅ 'Not interested' found ({len(matching)} element(s))")
+                for m in matching:
+                    print(f"        HTML: {m.evaluate('el => el.outerHTML')[:300]}")
             else:
-                print("     ❌ 'Not interested' not in menu")
+                # Show all visible text on the page near a popup
+                visible_text = page.evaluate("""() => {
+                    const items = document.querySelectorAll(
+                        'ytd-menu-popup-renderer yt-formatted-string, ' +
+                        'tp-yt-paper-listbox yt-formatted-string, ' +
+                        'tp-yt-iron-dropdown yt-formatted-string'
+                    );
+                    return Array.from(items).map(el => el.textContent.trim()).filter(Boolean);
+                }""")
+                print(f"     ❌ 'Not interested' not found")
+                print(f"     All popup text via JS: {visible_text}")
 
             page.keyboard.press("Escape")
             time.sleep(0.4)
             print()
 
             probed += 1
-            if probed >= 5:
+            if probed >= 3:
                 break
 
         print("\n=== Done ===")
