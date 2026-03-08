@@ -9,6 +9,7 @@ No browser extension can do this. Extensions filter content client-side on a sin
 - [Platform Support](#platform-support)
 - [Install](#install)
 - [Upgrading](#upgrading)
+- [Uninstall](#uninstall)
 - [Development Setup](#development-setup)
 - [Usage](#usage)
 - [Exclusion List](#exclusion-list)
@@ -57,6 +58,8 @@ yt-dont-recommend --login
 
 After `--login` your session is saved to `~/.yt-dont-recommend/browser-profile/` and reused automatically.
 
+On the very first run the tool will print a quick-start reminder with the recommended next steps.
+
 ---
 
 ## Upgrading
@@ -85,6 +88,32 @@ uvx playwright install chromium
 
 ```bash
 playwright install chromium
+```
+
+---
+
+## Uninstall
+
+Run the built-in uninstall helper first — it removes the schedule and optionally deletes your data:
+
+```bash
+yt-dont-recommend --uninstall
+```
+
+It will walk you through three steps:
+
+1. Remove the automatic schedule (launchd or cron)
+2. Optionally delete `~/.yt-dont-recommend/` (session, state, logs)
+3. Print the package manager command to remove the package itself
+
+The final uninstall command (printed by the tool) will be one of:
+
+```bash
+uv tool uninstall yt-dont-recommend
+```
+
+```bash
+pipx uninstall yt-dont-recommend
 ```
 
 ---
@@ -254,6 +283,8 @@ Running without `--source` processes all built-in sources consecutively. The sta
 
 ## How It Works
 
+> **About Playwright and selectors:** [Playwright](https://playwright.dev) is a browser automation library that drives a real Chromium browser — the same engine as Google Chrome. The tool uses it to click YouTube's menus exactly as a human would, using your saved login session. "Selectors" are the CSS/HTML patterns used to locate specific buttons and links on the page (e.g. the "More actions" button on a video card). When YouTube updates its site design, these patterns can break without warning — which is why `--check-selectors` exists and why the tool detects and alerts on selector failures automatically.
+
 1. Fetches the blocklist (local file, URL, or built-in source)
 2. Logs if the source has grown since the last run (new channels added by list maintainers)
 3. Checks whether any previously blocked channels have since been removed from the list and auto-unblocks them per `--unblock-policy`
@@ -414,6 +445,14 @@ yt-dont-recommend --revert
 
 The previous version is tracked automatically on every run, so `--revert` works whether the upgrade was automatic or done manually with `uv` or `pipx`. If `--revert` cannot detect your package manager, it will print the manual install command instead.
 
+If the previous version also has a problem (e.g. multiple bad releases), pass a specific version:
+
+```bash
+yt-dont-recommend --revert 0.1.10
+```
+
+Any published version on PyPI can be targeted this way. Check the [releases page](https://github.com/cmeans/yt-dont-recommend/releases) for the full version history.
+
 `--revert` automatically disables auto-upgrade so the tool doesn't immediately re-upgrade itself. Re-enable it once you're satisfied the issue is resolved:
 
 ```bash
@@ -443,3 +482,5 @@ yt-dont-recommend --check-selectors --test-channel @SomeChannel
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Copyright (c) 2026 Chris Means

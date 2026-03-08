@@ -531,6 +531,28 @@ class TestVersionChecking:
         ydr.do_revert()
         captured = capsys.readouterr()
         assert "No previous version" in captured.out
+        assert "--revert 0.1.10" in captured.out  # explicit version hint
+
+    def test_revert_explicit_version_skips_state_lookup(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.14")
+        monkeypatch.setattr(ydr, "_detect_installer", lambda: "uv")
+        ran = []
+        monkeypatch.setattr(
+            ydr.subprocess, "run",
+            lambda cmd, **kw: ran.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})()
+        )
+        ydr.do_revert("0.1.10")
+        assert any("0.1.10" in str(c) for c in ran)
+        captured = capsys.readouterr()
+        assert "0.1.10" in captured.out
+
+    def test_revert_no_op_when_already_on_target(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.10")
+        ydr.do_revert("0.1.10")
+        captured = capsys.readouterr()
+        assert "nothing to do" in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -652,3 +674,55 @@ class TestExportState:
         assert "@alpha" in content
         assert "@beta" in content
         assert "# Total blocked channels: 2" in content
+
+
+# ---------------------------------------------------------------------------
+# First-run welcome and --uninstall
+# ---------------------------------------------------------------------------
+
+class TestFirstRunAndUninstall:
+    def test_first_run_detected_when_no_state_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        assert not (tmp_path / "processed.json").exists()
+        is_first_run = not ydr.STATE_FILE.exists()
+        assert is_first_run
+
+    def test_first_run_not_detected_after_state_created(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        ydr.save_state(ydr.load_state())
+        is_first_run = not ydr.STATE_FILE.exists()
+        assert not is_first_run
+
+    def test_first_run_welcome_prints(self, capsys):
+        ydr._first_run_welcome()
+        captured = capsys.readouterr()
+        assert "Welcome" in captured.out
+        assert "--login" in captured.out
+        assert "--schedule install" in captured.out
+
+    def test_do_uninstall_removes_data_dir(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "data" / "processed.json")
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "processed.json").write_text("{}")
+        # Simulate user answering "y" to the removal prompt
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+        monkeypatch.setattr(ydr, "schedule_cmd", lambda action: None)
+        monkeypatch.setattr(ydr, "_detect_installer", lambda: "uv")
+        ydr.do_uninstall()
+        assert not data_dir.exists()
+        captured = capsys.readouterr()
+        assert "uv tool uninstall" in captured.out
+
+    def test_do_uninstall_keeps_data_dir_on_no(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "data" / "processed.json")
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "processed.json").write_text("{}")
+        monkeypatch.setattr("builtins.input", lambda _: "n")
+        monkeypatch.setattr(ydr, "schedule_cmd", lambda action: None)
+        monkeypatch.setattr(ydr, "_detect_installer", lambda: "pipx")
+        ydr.do_uninstall()
+        assert data_dir.exists()
+        captured = capsys.readouterr()
+        assert "pipx uninstall" in captured.out

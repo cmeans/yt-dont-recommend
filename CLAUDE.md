@@ -166,11 +166,12 @@ def fetch_subscriptions(page) -> set[str]:
 | `--clear-alerts` | Clear the `needs-attention.txt` flag file |
 | `--check-update` | Force a PyPI version check and print result |
 | `--auto-upgrade enable\|disable` | Enable or disable automatic upgrades when a new version is detected |
-| `--revert` | Revert to the previously installed version (works for manual or auto upgrades) |
+| `--revert [VERSION]` | Revert to the previously recorded version, or to a specific version if supplied |
 | `--setup-notify` | Generate a private ntfy.sh topic and show subscribe instructions |
 | `--remove-notify` | Remove the configured ntfy.sh topic |
 | `--test-notify` | Send a test push notification |
 | `--schedule install\|remove\|status` | Manage scheduled runs via launchd (macOS) or cron (Linux) |
+| `--uninstall` | Remove schedule, offer to delete data dir, print package manager uninstall command |
 | `--version` | Print installed version and exit |
 | `--verbose` | Extra logging |
 

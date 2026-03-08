@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.13"
+__version__ = "0.1.15"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # Schedule management
@@ -1614,20 +1614,31 @@ def do_auto_upgrade(state: dict) -> bool:
         return False
 
 
-def do_revert() -> None:
-    """Revert to the previously installed version.
+def do_revert(target_version: str | None = None) -> None:
+    """Revert to a specific version or the previously recorded one.
 
-    Works whether the upgrade was automatic or manual — previous_version is
-    updated at startup whenever the running version differs from what's in state.
+    If target_version is given, installs that exact version from PyPI.
+    Otherwise falls back to state["previous_version"], which is updated at
+    startup whenever the running version changes (manual or auto upgrade).
     """
     state = load_state()
-    prev = state.get("previous_version")
-    if not prev:
-        print("No previous version recorded — nothing to revert to.")
+    current = _get_current_version()
+
+    if target_version:
+        prev = target_version
+    else:
+        prev = state.get("previous_version")
+        if not prev:
+            print("No previous version recorded — nothing to revert to.")
+            print("Tip: specify a version explicitly: yt-dont-recommend --revert 0.1.10")
+            print("All published versions: https://github.com/cmeans/yt-dont-recommend/releases")
+            return
+
+    if prev == current:
+        print(f"Already running {current} — nothing to do.")
         return
 
     installer = _detect_installer()
-    current = _get_current_version()
 
     if installer == "uv":
         cmd = ["uv", "tool", "install", "--force", f"yt-dont-recommend=={prev}"]
@@ -1828,6 +1839,61 @@ def schedule_cmd(action: str) -> None:
         _schedule_linux(action, bin_path)
 
 
+def _first_run_welcome() -> None:
+    """Print a one-time welcome message on the very first run."""
+    print("\nWelcome to yt-dont-recommend!")
+    print()
+    print("Quick start:")
+    print("  1. yt-dont-recommend --login            # sign into your Google account (required once)")
+    print("  2. yt-dont-recommend --schedule install  # set up twice-daily automatic runs")
+    print("  3. yt-dont-recommend --dry-run           # preview what would be blocked")
+    print()
+    print("Run yt-dont-recommend --help for all options.")
+    print()
+
+
+def do_uninstall() -> None:
+    """Remove schedule, offer to delete data directory, then print the uninstall command."""
+    print("\nUninstalling yt-dont-recommend")
+    print("=" * 34)
+
+    # Step 1: remove schedule
+    print("\nStep 1: Removing schedule...")
+    try:
+        schedule_cmd("remove")
+    except Exception as e:
+        print(f"  Could not remove schedule (may not be installed): {e}")
+
+    # Step 2: offer to remove data directory
+    data_dir = STATE_FILE.parent
+    if data_dir.exists():
+        print(f"\nStep 2: Remove data directory {data_dir}?")
+        print("  This will delete your browser session, state file, and logs.")
+        try:
+            answer = input("  Remove? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer == "y":
+            shutil.rmtree(data_dir)
+            print(f"  Removed {data_dir}")
+        else:
+            print("  Kept.")
+    else:
+        print(f"\nStep 2: No data directory found at {data_dir} — nothing to remove.")
+
+    # Step 3: print the package manager uninstall command
+    installer = _detect_installer()
+    print("\nStep 3: Run the following to uninstall the package:")
+    if installer == "uv":
+        print("  uv tool uninstall yt-dont-recommend")
+    elif installer == "pipx":
+        print("  pipx uninstall yt-dont-recommend")
+    else:
+        print("  uv tool uninstall yt-dont-recommend")
+        print("  # or: pipx uninstall yt-dont-recommend")
+    print()
+
+
 # --- Main ---
 
 def main():
@@ -1906,8 +1972,12 @@ def main():
         "--auto-upgrade", choices=["enable", "disable"], metavar="enable|disable",
         help="Enable or disable automatic upgrades when a new version is detected",
     )
-    parser.add_argument("--revert", action="store_true",
-                        help="Revert to the version installed before the last auto-upgrade")
+    parser.add_argument("--revert", nargs="?", const=True, metavar="VERSION",
+                        help=(
+                            "Revert to a previous version. With no argument, reverts to the "
+                            "last recorded version. Pass a specific version to target it directly: "
+                            "--revert 0.1.10"
+                        ))
     parser.add_argument("--setup-notify", action="store_true",
                         help="Generate a private ntfy.sh topic for push notifications and show subscribe instructions")
     parser.add_argument("--remove-notify", action="store_true",
@@ -1925,9 +1995,17 @@ def main():
             "Schedules runs at 3:00 AM and 3:00 PM daily with --headless."
         ),
     )
+    parser.add_argument("--uninstall", action="store_true",
+                        help=(
+                            "Remove the schedule and optionally delete all data, "
+                            "then print the package manager command to complete uninstallation"
+                        ))
 
     args = parser.parse_args()
     setup_logging(args.verbose)
+
+    # Detect first run before load_state() creates the state file.
+    _is_first_run = not STATE_FILE.exists()
 
     # Track version on every invocation so --revert works regardless of how
     # the upgrade was performed (auto-upgrade or manual uv/pipx install).
@@ -1938,6 +2016,13 @@ def main():
         _state["current_version"] = _running
         save_state(_state)
     del _state, _running
+
+    if _is_first_run:
+        _first_run_welcome()
+
+    if args.uninstall:
+        do_uninstall()
+        return
 
     if args.clear_alerts:
         if ATTENTION_FILE.exists():
@@ -1983,8 +2068,8 @@ def main():
         print(f"Auto-upgrade {status}.")
         return
 
-    if args.revert:
-        do_revert()
+    if args.revert is not None:
+        do_revert(None if args.revert is True else args.revert)
         return
 
     check_attention_flag()
