@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # Schedule management
@@ -953,7 +953,7 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
             logging.warning(f"Could not determine display name for {channel} — will skip unblock.")
 
     if not display_names:
-        logging.error("No display names resolved — cannot proceed with unblock.")
+        write_attention("Could not resolve display names for unblock — myactivity page layout may have changed. Run: yt-dont-recommend --check-selectors")
         return []
 
     # Step 2: Navigate to feedback page and handle verification.
@@ -1605,7 +1605,7 @@ def do_auto_upgrade(state: dict) -> bool:
         logging.info("Upgrade complete — new version takes effect on next run.")
         return True
     else:
-        logging.warning(f"Auto-upgrade failed: {result.stderr.strip()}")
+        write_attention(f"Auto-upgrade failed: {result.stderr.strip()}")
         return False
 
 
