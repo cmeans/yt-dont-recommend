@@ -101,7 +101,7 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 - **Blocklist removal detection**: `check_removals()` runs at the start of each `process_channels()` call, compares the current list against `state["blocked_by"]`, and auto-unblocks channels no longer on the list, per `--unblock-policy`.
 - **Blocklist growth tracking**: Each run records source list sizes in `state["source_sizes"]`. When a source has grown since the last run, it logs prominently.
 - **Attention/notification system**: `write_attention(message)` writes `needs-attention.txt`, fires a desktop notification (`osascript`/`notify-send`), and sends an ntfy.sh push if configured. Triggered by: selector failure, expired login session, unblock selector failure, auto-upgrade failure. Auto-cleared on the next successful run.
-- **Version tracking**: At startup, the running version is compared to `state["current_version"]`; on change, the old value is rotated to `state["previous_version"]`. This makes `--revert` work regardless of whether the upgrade was automatic or manual.
+- **Version tracking**: At startup, the running version is compared to `state["current_version"]`; on change, the old value is rotated to `state["previous_version"]`. This makes `--revert` work regardless of whether the upgrade was automatic or manual. **Tested 2026-03-08**: manual upgrade 0.1.9→0.1.16→0.1.17, `--revert` correctly dropped back to 0.1.16, auto-upgrade was disabled automatically.
 - **Logging**: `RotatingFileHandler` — `run.log` caps at 1 MB with 5 backups (`run.log.1`–`run.log.5`).
 - **Rate limiting**: Random 3–7s delays between actions, 30s pause every 25 channels. Scroll delay randomised 1.5–3.0s.
 
@@ -127,18 +127,35 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
   "notified_version": "0.1.13",
   "auto_upgrade": false,
   "previous_version": "0.1.12",
-  "current_version": "0.1.13"
+  "current_version": "0.1.13",
+  "state_version": 1
 }
 ```
 
-`load_state()` is backward-compatible: missing keys are populated via `setdefault`.
+`load_state()` is backward-compatible: missing keys are populated via `setdefault`. If `state_version` in the file exceeds the binary's `STATE_VERSION` constant, a warning is logged (state was written by a newer binary — occurs after `--revert`).
+
+### State Schema Policy
+
+**Never rename, remove, or reinterpret existing keys.** Only add new ones.
+
+#### Checklist for every state schema change
+
+1. **Add** the new key — do not rename or remove existing keys
+2. **`setdefault`** the new key in `load_state()` (existing state files need a safe default)
+3. **Add** the new key to the fresh-state `return` dict at the bottom of `load_state()`
+4. **Bump `STATE_VERSION`** in `yt_dont_recommend.py` (the integer constant near the top)
+5. **Update the State Schema** block above in this file
+6. **Add a test** covering the new key's default value
+
+This ensures old binaries (post-revert) can always read state written by newer ones — they ignore unknown keys and log a warning if `state_version` in the file exceeds what they expect.
 
 ### Key Function Signatures
 
 ```python
 def process_channels(channels: list[str], source: str,
                      dry_run: bool = False, limit: int | None = None,
-                     headless: bool = False, unblock_policy: str = "all"):
+                     headless: bool = False, unblock_policy: str = "all",
+                     subscriptions: set[str] | None = None) -> set[str] | None:
 
 def check_removals(state: dict, current_channels: list[str],
                    source: str, unblock_policy: str) -> list[str]:

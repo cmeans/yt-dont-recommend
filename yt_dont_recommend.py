@@ -114,8 +114,13 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.17"
+__version__ = "0.1.18"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
+
+# State schema version — bump this whenever the state file structure changes.
+# Policy: only ADD new keys (never rename/remove/reinterpret existing ones).
+# load_state() warns when it reads a state file written by a newer version.
+STATE_VERSION = 1
 
 # Schedule management
 _SCHEDULE_HOURS = (3, 15)  # 3:00 AM and 3:00 PM
@@ -197,6 +202,15 @@ def load_state() -> dict:
         s.setdefault("previous_version", None)
         s.setdefault("current_version", None)
         s.setdefault("source_sizes", {})
+        # Schema version guard — warn if state was written by a newer binary
+        file_sv = s.get("state_version", 0)
+        if file_sv > STATE_VERSION:
+            logging.warning(
+                f"State file was written by a newer version of yt-dont-recommend "
+                f"(schema v{file_sv}, this binary expects v{STATE_VERSION}). "
+                "Some state fields may be ignored. Upgrade to restore full functionality."
+            )
+        s.setdefault("state_version", STATE_VERSION)
         return s
     return {
         "processed": [],
@@ -212,6 +226,7 @@ def load_state() -> dict:
         "previous_version": None,
         "current_version": None,
         "source_sizes": {},
+        "state_version": STATE_VERSION,
     }
 
 

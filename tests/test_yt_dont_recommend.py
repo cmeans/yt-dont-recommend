@@ -498,6 +498,34 @@ class TestVersionChecking:
         assert state["auto_upgrade"] is False
         assert state["previous_version"] is None
         assert state["current_version"] is None
+        assert state["state_version"] == ydr.STATE_VERSION
+
+    def test_state_version_written_to_fresh_state(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        ydr.save_state(state)
+        import json
+        saved = json.loads((tmp_path / "processed.json").read_text())
+        assert saved["state_version"] == ydr.STATE_VERSION
+
+    def test_state_version_warn_on_newer_schema(self, tmp_path, monkeypatch, caplog):
+        import json, logging
+        state_file = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
+        # Write a state file with a future schema version
+        state_file.write_text(json.dumps({"state_version": ydr.STATE_VERSION + 1}))
+        with caplog.at_level(logging.WARNING):
+            ydr.load_state()
+        assert any("newer version" in r.message for r in caplog.records)
+
+    def test_state_version_no_warn_on_same_or_older_schema(self, tmp_path, monkeypatch, caplog):
+        import json, logging
+        state_file = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
+        state_file.write_text(json.dumps({"state_version": ydr.STATE_VERSION}))
+        with caplog.at_level(logging.WARNING):
+            ydr.load_state()
+        assert not any("newer version" in r.message for r in caplog.records)
 
     def test_version_tracked_at_startup_enables_revert_after_manual_upgrade(
         self, tmp_path, monkeypatch
