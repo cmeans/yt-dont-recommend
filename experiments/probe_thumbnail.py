@@ -88,45 +88,46 @@ or
 # from the title and then invents matching visual evidence.
 
 PROMPT_DESCRIBE = """\
-Look carefully at this image and describe only what you actually see.
+Look carefully at this image and report only what you literally see.
 
-Be specific and factual. Include:
-- How many people are visible and their facial expressions (neutral, happy, \
-shocked, exaggerated, etc.)
-- Any text visible in the image (quote it exactly)
-- Any graphic elements: arrows, circles, highlight boxes, comparison panels
-- The overall composition and colour scheme
-- Whether the image looks natural/candid or staged/composed
+Structure your answer exactly like this:
 
-Do not classify or judge — only describe what is literally present.
+PEOPLE: [count and each person's facial expression — use precise words: \
+neutral, smiling, serious, open-mouthed, wide-eyed, exaggerated-shock, etc.]
+TEXT: [quote every word of visible text exactly, or "none"]
+GRAPHICS: [arrows, circles, highlight boxes, split-panels, badges — or "none"]
+COMPOSITION: [brief factual note on layout, background colour, any staging]
 """
 
 PROMPT_CLASSIFY_FROM_DESCRIPTION = """\
-You are a YouTube clickbait detector.
+You are a YouTube clickbait detector. Use ONLY the visual description below \
+and the title to decide.
 
-Video title: {title}
+Title: {title}
 
-Visual description of the thumbnail:
+Thumbnail description:
 {description}
 
-Based on the description above and the title, assess whether this is clickbait.
+A thumbnail is clickbait when it MANUFACTURES drama to deceive — not merely \
+because it looks exciting. Apply these rules strictly:
 
-Clickbait signals:
-- Shocked or exaggerated facial expressions designed to manufacture alarm
-- Sensational text overlays ("YOU WON'T BELIEVE", "SHOCKING", "EXPOSED", \
-"can you spot the fake?")
-- Red circles, arrows, or highlight boxes drawing attention to something dramatic
-- Side-by-side comparisons designed to provoke anxiety or curiosity
-- Thumbnail imagery that mismatches or exaggerates what the title implies
-- Staged or manufactured drama unrelated to actual content
+FLAG as clickbait only if the description contains:
+- Exaggerated-shock or wide-eyed expressions that feel staged/performed
+- Sensational text overlays designed to withhold info or cause alarm \
+  (e.g. "you won't believe", "EXPOSED", "can you spot the fake?", "SHOCKING")
+- Red circles, arrows, or highlight boxes on something dramatic
+- A split-panel comparison designed to provoke anxiety
+- Thumbnail imagery that clearly contradicts or exaggerates what the title says
 
-Legitimate signals:
-- Neutral or natural expressions
-- Clean informative imagery matching the topic
-- No manufactured drama or sensational overlays
+DO NOT flag for:
+- Exciting or dramatic subject matter that matches the title (rockets, space, \
+  action scenes, science experiments)
+- A presenter/host appearing naturally on screen
+- Bold channel branding or normal title-card text
+- Serious or intense expressions that fit the topic (news, documentary)
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
-{{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence citing specific visual evidence"}}
+{{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence citing the specific deceptive element"}}
 or
 {{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
 """
@@ -262,6 +263,10 @@ def main():
     parser.add_argument("--timeout", type=int, default=90,
                         help="Per-inference timeout in seconds (default: 90). "
                              "Two-step uses 2x this budget.")
+    parser.add_argument("--time-budget", type=int, default=0,
+                        help="Skip video and mark as timed-out if total elapsed "
+                             "exceeds this many seconds (0 = no limit). "
+                             "Useful for production use: e.g. --time-budget 120")
     args = parser.parse_args()
 
     global _client
@@ -291,6 +296,11 @@ def main():
         except Exception as e:
             err = str(e)[:60]
             print(f"{title[:51]:<52}  ERROR: {err}")
+            continue
+
+        if args.time_budget and elapsed > args.time_budget:
+            print(f"{title[:51]:<52}  ⚠️  exceeded time budget "
+                  f"({elapsed:.0f}s > {args.time_budget}s) — treated as pass")
             continue
 
         is_cb  = result.get("is_clickbait")
