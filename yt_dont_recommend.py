@@ -114,7 +114,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.1.8"
+__version__ = "0.1.9"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # Schedule management
@@ -1922,6 +1922,16 @@ def main():
     args = parser.parse_args()
     setup_logging(args.verbose)
 
+    # Track version on every invocation so --revert works regardless of how
+    # the upgrade was performed (auto-upgrade or manual uv/pipx install).
+    _state = load_state()
+    _running = _get_current_version()
+    if _state.get("current_version") != _running:
+        _state["previous_version"] = _state.get("current_version")
+        _state["current_version"] = _running
+        save_state(_state)
+    del _state, _running
+
     if args.clear_alerts:
         if ATTENTION_FILE.exists():
             ATTENTION_FILE.unlink()
@@ -2020,14 +2030,6 @@ def main():
 
     # Periodic version check (at most once per 24 h; non-blocking on network failure)
     state = load_state()
-
-    # Track version across runs so --revert works regardless of how the upgrade happened
-    _running = _get_current_version()
-    if state.get("current_version") != _running:
-        state["previous_version"] = state.get("current_version")
-        state["current_version"] = _running
-        save_state(state)
-
     latest = check_for_update(state)
     if latest:
         current = _get_current_version()
