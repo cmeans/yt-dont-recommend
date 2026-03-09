@@ -27,4 +27,4 @@ dev = [
 yt-dont-recommend = "yt_dont_recommend:main"
 
 [tool.hatch.build.targets.wheel]
-include = ["yt_dont_recommend.py"]
+packages = ["src/yt_dont_recommend"]
