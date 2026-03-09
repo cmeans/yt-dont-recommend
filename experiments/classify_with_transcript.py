@@ -57,24 +57,31 @@ SAMPLE_VIDEOS = [
 
 
 TRANSCRIPT_PROMPT = """\
-You are a YouTube clickbait detector. Classify the video based on its title AND transcript excerpt.
+You are a YouTube clickbait detector resolving an ambiguous title.
 
-Clickbait signals:
-- Title withholds key information or uses emotional manipulation to force a click
-- Title makes promises the actual content does not deliver
-- Excessive capitalization or sensational framing unrelated to actual content
+The title was flagged as potentially clickbait. Use the transcript excerpt to \
+determine whether the title's framing is honest.
 
 Title: {title}
 
 Transcript excerpt (first ~{chars} chars):
 {transcript}
 
-Does the actual content match the title's framing, or is the title misleading/manipulative?
+Decision rules:
+- If the transcript covers the topic the title claims → the title is HONEST \
+  → lower your confidence that it is clickbait (is_clickbait: false)
+- If the transcript content clearly mismatches the title's promise or framing \
+  → the title is MISLEADING → raise confidence (is_clickbait: true)
+- If the transcript is substantive and on-topic, that is strong evidence \
+  AGAINST clickbait even if the title has mild sensational wording
+
+The transcript is evidence of what the video actually delivers. If it delivers \
+on the title's premise, that is NOT clickbait.
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
-{{"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence"}}
+{{"is_clickbait": true, "confidence": 0.9, "reasoning": "transcript does not match title because ..."}}
 or
-{{"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}}
+{{"is_clickbait": false, "confidence": 0.1, "reasoning": "transcript confirms title's topic"}}
 """
 
 
