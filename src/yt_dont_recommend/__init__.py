@@ -52,10 +52,6 @@ License: MIT
 import argparse
 import json
 import logging
-import logging.handlers
-import plistlib
-import random
-import re
 import secrets
 import shutil
 import subprocess
@@ -63,399 +59,75 @@ import sys
 import time
 from datetime import datetime, date
 from pathlib import Path
-from urllib.parse import urlparse, quote
 from urllib.request import urlopen, Request
 
-# --- Configuration ---
-
-BUILTIN_SOURCES = {
-    "deslop": {
-        "name": "DeSlop",
-        "url": "https://raw.githubusercontent.com/NikoboiNFTB/DeSlop/refs/heads/main/block/list.txt",
-        "format": "text",
-        "description": "Curated list from the DeSlop project (~130+ channels)",
-    },
-    "aislist": {
-        "name": "AiSList",
-        "url": "https://raw.githubusercontent.com/Override92/AiSList/main/AiSList/aislist_blocklist.txt",
-        "format": "text",
-        "description": "Community-maintained list from AiSList (~8400+ channels, ! comments)",
-    },
-}
-
-DEFAULT_SOURCES = list(BUILTIN_SOURCES.keys())  # run all built-in sources by default
-
-# Browser profile directory (persists login state between runs)
-PROFILE_DIR = Path.home() / ".yt-dont-recommend" / "browser-profile"
-
-# State file to track which channels have been processed
-STATE_FILE = Path.home() / ".yt-dont-recommend" / "processed.json"
-
-# Log file
-LOG_FILE = Path.home() / ".yt-dont-recommend" / "run.log"
-
-# Default personal exclusion list — loaded automatically if present
-DEFAULT_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "exclude.txt"
-
-# Delays (seconds) — be respectful to avoid rate limiting
-MIN_DELAY = 3.0
-MAX_DELAY = 7.0
-PAGE_LOAD_WAIT = 3.0
-LONG_PAUSE_EVERY = 25
-LONG_PAUSE_SECONDS = 30
-# Selector health check: if this many consecutive passes each have >=
-# MIN_CARDS_FOR_SELECTOR_CHECK cards but yield zero parseable channel links,
-# the feed card selector is probably broken.
-MIN_CARDS_FOR_SELECTOR_CHECK = 10
-SELECTOR_WARN_AFTER = 3
-
-# Attention flag file — written when something requires user action between runs
-ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
-
-# Version
-__version__ = "0.1.21"
-VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
-
-# State schema version — bump this whenever the state file structure changes.
-# Policy: only ADD new keys (never rename/remove/reinterpret existing ones).
-# load_state() warns when it reads a state file written by a newer version.
-STATE_VERSION = 1
-
-# Set to True by write_attention() so main() can exit with code 1 when
-# something serious enough to alert the user occurred during the run.
-_had_attention = False
-
-# Schedule management
-_SCHEDULE_HOURS = (3, 15)  # 3:00 AM and 3:00 PM
-_LAUNCHD_LABEL = "com.user.yt-dont-recommend"
-_LAUNCHD_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
-_CRON_MARKER = "# managed by yt-dont-recommend"
-
-# Selectors used both for processing and selector checks.
-# YouTube changes its DOM frequently — run --check-selectors if things break.
-VIDEO_SELECTORS = [
-    "ytd-rich-item-renderer",
-    "ytd-grid-video-renderer",
-    "ytd-video-renderer",
-    "#contents ytd-rich-grid-row",
-]
-MENU_BTN_SELECTORS = [
-    "button[aria-label='More actions']",                        # home feed and search results
-    "button[aria-label='Action menu']",                         # channel pages
-    "button.yt-icon-button#button[aria-label='Action menu']",
-    "yt-icon-button#button[aria-label='Action menu']",
-    "ytd-menu-renderer yt-icon-button",
-    "#menu button",
-]
-MENU_ITEM_SELECTOR = (
-    "ytd-menu-service-item-renderer, tp-yt-paper-item, "
-    "ytd-menu-navigation-item-renderer, [role='menuitem']"
+# --- Re-exports from config ---
+from .config import (
+    BUILTIN_SOURCES,
+    DEFAULT_SOURCES,
+    PROFILE_DIR,
+    STATE_FILE,
+    LOG_FILE,
+    DEFAULT_EXCLUDE_FILE,
+    MIN_DELAY,
+    MAX_DELAY,
+    PAGE_LOAD_WAIT,
+    LONG_PAUSE_EVERY,
+    LONG_PAUSE_SECONDS,
+    MIN_CARDS_FOR_SELECTOR_CHECK,
+    SELECTOR_WARN_AFTER,
+    ATTENTION_FILE,
+    __version__,
+    VERSION_CHECK_INTERVAL,
+    STATE_VERSION,
+    VIDEO_SELECTORS,
+    MENU_BTN_SELECTORS,
+    MENU_ITEM_SELECTOR,
+    TARGET_PHRASES,
+    _SCHEDULE_HOURS,
+    _LAUNCHD_LABEL,
+    _LAUNCHD_PLIST,
+    _CRON_MARKER,
+    setup_logging,
 )
-TARGET_PHRASES = ("don't recommend", "dont recommend")
 
+# --- Re-exports from state ---
+from .state import (
+    _had_attention,
+    load_state,
+    save_state,
+    _desktop_notify,
+    _ntfy_notify,
+    write_attention,
+    check_attention_flag,
+)
 
-# --- Logging Setup ---
+# --- Re-exports from blocklist ---
+from .blocklist import (
+    parse_text_blocklist,
+    parse_json_blocklist,
+    fetch_remote,
+    resolve_source,
+    channel_to_url,
+    check_removals,
+)
 
-def setup_logging(verbose: bool = False):
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    level = logging.DEBUG if verbose else logging.INFO
-    file_handler = logging.handlers.RotatingFileHandler(
-        LOG_FILE, maxBytes=1 * 1024 * 1024, backupCount=5, encoding="utf-8"
-    )
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            file_handler,
-        ],
-    )
+# --- Re-exports from scheduler ---
+from .scheduler import (
+    _parse_schedule_hours,
+    _format_hours,
+    _find_installed_binary,
+    _schedule_macos,
+    _schedule_linux,
+    schedule_cmd,
+)
 
-
-# --- State Management ---
-
-def load_state() -> dict:
-    if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
-            s = json.load(f)
-        # Ensure new fields exist for older state files (backward compat)
-        s.setdefault("blocked_by", {})
-        s.setdefault("would_have_blocked", {})
-        # Migrate old stat key names to descriptive names
-        stats = s.setdefault("stats", {})
-        if "success" in stats:
-            stats["total_blocked"] = stats.pop("success")
-        if "skipped" in stats:
-            stats["total_skipped"] = stats.pop("skipped")
-        if "failed" in stats:
-            stats["total_failed"] = stats.pop("failed")
-        stats.setdefault("total_blocked", 0)
-        stats.setdefault("total_skipped", 0)
-        stats.setdefault("total_failed", 0)
-        # Drop ucxxx_to_handle self-mappings left by earlier versions
-        cache = s.get("ucxxx_to_handle", {})
-        stale = [k for k, v in cache.items() if k == v]
-        for k in stale:
-            cache[k] = None
-        s.setdefault("notify_topic", None)
-        s.setdefault("last_version_check", None)
-        s.setdefault("latest_known_version", None)
-        s.setdefault("notified_version", None)
-        s.setdefault("auto_upgrade", False)
-        s.setdefault("previous_version", None)
-        s.setdefault("current_version", None)
-        s.setdefault("source_sizes", {})
-        # Schema version guard — warn if state was written by a newer binary
-        file_sv = s.get("state_version", 0)
-        if file_sv > STATE_VERSION:
-            logging.warning(
-                f"State file was written by a newer version of yt-dont-recommend "
-                f"(schema v{file_sv}, this binary expects v{STATE_VERSION}). "
-                "Some state fields may be ignored. Upgrade to restore full functionality."
-            )
-        s.setdefault("state_version", STATE_VERSION)
-        return s
-    return {
-        "processed": [],
-        "blocked_by": {},
-        "would_have_blocked": {},
-        "last_run": None,
-        "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
-        "notify_topic": None,
-        "last_version_check": None,
-        "latest_known_version": None,
-        "notified_version": None,
-        "auto_upgrade": False,
-        "previous_version": None,
-        "current_version": None,
-        "source_sizes": {},
-        "state_version": STATE_VERSION,
-    }
-
-
-def save_state(state: dict):
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    state["last_run"] = datetime.now().isoformat()
-    # Don't leave empty pending_unblock in the state file
-    if "pending_unblock" in state and not state["pending_unblock"]:
-        del state["pending_unblock"]
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
-
-
-# --- Blocklist Fetching ---
-
-def parse_text_blocklist(raw: str) -> list[str]:
-    """Parse plain text blocklist: one channel path per line.
-
-    Supports # and ! comment prefixes (full-line and inline).
-    Normalizes all variants to canonical form: @handle or UCxxx.
-
-    Examples of valid lines:
-        @SomeChannel
-        @SomeChannel  # optional inline note
-        UCxxxxxxxxxxxxxxxxxxxxxxxx
-    """
-    channels = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("!"):
-            continue
-        # Strip inline comment: "@handle  # reason" → "@handle"
-        if "#" in line:
-            line = line[:line.index("#")].strip()
-        if not line:
-            continue
-        # Strip leading slash: /@handle → @handle
-        if line.startswith("/@"):
-            line = line[1:]
-        # Strip /channel/ prefix: /channel/UCxxx → UCxxx
-        elif line.startswith("/channel/"):
-            line = line[len("/channel/"):]
-        channels.append(line)
-    return channels
-
-
-def parse_json_blocklist(raw: str) -> list[str]:
-    """Parse JSON blocklist. Handles several common formats.
-
-    All results are normalized to canonical form: @handle or UCxxx.
-    """
-    channels = []
-    try:
-        data = json.loads(raw)
-        if isinstance(data, list):
-            for entry in data:
-                if isinstance(entry, str):
-                    # Normalize /@handle → @handle, /channel/UCxxx → UCxxx
-                    if entry.startswith("/@"):
-                        entry = entry[1:]
-                    elif entry.startswith("/channel/"):
-                        entry = entry[len("/channel/"):]
-                    channels.append(entry)
-                elif isinstance(entry, dict):
-                    for key in ("channelHandle", "handle", "channelId", "id", "url"):
-                        if key in entry:
-                            val = entry[key]
-                            if not isinstance(val, str):
-                                continue
-                            if val.startswith("http"):
-                                path = urlparse(val).path  # e.g. /@handle
-                                if path.startswith("/@"):
-                                    val = path[1:]
-                                elif path.startswith("/channel/"):
-                                    val = path[len("/channel/"):]
-                                else:
-                                    val = path
-                            elif val.startswith("UC"):
-                                pass  # already canonical
-                            elif val.startswith("@"):
-                                pass  # already canonical
-                            channels.append(val)
-                            break
-        elif isinstance(data, dict):
-            for key in data:
-                if key.startswith("UC"):
-                    channels.append(key)
-                elif key.startswith("@"):
-                    channels.append(key)
-    except json.JSONDecodeError:
-        logging.warning("Failed to parse as JSON; falling back to line-by-line text parsing")
-        channels = parse_text_blocklist(raw)
-    return channels
-
-
-def fetch_remote(url: str) -> str:
-    req = Request(url, headers={"User-Agent": f"yt-dont-recommend/{_get_current_version()}"})
-    try:
-        with urlopen(req, timeout=30) as resp:
-            return resp.read().decode("utf-8")
-    except Exception as e:
-        raise RuntimeError(f"Failed to fetch {url}: {e}") from e
-
-
-def resolve_source(source: str, quiet: bool = False) -> list[str]:
-    """
-    Resolve --source to a list of channel paths. Accepts:
-      - A built-in key ("deslop", "aislist")
-      - A local file path
-      - An HTTP/HTTPS URL
-
-    quiet=True suppresses per-file INFO lines (used when loading the exclude file,
-    where the caller logs a single consolidated message instead).
-    """
-    if source in BUILTIN_SOURCES:
-        info = BUILTIN_SOURCES[source]
-        logging.info(f"Fetching built-in source '{source}' ({info['name']}): {info['url']}")
-        raw = fetch_remote(info["url"])
-        channels = parse_text_blocklist(raw) if info["format"] == "text" else parse_json_blocklist(raw)
-        logging.info(f"Fetched {len(channels)} channels from {info['name']}")
-        return channels
-
-    if source.startswith("http://") or source.startswith("https://"):
-        if not quiet:
-            logging.info(f"Fetching remote blocklist: {source}")
-        raw = fetch_remote(source)
-        stripped = raw.lstrip()
-        channels = parse_json_blocklist(raw) if stripped.startswith(("{", "[")) else parse_text_blocklist(raw)
-        if not quiet:
-            logging.info(f"Fetched {len(channels)} channels from {source}")
-        return channels
-
-    path = Path(source).expanduser().resolve()
-    if not path.exists():
-        logging.error(f"File not found: {path}")
-        sys.exit(1)
-    if not quiet:
-        logging.info(f"Reading local blocklist: {path}")
-    raw = path.read_text(encoding="utf-8")
-    stripped = raw.lstrip()
-    channels = parse_json_blocklist(raw) if stripped.startswith(("{", "[")) else parse_text_blocklist(raw)
-    if not quiet:
-        logging.info(f"Read {len(channels)} channels from {path.name}")
-    return channels
-
-
-def channel_to_url(channel: str) -> str:
-    """Convert a canonical channel identifier to a full YouTube URL."""
-    if channel.startswith("http"):
-        return channel
-    if channel.startswith("@"):
-        return f"https://www.youtube.com/{channel}"
-    if channel.startswith("UC"):
-        return f"https://www.youtube.com/channel/{channel}"
-    return f"https://www.youtube.com/{channel}"
-
-
-# --- Browser Automation ---
+# --- Browser automation thin wrappers ---
 
 def do_login():
     """Open a browser window for the user to log into YouTube."""
     from .browser import do_login as _do_login
     return _do_login()
-
-
-def check_removals(state: dict, current_channels: list[str],
-                   source: str, unblock_policy: str) -> list[str]:
-    """
-    Compare currently-fetched blocklist against previously-blocked channels.
-
-    If a channel was blocked because of `source` but is no longer in the
-    current list, it may be a false positive that the list maintainer corrected.
-
-    unblock_policy:
-      "all" — only unblock when the channel has been dropped from every source
-               that originally blocked it (conservative, default)
-      "any" — unblock as soon as any single source drops the channel
-
-    Modifies state in place. Returns list of channels that should be
-    unblocked on YouTube (browser action still required).
-    """
-    current_set = {c.lower() for c in current_channels}
-    blocked_by = state.get("blocked_by", {})
-    to_unblock: list[str] = []
-
-    for channel, info in list(blocked_by.items()):
-        sources = info.get("sources", [])
-        if source not in sources:
-            continue
-        if channel.lower() in current_set:
-            continue
-
-        # This channel was blocked by `source` but is no longer on that list
-        other_sources = [s for s in sources if s != source]
-
-        if unblock_policy == "any" or not other_sources:
-            # Save to pending_unblock before removing from state, so a failed browser
-            # unblock can be retried on the next run without losing the channel.
-            state.setdefault("pending_unblock", {})[channel] = info.copy()
-            del blocked_by[channel]
-            try:
-                state["processed"].remove(channel)
-            except ValueError:
-                pass
-            to_unblock.append(channel)
-            if other_sources:
-                logging.warning(
-                    f"*** UNBLOCKING {channel} — dropped from '{source}'. "
-                    f"NOTE: still present in {other_sources} but unblocking "
-                    f"because --unblock-policy=any."
-                )
-            else:
-                logging.warning(
-                    f"*** UNBLOCKING {channel} — removed from '{source}' blocklist "
-                    f"(possible false positive correction by list maintainer)."
-                )
-            save_state(state)
-        else:
-            # policy == "all" and other sources still assert the block
-            info["sources"] = other_sources
-            logging.info(
-                f"NOTE: {channel} was dropped from '{source}' but is still "
-                f"blocked by: {other_sources}. Will unblock when removed from all sources."
-            )
-
-    return to_unblock
 
 
 def fetch_subscriptions(page) -> set[str]:
@@ -513,89 +185,6 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     """
     from .browser import check_selectors as _check_selectors
     return _check_selectors(test_channel)
-
-
-# --- Attention notifications ---
-
-def _desktop_notify(message: str) -> None:
-    """Attempt a desktop notification. Fails silently if unavailable."""
-    try:
-        if sys.platform == "darwin":
-            subprocess.run(
-                ["osascript", "-e",
-                 f'display notification "{message}" with title "yt-dont-recommend"'],
-                capture_output=True, timeout=5,
-            )
-        else:
-            subprocess.run(
-                ["notify-send", "--urgency=normal", "yt-dont-recommend", message],
-                capture_output=True, timeout=5,
-            )
-    except Exception:
-        pass
-
-
-def _ntfy_notify(topic: str, message: str) -> None:
-    """POST a notification to ntfy.sh. Fails silently if unavailable."""
-    try:
-        req = Request(
-            f"https://ntfy.sh/{topic}",
-            data=message.encode("utf-8"),
-            headers={
-                "Title": "yt-dont-recommend",
-                "Priority": "high",
-                "Tags": "warning",
-            },
-            method="POST",
-        )
-        with urlopen(req, timeout=10):
-            pass
-    except Exception:
-        pass
-
-
-def write_attention(message: str) -> None:
-    global _had_attention
-    _had_attention = True
-    """Record an alert that requires user action.
-
-    Appends a timestamped entry to the attention flag file, attempts a
-    desktop notification, and sends an ntfy.sh push notification if
-    configured. The flag file persists across runs until cleared with
-    --clear-alerts, so unattended (cron/launchd) failures are visible
-    the next time the user runs any command.
-    """
-    ATTENTION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().isoformat(timespec="seconds")
-    with open(ATTENTION_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {message}\n")
-    logging.warning(f"ATTENTION: {message}")
-    _desktop_notify(message)
-    state = load_state()
-    topic = state.get("notify_topic")
-    if topic:
-        _ntfy_notify(topic, message)
-
-
-def check_attention_flag() -> None:
-    """Print any pending alerts from previous runs, if present."""
-    if not ATTENTION_FILE.exists():
-        return
-    alerts = ATTENTION_FILE.read_text(encoding="utf-8").strip()
-    if not alerts:
-        ATTENTION_FILE.unlink()
-        return
-    sep = "=" * 60
-    print(f"\n{sep}")
-    print("  ACTION REQUIRED — alerts from previous runs:")
-    print(sep)
-    print(alerts)
-    print(sep)
-    print("  Run --check-selectors to diagnose selector failures.")
-    print("  Run --clear-alerts once the issue is resolved.")
-    print(f"{sep}\n")
-    if sys.stdin.isatty():
-        input("Press Enter to continue...")
 
 
 # --- Version checking and upgrades ---
@@ -822,180 +411,6 @@ def test_notify() -> None:
     print(f"Sending test notification to https://ntfy.sh/{topic} ...")
     _ntfy_notify(topic, "Test notification — yt-dont-recommend is configured correctly.")
     print("Sent. Check your ntfy app.")
-
-
-# --- Schedule management ---
-
-def _format_hours(hours: list[int]) -> str:
-    """Convert a list of 24h integers to a readable string, e.g. '3:00 AM and 3:00 PM'."""
-    def _fmt(h: int) -> str:
-        if h == 0:   return "12:00 AM"
-        if h < 12:   return f"{h}:00 AM"
-        if h == 12:  return "12:00 PM"
-        return f"{h - 12}:00 PM"
-    parts = [_fmt(h) for h in sorted(hours)]
-    if len(parts) <= 2:
-        return " and ".join(parts)
-    return ", ".join(parts[:-1]) + ", and " + parts[-1]
-
-
-def _parse_schedule_hours(raw: str) -> list[int]:
-    """Parse --schedule-hours input into a sorted list of 24h integers.
-
-    Accepted formats:
-      6,18      specific hours (0–23, comma-separated)
-      */4       every 4 hours (step 1–23)
-      hourly    every hour (alias for */1)
-
-    Raises ValueError with a human-readable message on bad input.
-    """
-    raw = raw.strip()
-    if raw == "hourly":
-        return list(range(24))
-    if raw.startswith("*/"):
-        step = int(raw[2:])
-        if step < 1 or step > 23:
-            raise ValueError(f"*/N step must be 1–23, got {step!r}")
-        return list(range(0, 24, step))
-    parsed = sorted(set(int(h.strip()) for h in raw.split(",")))
-    if not parsed or not all(0 <= h <= 23 for h in parsed):
-        raise ValueError(f"hours must be 0–23, got {raw!r}")
-    return parsed
-
-
-def _find_installed_binary() -> str:
-    """Return the absolute path to use for the schedule entry.
-
-    When running as an installed binary (uv tool / pipx), sys.argv[0] is already
-    the right answer — just resolve it to an absolute path. Falls back to PATH
-    lookup when running in dev mode as 'python yt_dont_recommend.py'.
-    """
-    argv0 = Path(sys.argv[0]).resolve()
-    # Installed binary: no .py extension, file exists
-    if argv0.suffix != ".py" and argv0.exists():
-        return str(argv0)
-    # Dev mode: look for the installed command on PATH
-    found = shutil.which("yt-dont-recommend")
-    if found:
-        return found
-    # Last resort: invoke via the current Python interpreter
-    return f"{sys.executable} {argv0}"
-
-
-def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
-    plist_path = _LAUNCHD_PLIST
-
-    if action == "status":
-        if not plist_path.exists():
-            print("No schedule installed.")
-            return
-        print(f"Installed:  {plist_path}")
-        try:
-            with open(plist_path, "rb") as f:
-                data = plistlib.load(f)
-            actual_hours = sorted(e["Hour"] for e in data.get("StartCalendarInterval", []))
-            time_str = _format_hours(actual_hours)
-        except Exception:
-            time_str = "unknown"
-        result = subprocess.run(
-            ["launchctl", "list", _LAUNCHD_LABEL],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            print(f"Status:     loaded (runs at {time_str} daily)")
-        else:
-            print(f"Status:     plist present but not loaded — try re-running --schedule install")
-        return
-
-    if action == "remove":
-        if not plist_path.exists():
-            print("No schedule to remove.")
-            return
-        subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
-        plist_path.unlink()
-        print("Schedule removed.")
-        return
-
-    # install — idempotent: replace any existing schedule
-    if plist_path.exists():
-        subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
-        plist_path.unlink()
-        print("Replacing existing schedule...")
-
-    plist = {
-        "Label": _LAUNCHD_LABEL,
-        "ProgramArguments": [bin_path, "--headless"],
-        "StartCalendarInterval": [
-            {"Hour": h, "Minute": 0} for h in hours
-        ],
-        "StandardOutPath": "/dev/null",
-        "StandardErrorPath": "/dev/null",
-        "RunAtLoad": False,
-    }
-    plist_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(plist_path, "wb") as f:
-        plistlib.dump(plist, f)
-    subprocess.run(["launchctl", "load", str(plist_path)], check=True)
-    print(f"Scheduled to run at {_format_hours(hours)} daily.")
-    print(f"Plist: {plist_path}")
-    print(f"\nRun logs: {LOG_FILE}")
-
-
-def _schedule_linux(action: str, bin_path: str, hours: list[int]) -> None:
-    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-    existing_lines = result.stdout.splitlines() if result.returncode == 0 else []
-    managed = [l for l in existing_lines if _CRON_MARKER in l]
-    other = [l for l in existing_lines if _CRON_MARKER not in l]
-
-    if action == "status":
-        if managed:
-            print("Scheduled:")
-            for line in managed:
-                # Parse actual hours from the cron expression for readable output
-                try:
-                    actual_hours = sorted(int(h) for h in line.split()[1].split(","))
-                    print(f"  Runs at {_format_hours(actual_hours)} daily")
-                except (IndexError, ValueError):
-                    print(f"  {line}")
-        else:
-            print("No schedule installed.")
-        return
-
-    if action == "remove":
-        if not managed:
-            print("No schedule to remove.")
-            return
-        new_crontab = "\n".join(other)
-        if new_crontab and not new_crontab.endswith("\n"):
-            new_crontab += "\n"
-        subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
-        print("Schedule removed.")
-        return
-
-    # install — idempotent: managed lines are already excluded from `other`,
-    # so writing the new entry naturally replaces any previous one.
-    if managed:
-        print("Replacing existing schedule...")
-
-    hours_str = ",".join(str(h) for h in hours)
-    cron_line = f"0 {hours_str} * * * {bin_path} --headless >> /dev/null 2>&1  {_CRON_MARKER}"
-    new_lines = [l for l in other if l.strip()] + [cron_line]
-    new_crontab = "\n".join(new_lines) + "\n"
-    subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
-    print(f"Scheduled to run at {_format_hours(hours)} daily.")
-    print(f"Entry: {cron_line}")
-    print(f"\nRun logs: {LOG_FILE}")
-    print("To verify: crontab -l")
-
-
-def schedule_cmd(action: str, hours: list[int] | None = None) -> None:
-    """Install, remove, or show status of the automatic run schedule."""
-    bin_path = _find_installed_binary()
-    effective_hours = hours if hours is not None else list(_SCHEDULE_HOURS)
-    if sys.platform == "darwin":
-        _schedule_macos(action, bin_path, effective_hours)
-    else:
-        _schedule_linux(action, bin_path, effective_hours)
 
 
 def _first_run_welcome() -> None:
@@ -1393,7 +808,9 @@ def main():
         if result is not None:
             run_subscriptions = result
 
-    if _had_attention:
+    # Re-read _had_attention from state module since it may have been set there
+    import yt_dont_recommend.state as _state_mod
+    if _state_mod._had_attention:
         sys.exit(1)
 
 
