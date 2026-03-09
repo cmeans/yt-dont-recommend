@@ -17,6 +17,16 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
+      - name: Generate PyPI README (strip TOC)
+        run: |
+          python -c "
+          import re
+          from pathlib import Path
+          src = Path('README.md').read_text(encoding='utf-8')
+          cleaned = re.sub(r'\n---\n.*?\n---\n', '\n\n', src, count=1, flags=re.DOTALL)
+          Path('README-pypi.md').write_text(cleaned, encoding='utf-8')
+          "
+
       - name: Install dependencies
         run: uv sync --extra dev
 
@@ -29,6 +39,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
+
+      - name: Generate PyPI README (strip TOC)
+        run: |
+          python -c "
+          import re
+          from pathlib import Path
+          src = Path('README.md').read_text(encoding='utf-8')
+          cleaned = re.sub(r'\n---\n.*?\n---\n', '\n\n', src, count=1, flags=re.DOTALL)
+          Path('README-pypi.md').write_text(cleaned, encoding='utf-8')
+          "
 
       - name: Install package
         run: uv tool install .
