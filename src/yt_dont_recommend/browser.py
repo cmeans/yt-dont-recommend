@@ -15,6 +15,15 @@ from datetime import datetime, date
 from pathlib import Path
 from urllib.parse import quote
 
+# Channels whose unblock was attempted in the current Python process run.
+# Prevents retrying the same channels for every source in one invocation,
+# which would otherwise trigger Google's password-verification prompt twice.
+_pending_attempted_this_run: set[str] = set()
+
+# Give up on a channel's unblock after this many consecutive display-name
+# failures (channel page unreachable / handle doesn't exist).
+_MAX_DISPLAY_NAME_RETRIES = 3
+
 from .config import (
     PROFILE_DIR,
     PAGE_LOAD_WAIT,
@@ -282,13 +291,18 @@ def process_channels(channels: list[str], source: str,
 
     # Retry any browser unblocks that failed on a previous run
     pending = state.get("pending_unblock", {})
-    if pending:
-        logging.info(f"Retrying {len(pending)} pending unblock(s) from a previous run: {list(pending)}")
+    # Only retry pending unblocks that haven't been attempted yet in this run.
+    # Each invocation processes multiple sources; without this guard a failed
+    # unblock would trigger Google's password-verification prompt once per source.
+    pending_to_retry = {ch: info for ch, info in pending.items()
+                        if ch not in _pending_attempted_this_run}
+    if pending_to_retry:
+        logging.info(f"Retrying {len(pending_to_retry)} pending unblock(s) from a previous run: {list(pending_to_retry)}")
 
     # Check for channels newly removed from the blocklist since the last run
     to_unblock = pkg.check_removals(state, channels, source, unblock_policy)
     # Merge in any channels that were pending from a previous failed unblock
-    for ch in pending:
+    for ch in pending_to_retry:
         if ch not in to_unblock:
             to_unblock.append(ch)
     if to_unblock:
@@ -338,13 +352,13 @@ def process_channels(channels: list[str], source: str,
 
         # Reverse any blocks on YouTube before scanning for new ones
         if to_unblock and not dry_run:
+            _pending_attempted_this_run.update(to_unblock)
             successfully_unblocked = _perform_browser_unblocks(page, to_unblock)
             # Clear successfully unblocked channels from pending_unblock
-            if successfully_unblocked:
-                pending_unblock = state.setdefault("pending_unblock", {})
-                for ch in successfully_unblocked:
-                    pending_unblock.pop(ch, None)
-                pkg.save_state(state)
+            pending_unblock = state.setdefault("pending_unblock", {})
+            for ch in successfully_unblocked:
+                pending_unblock.pop(ch, None)
+            pkg.save_state(state)
         elif to_unblock and dry_run:
             logging.info(f"DRY RUN — would reverse YouTube block for: {', '.join(to_unblock)}")
 
@@ -581,7 +595,25 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
             display_names[channel] = display_name
             logging.debug(f"Display name for {channel}: {display_name!r}")
         else:
-            logging.warning(f"Could not determine display name for {channel} — will skip unblock.")
+            # Increment retry count. After _MAX_DISPLAY_NAME_RETRIES failures
+            # (channel page unreachable / handle doesn't exist) give up and
+            # clear from pending_unblock so the run stops looping on it.
+            entry = state.setdefault("pending_unblock", {}).get(channel, {})
+            retry_count = entry.get("_retry_count", 0) + 1
+            if channel in state.get("pending_unblock", {}):
+                state["pending_unblock"][channel]["_retry_count"] = retry_count
+            if retry_count >= _MAX_DISPLAY_NAME_RETRIES:
+                logging.warning(
+                    f"Could not determine display name for {channel} after "
+                    f"{retry_count} attempt(s) — giving up and clearing from pending queue."
+                )
+                state.setdefault("pending_unblock", {}).pop(channel, None)
+                pkg.save_state(state)
+            else:
+                logging.warning(
+                    f"Could not determine display name for {channel} "
+                    f"(attempt {retry_count}/{_MAX_DISPLAY_NAME_RETRIES}) — will retry next run."
+                )
 
     if not display_names:
         pkg.write_attention("Could not resolve display names for unblock — myactivity page layout may have changed. Run: yt-dont-recommend --check-selectors")
@@ -668,10 +700,15 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
                 delete_btn = page.query_selector(f'button[aria-label="Delete activity item {display_name}"]')
 
         if not delete_btn:
+            # Entry absent from myactivity — either it was never created (channel
+            # was never actually blocked), or it was already removed manually.
+            # Either way the channel is not blocked on YouTube, so treat this as
+            # a successful unblock and clear it from the pending queue.
             logging.warning(
-                f"No feedback entry found for {channel} (display name: {display_name!r}). "
-                f"It may already be removed or the entry may be older than what's loaded."
+                f"No feedback entry found for {channel} (display name: {display_name!r}) — "
+                f"treating as already unblocked (entry may have been removed manually or never created)."
             )
+            unblocked_channels.append(channel)
             continue
 
         delete_btn.click()
