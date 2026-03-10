@@ -1,14 +1,9 @@
 """
-Tests for yt_dont_recommend.py
+Tests for yt_dont_recommend.blocklist — parsing, resolution, and check_removals.
 
-Covers the pure-Python logic: blocklist parsing, URL construction,
-state management, and source resolution. Browser automation functions
-(do_login, process_channels, dont_recommend_channel, check_selectors)
-require a live YouTube session and are not tested here.
-
-Run with:
-    pip install pytest --break-system-packages
-    pytest tests/ -v
+Functions under test are imported directly from yt_dont_recommend.blocklist, but
+patch targets remain yt_dont_recommend.X (the re-exported name in __init__.py),
+as they did in the original test_yt_dont_recommend.py.
 """
 
 import json
@@ -17,6 +12,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import yt_dont_recommend as ydr
+from yt_dont_recommend.blocklist import (
+    parse_text_blocklist,
+    parse_json_blocklist,
+    channel_to_url,
+    resolve_source,
+    check_removals,
+)
 
 # Canonical channel IDs used in tests (no leading /).
 # When a test needs to exercise the /@ or /channel/ prefix normalization path,
@@ -199,45 +201,6 @@ class TestChannelToUrl:
 
 
 # ---------------------------------------------------------------------------
-# State management (load_state / save_state)
-# ---------------------------------------------------------------------------
-
-class TestStateManagement:
-    def test_load_state_returns_defaults_when_no_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        assert state["processed"] == []
-        assert state["last_run"] is None
-        assert state["stats"] == {"total_blocked": 0, "total_skipped": 0, "total_failed": 0}
-
-    def test_save_then_load_roundtrip(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        state["processed"].append("@channel1")
-        state["stats"]["total_blocked"] = 1
-        ydr.save_state(state)
-
-        loaded = ydr.load_state()
-        assert "@channel1" in loaded["processed"]
-        assert loaded["stats"]["total_blocked"] == 1
-        assert loaded["last_run"] is not None
-
-    def test_save_state_sets_last_run(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        ydr.save_state(state)
-        loaded = ydr.load_state()
-        assert loaded["last_run"] is not None
-
-    def test_save_state_creates_parent_dirs(self, tmp_path, monkeypatch):
-        nested = tmp_path / "a" / "b" / "processed.json"
-        monkeypatch.setattr(ydr, "STATE_FILE", nested)
-        state = ydr.load_state()
-        ydr.save_state(state)
-        assert nested.exists()
-
-
-# ---------------------------------------------------------------------------
 # resolve_source
 # ---------------------------------------------------------------------------
 
@@ -313,10 +276,6 @@ class TestResolveSource:
 
 
 # ---------------------------------------------------------------------------
-# --exclude filtering (applied in main() before process_channels)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # check_removals
 # ---------------------------------------------------------------------------
 
@@ -382,15 +341,10 @@ class TestCheckRemovals:
         result = ydr.check_removals(state, ["@channel"], "deslop", "all")
         assert result == []
 
-    def test_load_state_backward_compat_adds_missing_fields(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        # Write an old-style state without the new fields
-        old_state = {"processed": ["@ch"], "last_run": None, "stats": {}}
-        (tmp_path / "processed.json").write_text(json.dumps(old_state))
-        state = ydr.load_state()
-        assert "blocked_by" in state
-        assert "would_have_blocked" in state
 
+# ---------------------------------------------------------------------------
+# --exclude filtering (applied in main() before process_channels)
+# ---------------------------------------------------------------------------
 
 class TestExcludeFiltering:
     """
@@ -440,187 +394,8 @@ class TestExcludeFiltering:
         assert result == ["@a", "@b"]
 
 
-class TestVersionChecking:
-    def test_version_tuple_simple(self):
-        assert ydr._version_tuple("1.2.3") == (1, 2, 3)
-
-    def test_version_tuple_single(self):
-        assert ydr._version_tuple("2") == (2,)
-
-    def test_version_tuple_invalid_returns_zero(self):
-        assert ydr._version_tuple("bad") == (0,)
-
-    def test_check_for_update_returns_none_when_pypi_unavailable(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value=None):
-            result = ydr.check_for_update(state, force=True)
-        assert result is None
-
-    def test_check_for_update_returns_none_when_already_latest(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.1.0"), \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
-            result = ydr.check_for_update(state, force=True)
-        assert result is None
-
-    def test_check_for_update_returns_version_when_newer(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.2.0"), \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
-            result = ydr.check_for_update(state, force=True)
-        assert result == "0.2.0"
-
-    def test_check_for_update_respects_interval(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        from datetime import datetime
-        state = ydr.load_state()
-        # Simulate a recent check that found a newer version
-        state["last_version_check"] = datetime.now().isoformat()
-        state["latest_known_version"] = "0.2.0"
-        with patch("yt_dont_recommend._get_latest_pypi_version") as mock_pypi, \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
-            result = ydr.check_for_update(state, force=False)
-            mock_pypi.assert_not_called()  # should use cached value, not hit PyPI
-        assert result == "0.2.0"
-
-    def test_check_for_update_notifies_ntfy_once(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        state["notify_topic"] = "test-topic"
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.2.0"), \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"), \
-             patch("yt_dont_recommend._ntfy_notify") as mock_ntfy:
-            ydr.check_for_update(state, force=True)
-            assert mock_ntfy.call_count == 1
-            # Second call with same version should not re-notify
-            ydr.check_for_update(state, force=True)
-            assert mock_ntfy.call_count == 1
-
-    def test_state_defaults_include_version_fields(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        assert state["last_version_check"] is None
-        assert state["latest_known_version"] is None
-        assert state["notified_version"] is None
-        assert state["auto_upgrade"] is False
-        assert state["previous_version"] is None
-        assert state["current_version"] is None
-        assert state["state_version"] == ydr.STATE_VERSION
-
-    def test_state_version_written_to_fresh_state(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        state = ydr.load_state()
-        ydr.save_state(state)
-        import json
-        saved = json.loads((tmp_path / "processed.json").read_text())
-        assert saved["state_version"] == ydr.STATE_VERSION
-
-    def test_state_version_warn_on_newer_schema(self, tmp_path, monkeypatch, caplog):
-        import json, logging
-        state_file = tmp_path / "processed.json"
-        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
-        # Write a state file with a future schema version
-        state_file.write_text(json.dumps({"state_version": ydr.STATE_VERSION + 1}))
-        with caplog.at_level(logging.WARNING):
-            ydr.load_state()
-        assert any("newer version" in r.message for r in caplog.records)
-
-    def test_state_version_no_warn_on_same_or_older_schema(self, tmp_path, monkeypatch, caplog):
-        import json, logging
-        state_file = tmp_path / "processed.json"
-        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
-        state_file.write_text(json.dumps({"state_version": ydr.STATE_VERSION}))
-        with caplog.at_level(logging.WARNING):
-            ydr.load_state()
-        assert not any("newer version" in r.message for r in caplog.records)
-
-    def test_version_tracked_at_startup_enables_revert_after_manual_upgrade(
-        self, tmp_path, monkeypatch
-    ):
-        """Version tracking at startup should populate previous_version so that
-        --revert works even when the upgrade was done manually (not via auto-upgrade)."""
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-
-        # Simulate: tool previously ran at 0.1.6
-        state = ydr.load_state()
-        state["current_version"] = "0.1.6"
-        ydr.save_state(state)
-
-        # Now "running" 0.1.7 (e.g. after manual uv tool install)
-        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.7")
-
-        # The startup tracking block (replicated here) should rotate the version
-        state = ydr.load_state()
-        _running = ydr._get_current_version()
-        if state.get("current_version") != _running:
-            prior = state.get("current_version")
-            if prior is not None:
-                state["previous_version"] = prior
-            state["current_version"] = _running
-            ydr.save_state(state)
-
-        state = ydr.load_state()
-        assert state["current_version"] == "0.1.7"
-        assert state["previous_version"] == "0.1.6"
-
-    def test_version_tracking_does_not_overwrite_previous_with_none(
-        self, tmp_path, monkeypatch
-    ):
-        """On first run (current_version is None), previous_version should not
-        be set to None — it should be left untouched."""
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.20")
-
-        # Fresh state — current_version is None
-        state = ydr.load_state()
-        assert state["current_version"] is None
-
-        _running = ydr._get_current_version()
-        if state.get("current_version") != _running:
-            prior = state.get("current_version")
-            if prior is not None:
-                state["previous_version"] = prior
-            state["current_version"] = _running
-            ydr.save_state(state)
-
-        state = ydr.load_state()
-        assert state["current_version"] == "0.1.20"
-        assert state["previous_version"] is None  # not overwritten with None
-
-    def test_revert_with_no_previous_version_prints_message(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        ydr.do_revert()
-        captured = capsys.readouterr()
-        assert "No previous version" in captured.out
-        assert "--revert 0.1.10" in captured.out  # explicit version hint
-
-    def test_revert_explicit_version_skips_state_lookup(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.14")
-        monkeypatch.setattr(ydr, "_detect_installer", lambda: "uv")
-        ran = []
-        monkeypatch.setattr(
-            ydr.subprocess, "run",
-            lambda cmd, **kw: ran.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})()
-        )
-        ydr.do_revert("0.1.10")
-        assert any("0.1.10" in str(c) for c in ran)
-        captured = capsys.readouterr()
-        assert "0.1.10" in captured.out
-
-    def test_revert_no_op_when_already_on_target(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.10")
-        ydr.do_revert("0.1.10")
-        captured = capsys.readouterr()
-        assert "nothing to do" in captured.out
-
-
 # ---------------------------------------------------------------------------
-# New features: per-source stats, blocklist growth tracking, export-state
+# Per-source stats, blocklist growth tracking, export-state
 # ---------------------------------------------------------------------------
 
 class TestPerSourceStats:
@@ -738,154 +513,3 @@ class TestExportState:
         assert "@alpha" in content
         assert "@beta" in content
         assert "# Total blocked channels: 2" in content
-
-
-# ---------------------------------------------------------------------------
-# First-run welcome and --uninstall
-# ---------------------------------------------------------------------------
-
-class TestFirstRunAndUninstall:
-    def test_first_run_detected_when_no_state_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        assert not (tmp_path / "processed.json").exists()
-        is_first_run = not ydr.STATE_FILE.exists()
-        assert is_first_run
-
-    def test_first_run_not_detected_after_state_created(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
-        ydr.save_state(ydr.load_state())
-        is_first_run = not ydr.STATE_FILE.exists()
-        assert not is_first_run
-
-    def test_first_run_welcome_prints(self, capsys):
-        ydr._first_run_welcome()
-        captured = capsys.readouterr()
-        assert "Welcome" in captured.out
-        assert "--login" in captured.out
-        assert "--schedule install" in captured.out
-
-    def test_do_uninstall_removes_data_dir(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "data" / "processed.json")
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "processed.json").write_text("{}")
-        # Simulate user answering "y" to the removal prompt
-        monkeypatch.setattr("builtins.input", lambda _: "y")
-        monkeypatch.setattr(ydr, "schedule_cmd", lambda action: None)
-        monkeypatch.setattr(ydr, "_detect_installer", lambda: "uv")
-        ydr.do_uninstall()
-        assert not data_dir.exists()
-        captured = capsys.readouterr()
-        assert "uv tool uninstall" in captured.out
-
-    def test_do_uninstall_keeps_data_dir_on_no(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "data" / "processed.json")
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "processed.json").write_text("{}")
-        monkeypatch.setattr("builtins.input", lambda _: "n")
-        monkeypatch.setattr(ydr, "schedule_cmd", lambda action: None)
-        monkeypatch.setattr(ydr, "_detect_installer", lambda: "pipx")
-        ydr.do_uninstall()
-        assert data_dir.exists()
-        captured = capsys.readouterr()
-        assert "pipx uninstall" in captured.out
-
-
-# ---------------------------------------------------------------------------
-# Schedule: custom hours, idempotent install, format_hours
-# ---------------------------------------------------------------------------
-
-class TestSchedule:
-    def test_format_hours_am_pm(self):
-        assert ydr._format_hours([3, 15]) == "3:00 AM and 3:00 PM"
-
-    def test_format_hours_midnight(self):
-        assert ydr._format_hours([0]) == "12:00 AM"
-
-    def test_format_hours_noon(self):
-        assert ydr._format_hours([12]) == "12:00 PM"
-
-    def test_format_hours_three_values(self):
-        result = ydr._format_hours([6, 12, 18])
-        assert "6:00 AM" in result
-        assert "12:00 PM" in result
-        assert "6:00 PM" in result
-
-    def test_format_hours_sorted(self):
-        # Should sort regardless of input order
-        assert ydr._format_hours([15, 3]) == "3:00 AM and 3:00 PM"
-
-    def test_schedule_cmd_uses_default_hours(self, monkeypatch):
-        called_with = []
-        monkeypatch.setattr(ydr, "_find_installed_binary", lambda: "/usr/bin/yt-dont-recommend")
-        monkeypatch.setattr(ydr, "_schedule_linux", lambda a, b, h: called_with.append(h))
-        monkeypatch.setattr(ydr.sys, "platform", "linux")
-        ydr.schedule_cmd("install")
-        assert called_with[0] == list(ydr._SCHEDULE_HOURS)
-
-    def test_schedule_cmd_passes_custom_hours(self, monkeypatch):
-        called_with = []
-        monkeypatch.setattr(ydr, "_find_installed_binary", lambda: "/usr/bin/yt-dont-recommend")
-        monkeypatch.setattr(ydr, "_schedule_linux", lambda a, b, h: called_with.append(h))
-        monkeypatch.setattr(ydr.sys, "platform", "linux")
-        ydr.schedule_cmd("install", hours=[6, 18])
-        assert called_with[0] == [6, 18]
-
-    def test_schedule_linux_install_replaces_existing(self, monkeypatch, capsys):
-        """Re-running install should replace the existing entry, not bail."""
-        runs = []
-        existing = f"0 3,15 * * * /bin/yt-dont-recommend --headless  {ydr._CRON_MARKER}"
-
-        def fake_run(cmd, **kw):
-            runs.append(cmd)
-            if cmd == ["crontab", "-l"]:
-                return type("R", (), {"returncode": 0, "stdout": existing})()
-            return type("R", (), {"returncode": 0, "stdout": ""})()
-
-        monkeypatch.setattr(ydr.subprocess, "run", fake_run)
-        ydr._schedule_linux("install", "/bin/yt-dont-recommend", [6, 18])
-        captured = capsys.readouterr()
-        assert "Replacing" in captured.out
-        # New cron entry should use the new hours
-        written = next(r for r in runs if r[0] == "crontab" and len(r) > 1 and r[1] == "-")
-        assert written is not None
-
-    # --- _parse_schedule_hours ---
-
-    def test_parse_schedule_hours_comma(self):
-        assert ydr._parse_schedule_hours("6,18") == [6, 18]
-
-    def test_parse_schedule_hours_dedupes_and_sorts(self):
-        assert ydr._parse_schedule_hours("18,6,6") == [6, 18]
-
-    def test_parse_schedule_hours_single(self):
-        assert ydr._parse_schedule_hours("3") == [3]
-
-    def test_parse_schedule_hours_hourly(self):
-        assert ydr._parse_schedule_hours("hourly") == list(range(24))
-
-    def test_parse_schedule_hours_step_4(self):
-        assert ydr._parse_schedule_hours("*/4") == [0, 4, 8, 12, 16, 20]
-
-    def test_parse_schedule_hours_step_1(self):
-        assert ydr._parse_schedule_hours("*/1") == list(range(24))
-
-    def test_parse_schedule_hours_step_8(self):
-        assert ydr._parse_schedule_hours("*/8") == [0, 8, 16]
-
-    def test_parse_schedule_hours_invalid_step_0(self):
-        with pytest.raises(ValueError):
-            ydr._parse_schedule_hours("*/0")
-
-    def test_parse_schedule_hours_invalid_step_24(self):
-        with pytest.raises(ValueError):
-            ydr._parse_schedule_hours("*/24")
-
-    def test_parse_schedule_hours_out_of_range(self):
-        with pytest.raises(ValueError):
-            ydr._parse_schedule_hours("6,25")
-
-    def test_parse_schedule_hours_negative(self):
-        with pytest.raises((ValueError, Exception)):
-            ydr._parse_schedule_hours("-1")
