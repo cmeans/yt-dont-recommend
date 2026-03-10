@@ -264,10 +264,56 @@ def _resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[st
     return result
 
 
+def open_browser(headless: bool = False):
+    """Open a persistent Chromium browser and verify the YouTube login session.
+
+    Returns (playwright_cm, context, page) on success, or None if not logged in
+    (write_attention is called automatically). Pass the return value as the
+    _browser= argument to process_channels() to share a single session across
+    multiple source runs. Call close_browser() when done.
+    """
+    from playwright.sync_api import sync_playwright
+    pkg = _pkg()
+
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    pw_cm = sync_playwright()
+    p = pw_cm.__enter__()
+    context = p.chromium.launch_persistent_context(
+        str(PROFILE_DIR),
+        headless=headless,
+        args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--disable-infobars"],
+        ignore_default_args=["--enable-automation"],
+        viewport={"width": 1280, "height": 800},
+    )
+    for extra in context.pages[1:]:
+        extra.close()
+    page = context.pages[0] if context.pages else context.new_page()
+
+    page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
+    time.sleep(PAGE_LOAD_WAIT)
+
+    avatar = page.query_selector("button#avatar-btn, img#img[alt]")
+    if not avatar:
+        pkg.write_attention("Not logged in — session may have expired. Run: yt-dont-recommend --login")
+        context.close()
+        pw_cm.__exit__(None, None, None)
+        return None
+
+    return (pw_cm, context, page)
+
+
+def close_browser(handle: tuple) -> None:
+    """Close a browser handle returned by open_browser()."""
+    pw_cm, context, _page = handle
+    context.close()
+    pw_cm.__exit__(None, None, None)
+
+
 def process_channels(channels: list[str], source: str,
                      dry_run: bool = False, limit: int | None = None,
                      headless: bool = False, unblock_policy: str = "all",
-                     subscriptions: set[str] | None = None) -> set[str] | None:
+                     subscriptions: set[str] | None = None,
+                     _browser: tuple | None = None) -> set[str] | None:
     """
     Scan the YouTube home feed and click 'Don't recommend channel' on any
     card whose channel is in the blocklist.
@@ -281,7 +327,6 @@ def process_channels(channels: list[str], source: str,
     need blocking. Run again periodically — as YouTube's algorithm adapts,
     fewer blocklisted channels will appear.
     """
-    from playwright.sync_api import sync_playwright
     pkg = _pkg()
 
     MAX_NO_PROGRESS_SCROLLS = 20
@@ -327,29 +372,17 @@ def process_channels(channels: list[str], source: str,
 
     channel_lookup = {c.lower(): c for c in unblocked}
 
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    _own_browser = _browser is None
+    _pw_cm = None
+    if _own_browser:
+        handle = open_browser(headless=headless)
+        if handle is None:
+            return  # write_attention already called by open_browser
+        _pw_cm, context, page = handle
+    else:
+        _, context, page = _browser
 
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(PROFILE_DIR),
-            headless=headless,
-            args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--disable-infobars"],
-            ignore_default_args=["--enable-automation"],
-            viewport={"width": 1280, "height": 800},
-        )
-        for extra in context.pages[1:]:
-            extra.close()
-        page = context.pages[0] if context.pages else context.new_page()
-
-        page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(PAGE_LOAD_WAIT)
-
-        avatar = page.query_selector("button#avatar-btn, img#img[alt]")
-        if not avatar:
-            pkg.write_attention("Not logged in — session may have expired. Run: yt-dont-recommend --login")
-            context.close()
-            return
-
+    try:
         # Reverse any blocks on YouTube before scanning for new ones
         if to_unblock and not dry_run:
             _pending_attempted_this_run.update(to_unblock)
@@ -363,7 +396,6 @@ def process_channels(channels: list[str], source: str,
             logging.info(f"DRY RUN — would reverse YouTube block for: {', '.join(to_unblock)}")
 
         if not unblocked:
-            context.close()
             return subscriptions
 
         if subscriptions is None:
@@ -532,7 +564,11 @@ def process_channels(channels: list[str], source: str,
                 time.sleep(random.uniform(1.5, 3.0))
                 no_progress_scrolls += 1
 
-        context.close()
+    finally:
+        if _own_browser:
+            context.close()
+            if _pw_cm is not None:
+                _pw_cm.__exit__(None, None, None)
 
     if dry_run:
         logging.info(f"DRY RUN complete. Would have blocked {blocked_count} channel(s) from this source.")
@@ -617,7 +653,11 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
                 )
 
     if not display_names:
-        pkg.write_attention("Could not resolve display names for unblock — myactivity page layout may have changed. Run: yt-dont-recommend --check-selectors")
+        logging.warning(
+            "Could not resolve display names for any channel pending unblock "
+            "— channels may not exist or be temporarily unavailable. Will retry next run. "
+            "Run: yt-dont-recommend --check-selectors if this persists."
+        )
         return []
 
     # Step 2: Navigate to feedback page and handle verification.

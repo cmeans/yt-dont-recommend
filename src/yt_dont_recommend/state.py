@@ -147,8 +147,9 @@ def _ntfy_notify(topic: str, message: str) -> None:
         )
         with urlopen(req, timeout=10):
             pass
-    except Exception:
-        pass
+        logging.debug("ntfy notification sent to topic %s", topic)
+    except Exception as exc:
+        logging.debug("ntfy notification failed (topic %s): %s", topic, exc)
 
 
 def write_attention(message: str) -> None:

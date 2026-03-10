@@ -144,7 +144,8 @@ def fetch_subscriptions(page) -> set[str]:
 def process_channels(channels: list[str], source: str,
                      dry_run: bool = False, limit: int | None = None,
                      headless: bool = False, unblock_policy: str = "all",
-                     subscriptions: set[str] | None = None) -> set[str] | None:
+                     subscriptions: set[str] | None = None,
+                     _browser: tuple | None = None) -> set[str] | None:
     """
     Scan the YouTube home feed and click 'Don't recommend channel' on any
     card whose channel is in the blocklist.
@@ -164,6 +165,7 @@ def process_channels(channels: list[str], source: str,
         dry_run=dry_run, limit=limit,
         headless=headless, unblock_policy=unblock_policy,
         subscriptions=subscriptions,
+        _browser=_browser,
     )
 
 
@@ -774,39 +776,51 @@ def main():
         logging.info(f"Loaded {len(exclude_set)} exclusion(s) via {label}")
 
     run_subscriptions: set[str] | None = None  # shared across sources; fetched once on first active source
-    for source in sources:
-        if len(sources) > 1:
-            logging.info(f"--- Source: {source} ---")
-        try:
-            channels = resolve_source(source)
-        except RuntimeError as e:
-            logging.error(f"Could not load source '{source}': {e} — skipping.")
-            continue
-        # Track source size and notify on growth
-        _st = load_state()
-        _sizes = _st.setdefault("source_sizes", {})
-        _prev = _sizes.get(source)
-        if _prev is not None and len(channels) > _prev:
-            _growth = len(channels) - _prev
-            logging.info(f"*** Blocklist '{source}' grew by {_growth} channel(s) ({_prev} → {len(channels)}) since last run")
-        _sizes[source] = len(channels)
-        save_state(_st)
-        del _st, _sizes, _prev
-        if exclude_set:
-            before = len(channels)
-            channels = [c for c in channels if c.lower() not in exclude_set]
-            logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
-        result = process_channels(
-            channels,
-            source=source,
-            dry_run=args.dry_run,
-            limit=args.limit,
-            headless=args.headless,
-            unblock_policy=args.unblock_policy,
-            subscriptions=run_subscriptions,
-        )
-        if result is not None:
-            run_subscriptions = result
+
+    # Open one browser session shared across all sources to avoid repeated
+    # auth checks and unnecessary startup overhead.
+    from .browser import open_browser, close_browser
+    browser_handle = open_browser(headless=args.headless)
+    if browser_handle is None:
+        return  # write_attention already called by open_browser
+
+    try:
+        for source in sources:
+            if len(sources) > 1:
+                logging.info(f"--- Source: {source} ---")
+            try:
+                channels = resolve_source(source)
+            except RuntimeError as e:
+                logging.error(f"Could not load source '{source}': {e} — skipping.")
+                continue
+            # Track source size and notify on growth
+            _st = load_state()
+            _sizes = _st.setdefault("source_sizes", {})
+            _prev = _sizes.get(source)
+            if _prev is not None and len(channels) > _prev:
+                _growth = len(channels) - _prev
+                logging.info(f"*** Blocklist '{source}' grew by {_growth} channel(s) ({_prev} → {len(channels)}) since last run")
+            _sizes[source] = len(channels)
+            save_state(_st)
+            del _st, _sizes, _prev
+            if exclude_set:
+                before = len(channels)
+                channels = [c for c in channels if c.lower() not in exclude_set]
+                logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
+            result = process_channels(
+                channels,
+                source=source,
+                dry_run=args.dry_run,
+                limit=args.limit,
+                headless=args.headless,
+                unblock_policy=args.unblock_policy,
+                subscriptions=run_subscriptions,
+                _browser=browser_handle,
+            )
+            if result is not None:
+                run_subscriptions = result
+    finally:
+        close_browser(browser_handle)
 
     # Re-read _had_attention from state module since it may have been set there
     import yt_dont_recommend.state as _state_mod
