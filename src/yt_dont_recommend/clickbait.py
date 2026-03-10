@@ -69,6 +69,53 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+_DEFAULT_CONFIG_YAML = """\
+# yt-dont-recommend clickbait detection config
+# Generated on first run. Edit to tune behaviour.
+# Full docs: https://github.com/cmeans/yt-dont-recommend
+
+video:
+  title:
+    # Local LLM model for title classification (requires ollama)
+    model: {name: phi3.5, params: {}}
+    # Score >= threshold → flagged as clickbait
+    threshold: 0.75
+    # Score in [ambiguous_low, threshold) → escalate to thumbnail (if enabled)
+    ambiguous_low: 0.4
+
+  thumbnail:
+    # Thumbnail classification is slow (~65s/video) — disabled by default
+    enabled: false
+    model: {name: gemma3:4b, params: {}}
+    threshold: 0.75
+    # two_step: use Visual Description Grounding (recommended, more accurate)
+    two_step: true
+    timeout: 90
+    time_budget: 120
+
+  transcript:
+    # Transcript classification — disabled by default
+    enabled: false
+    model: {name: phi3.5, params: {}}
+    threshold: 0.75
+    # no_transcript: what to do when a transcript isn't available
+    #   pass       — treat as not clickbait
+    #   flag       — treat as clickbait
+    #   title-only — rely on title result only
+    no_transcript: pass
+"""
+
+
+def _write_default_config(cfg_path: Path) -> None:
+    """Write the default config as commented YAML on first use."""
+    try:
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(_DEFAULT_CONFIG_YAML, encoding="utf-8")
+        log.info("Created default clickbait config: %s", cfg_path)
+    except Exception as exc:
+        log.warning("Could not write default clickbait config to %s: %s", cfg_path, exc)
+
+
 def load_config(path: "Path | str | None" = None) -> dict:
     """Load clickbait config from *path* (or the default location), merging with defaults.
 
@@ -79,6 +126,7 @@ def load_config(path: "Path | str | None" = None) -> dict:
     """
     cfg_path = Path(path) if path else CLICKBAIT_CONFIG_FILE
     if not cfg_path.exists():
+        _write_default_config(cfg_path)
         return deepcopy(_DEFAULT_CONFIG)
 
     try:

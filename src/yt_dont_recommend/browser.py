@@ -399,7 +399,7 @@ def process_channels(channel_sources: dict[str, str],
     # Filter to_unblock against channels already attempted in this process run.
     to_unblock = [ch for ch in to_unblock if ch not in _pending_attempted_this_run]
 
-    if not channel_sources and not to_unblock:
+    if not channel_sources and not to_unblock and clickbait_cfg is None:
         logging.info("Nothing to do.")
         return
 
