@@ -21,6 +21,12 @@ Changelog = "https://github.com/cmeans/yt-dont-recommend/releases"
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pyyaml",
+]
+clickbait = [
+    "ollama",
+    "pyyaml",
+    "youtube-transcript-api",
 ]
 
 [project.scripts]

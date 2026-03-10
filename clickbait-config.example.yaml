@@ -1,0 +1,41 @@
+# clickbait-config.yaml — clickbait detection configuration
+#
+# Copy this file to ~/.yt-dont-recommend/clickbait-config.yaml and edit.
+# Any key omitted here falls back to the built-in default.
+#
+# Install optional dependencies:
+#   pip install yt-dont-recommend[clickbait]
+
+video:
+
+  # --- Title classification (always runs when --clickbait is enabled) ---
+  title:
+    model:
+      name: phi3.5        # Ollama model name
+      params: {}          # extra Ollama options, e.g. {num_predict: 256}
+    threshold: 0.75       # confidence >= this → flagged as clickbait
+    ambiguous_low: 0.4    # confidence >= this but < threshold → run next stage
+
+  # --- Thumbnail classification (opt-in; disabled by default — slow ~65s/video) ---
+  thumbnail:
+    enabled: false        # set to true to enable
+    model:
+      name: gemma3:4b     # must be a multimodal Ollama model
+      params: {}
+    threshold: 0.75
+    two_step: true        # recommended: describe image first, then classify
+                          # (reduces hallucination on vision models)
+    timeout: 90           # seconds per Ollama inference call
+    time_budget: 120      # skip video if total thumbnail time exceeds this (0 = no limit)
+
+  # --- Transcript classification (opt-in; resolves ambiguous titles) ---
+  transcript:
+    enabled: false        # set to true to enable
+    model:
+      name: phi3.5
+      params: {}
+    threshold: 0.75
+    no_transcript: pass   # action when transcript is unavailable:
+                          #   pass       — treat as not clickbait (default; benefit of the doubt)
+                          #   flag       — treat as clickbait
+                          #   title-only — use title-only result unchanged

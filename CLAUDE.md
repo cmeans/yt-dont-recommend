@@ -92,7 +92,17 @@ The `aislist` source is plain text with `!` comments, ~8400+ channels. Format co
 
 ## Architecture
 
-Single-file Python script (`yt_dont_recommend.py`). Key components:
+`src/yt_dont_recommend/` package. Modules:
+
+- `__init__.py` — `main()` entry point + re-exports all public names
+- `config.py` — constants, file paths, selectors, logging setup (no package imports)
+- `state.py` — `load_state`, `save_state`, `write_attention`, `_had_attention`
+- `blocklist.py` — `resolve_source`, `parse_*_blocklist`, `normalize_handle`, `check_removals`
+- `scheduler.py` — `_parse_schedule_hours`, `schedule_cmd`, platform helpers
+- `browser.py` — all Playwright automation
+- `clickbait.py` — clickbait detection: config loading, LLM classifiers, pipeline (see below)
+
+Key components:
 
 - **Blocklist fetching**: `resolve_source()` handles built-in keys, HTTP(S) URLs, and local file paths. `parse_text_blocklist()` and `parse_json_blocklist()` handle format variants. JSON format is auto-detected by leading `{` or `[`.
 - **State management**: `~/.yt-dont-recommend/processed.json` tracks which channels have been handled (crash-safe, saved after each action). See State Schema below for all keys.
@@ -104,6 +114,49 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 - **Version tracking**: At startup, the running version is compared to `state["current_version"]`; on change, the old value is rotated to `state["previous_version"]`. This makes `--revert` work regardless of whether the upgrade was automatic or manual. **Tested 2026-03-08**: manual upgrade 0.1.9→0.1.16→0.1.17, `--revert` correctly dropped back to 0.1.16, auto-upgrade was disabled automatically.
 - **Logging**: `RotatingFileHandler` — `run.log` caps at 1 MB with 5 backups (`run.log.1`–`run.log.5`).
 - **Rate limiting**: Random 3–7s delays between actions, 30s pause every 25 channels. Scroll delay randomised 1.5–3.0s.
+
+### Clickbait Detection Module (`clickbait.py`)
+
+Standalone detection pipeline. Optional runtime deps (`pip install yt-dont-recommend[clickbait]`):
+- `ollama` — local LLM inference
+- `pyyaml` — YAML config file
+- `youtube-transcript-api` — transcript fetching
+
+**Config file**: `~/.yt-dont-recommend/clickbait-config.yaml` (copy from `clickbait-config.example.yaml`). Falls back to built-in defaults when absent or unparseable.
+
+**Default config schema:**
+```yaml
+video:
+  title:
+    model: {name: phi3.5, params: {}}
+    threshold: 0.75
+    ambiguous_low: 0.4
+  thumbnail:
+    enabled: false           # opt-in — slow (~65s/video)
+    model: {name: gemma3:4b, params: {}}
+    threshold: 0.75
+    two_step: true           # Visual Description Grounding (recommended)
+    timeout: 90
+    time_budget: 120
+  transcript:
+    enabled: false           # opt-in
+    model: {name: phi3.5, params: {}}
+    threshold: 0.75
+    no_transcript: pass      # pass | flag | title-only
+```
+
+**Pipeline** (`classify_video(video_id, title, cfg)`):
+1. Title classification (always)
+2. Thumbnail (if `enabled: true` and title confidence in `[ambiguous_low, threshold)`)
+3. Transcript (if `enabled: true` and still ambiguous after previous stages)
+
+**Result keys**: `video_id`, `title`, `is_clickbait`, `confidence`, `flagged`, `stages`, `title_result`, `thumbnail_result`, `transcript_result`, `classified_at`.
+
+**Proven benchmarks (2026-03-08)**:
+- `phi3.5` title: 93% accuracy, ~8s/title, 0 parse failures
+- `gemma3:4b` thumbnail two-step: 100% accuracy on 6-video set, ~65s/video
+
+**`_pkg()` pattern**: sub-modules use late import of `yt_dont_recommend` for names that tests patch. `__init__.py` re-exports all public names so `patch("yt_dont_recommend.X")` still works.
 
 ### State Schema
 
@@ -147,7 +200,7 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 1. **Add** the new key — do not rename or remove existing keys
 2. **`setdefault`** the new key in `load_state()` (existing state files need a safe default)
 3. **Add** the new key to the fresh-state `return` dict at the bottom of `load_state()`
-4. **Bump `STATE_VERSION`** in `yt_dont_recommend.py` (the integer constant near the top)
+4. **Bump `STATE_VERSION`** in `src/yt_dont_recommend/config.py` (the integer constant near the bottom)
 5. **Update the State Schema** block above in this file
 6. **Add a test** covering the new key's default value
 
