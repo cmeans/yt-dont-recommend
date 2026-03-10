@@ -92,21 +92,27 @@ def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
             print("No schedule installed.")
             return
         print(f"Installed:  {plist_path}")
+        prog_args = []
         try:
             with open(plist_path, "rb") as f:
                 data = plistlib.load(f)
             actual_hours = sorted(e["Hour"] for e in data.get("StartCalendarInterval", []))
             time_str = _format_hours(actual_hours)
+            prog_args = data.get("ProgramArguments", [])
         except Exception:
             time_str = "unknown"
         result = subprocess.run(
             ["launchctl", "list", _LAUNCHD_LABEL],
             capture_output=True, text=True,
         )
-        if result.returncode == 0:
-            print(f"Status:     loaded (runs at {time_str} daily)")
-        else:
-            print(f"Status:     plist present but not loaded — try re-running --schedule install")
+        status = "loaded" if result.returncode == 0 else "plist present but not loaded — try re-running --schedule install"
+        print(f"Status:     {status}")
+        print(f"Runs at:    {time_str} daily")
+        if prog_args:
+            print(f"Command:    {' '.join(prog_args)}")
+        if prog_args and "--blocklist" not in prog_args and "--clickbait" not in prog_args:
+            print(f"WARNING:    command has no --blocklist or --clickbait — it will print help "
+                  f"and do nothing. Run: yt-dont-recommend --schedule install")
         return
 
     if action == "remove":
@@ -150,17 +156,27 @@ def _schedule_linux(action: str, bin_path: str, hours: list[int]) -> None:
     other = [l for l in existing_lines if _CRON_MARKER not in l]
 
     if action == "status":
-        if managed:
-            print("Scheduled:")
-            for line in managed:
-                # Parse actual hours from the cron expression for readable output
-                try:
-                    actual_hours = sorted(int(h) for h in line.split()[1].split(","))
-                    print(f"  Runs at {_format_hours(actual_hours)} daily")
-                except (IndexError, ValueError):
-                    print(f"  {line}")
-        else:
+        if not managed:
             print("No schedule installed.")
+            return
+        for line in managed:
+            try:
+                parts = line.split()
+                actual_hours = sorted(int(h) for h in parts[1].split(","))
+                # Extract command: fields after the 5 cron fields, before >>
+                cmd_parts = []
+                for p in parts[5:]:
+                    if p == ">>":
+                        break
+                    cmd_parts.append(p)
+                cmd = " ".join(cmd_parts)
+                print(f"Runs at:  {_format_hours(actual_hours)} daily")
+                print(f"Command:  {cmd}")
+                if "--blocklist" not in cmd and "--clickbait" not in cmd:
+                    print(f"WARNING:  command has no --blocklist or --clickbait — it will print "
+                          f"help and do nothing. Run: yt-dont-recommend --schedule install")
+            except (IndexError, ValueError):
+                print(f"  {line}")
         return
 
     if action == "remove":

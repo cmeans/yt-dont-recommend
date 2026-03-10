@@ -45,8 +45,10 @@ fi
 WHEEL_VERSION=$(basename "$WHEEL" | sed -E 's/yt_dont_recommend-([0-9.]+)-.*/\1/')
 TOML_VERSION=$(grep '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/')
 
-echo "  wheel   : $WHEEL"
-echo "  version : $WHEEL_VERSION"
+INSTALLED_VERSION=$(yt-dont-recommend --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "none")
+echo "  wheel      : $WHEEL"
+echo "  version    : $WHEEL_VERSION"
+echo "  installed  : $INSTALLED_VERSION  ← restore with: uv tool install yt-dont-recommend==$INSTALLED_VERSION"
 
 if [ "$WHEEL_VERSION" = "$TOML_VERSION" ]; then
     ok "wheel version matches pyproject.toml ($WHEEL_VERSION)"

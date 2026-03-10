@@ -359,6 +359,7 @@ def open_browser(headless: bool = False):
 def close_browser(handle: tuple) -> None:
     """Close a browser handle returned by open_browser()."""
     pw_cm, context, _page = handle
+    logging.info("Closing browser (saving session to disk)...")
     context.close()
     pw_cm.__exit__(None, None, None)
 
@@ -404,11 +405,6 @@ def process_channels(channel_sources: dict[str, str],
 
     n_sources = len(set(channel_sources.values())) if channel_sources else 0
 
-    if dry_run and channel_sources:
-        logging.info(
-            f"DRY RUN — scanning home feed for {len(channel_sources)} channel(s) "
-            f"across {n_sources} source(s)..."
-        )
 
     _own_browser = _browser is None
     _pw_cm = None
@@ -473,8 +469,9 @@ def process_channels(channel_sources: dict[str, str],
         processed_set_lower = {c.lower() for c in processed_set}
 
         _extra = " + clickbait detection" if clickbait_cfg is not None else ""
+        _prefix = "DRY RUN — " if dry_run else ""
         logging.info(
-            f"Scanning home feed for {len(channel_lookup)} channel(s) "
+            f"{_prefix}Scanning home feed for {len(channel_lookup)} channel(s) "
             f"across {n_sources} source(s){_extra}..."
         )
 
