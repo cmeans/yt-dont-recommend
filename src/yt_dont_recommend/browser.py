@@ -428,7 +428,7 @@ def process_channels(channel_sources: dict[str, str],
         elif to_unblock and dry_run:
             logging.info(f"DRY RUN — would reverse YouTube block for: {', '.join(to_unblock)}")
 
-        if not channel_sources:
+        if not channel_sources and clickbait_cfg is None:
             return
 
         subscriptions = fetch_subscriptions(page)
