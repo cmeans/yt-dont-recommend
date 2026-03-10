@@ -353,7 +353,7 @@ def process_channels(channels: list[str], source: str,
         # Reverse any blocks on YouTube before scanning for new ones
         if to_unblock and not dry_run:
             _pending_attempted_this_run.update(to_unblock)
-            successfully_unblocked = _perform_browser_unblocks(page, to_unblock)
+            successfully_unblocked = _perform_browser_unblocks(page, to_unblock, state)
             # Clear successfully unblocked channels from pending_unblock
             pending_unblock = state.setdefault("pending_unblock", {})
             for ch in successfully_unblocked:
@@ -541,7 +541,7 @@ def process_channels(channels: list[str], source: str,
     return subscriptions
 
 
-def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
+def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[str]:
     """
     Navigate to myactivity.google.com/page?page=youtube_user_feedback and remove
     the 'Don't recommend channel' feedback entry for each channel.
@@ -555,6 +555,9 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
     browser is shown and the user is prompted to enter their password. The run
     then pauses (up to 2 minutes) until verification is complete.
 
+    Modifies *state* in place (retry counts, pending_unblock cleanup).
+    Caller is responsible for saving state after this returns.
+
     Returns list of channels that were successfully unblocked on YouTube.
     """
     if not channels:
@@ -564,7 +567,6 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
 
     logging.info(f"Reversing YouTube 'Don't recommend' for {len(channels)} channel(s) via myactivity.google.com...")
 
-    state = pkg.load_state()
     FEEDBACK_URL = "https://myactivity.google.com/page?page=youtube_user_feedback"
 
     # Step 1: Resolve display names BEFORE loading the feedback page.
@@ -608,7 +610,6 @@ def _perform_browser_unblocks(page, channels: list[str]) -> list[str]:
                     f"{retry_count} attempt(s) — giving up and clearing from pending queue."
                 )
                 state.setdefault("pending_unblock", {}).pop(channel, None)
-                pkg.save_state(state)
             else:
                 logging.warning(
                     f"Could not determine display name for {channel} "
