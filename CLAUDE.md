@@ -235,12 +235,13 @@ def fetch_subscriptions(page) -> set[str]:
 | Flag | Description |
 |------|-------------|
 | `--login` | Open browser for Google account authentication |
-| `--source` | Blocklist: built-in name(s) (comma-separated), local file path, or HTTP(S) URL. Defaults to all built-in sources. |
+| `--blocklist` | Run channel-level "Don't recommend channel" blocking. **Required** to enable blocklist mode; running without `--blocklist` or `--clickbait` shows help. |
+| `--source` | Blocklist source(s) to use with `--blocklist`. Built-in names (comma-separated), local file path, or HTTP(S) URL. Defaults to all built-in sources. |
 | `--exclude` | Exclusion list: local file path or HTTP(S) URL (not built-in names) |
 | `--limit N` | Stop after N channels |
-| `--dry-run` | Show what would be processed without acting |
+| `--dry-run` | Show what would be processed without acting (combine with `--blocklist` or `--clickbait`) |
 | `--headless` | Run without a visible browser window |
-| `--clickbait` | Classify video titles in the feed and block channels with flagged clickbait content. Requires `pip install yt-dont-recommend[clickbait]`. Config: `~/.yt-dont-recommend/clickbait-config.yaml`. |
+| `--clickbait` | Scan feed videos for clickbait titles and click "Not interested" (video-level; no channel-level effect). Requires `pip install yt-dont-recommend[clickbait]`. Config: `~/.yt-dont-recommend/clickbait-config.yaml`. |
 | `--unblock-policy {all,any}` | When to auto-unblock channels removed from lists (default: `all`) |
 | `--stats` | Show blocked count, per-source breakdown, success/skip/fail totals, and `would_have_blocked` entries |
 | `--export-state [FILE]` | Dump all blocked channels as a standard plain-text blocklist with source annotations; writes to FILE or stdout |

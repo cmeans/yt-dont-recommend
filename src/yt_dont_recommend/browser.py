@@ -102,6 +102,60 @@ def _find_menu_btn(card):
     return None
 
 
+_NOT_INTERESTED_PHRASE = "not interested"
+_NOT_INTERESTED_ITEM_SELECTOR = (
+    "ytd-menu-service-item-renderer, tp-yt-paper-item, "
+    "ytd-menu-navigation-item-renderer, [role='menuitem'], "
+    "yt-list-item-view-model"
+)
+
+
+def _click_not_interested(page, card) -> bool:
+    """
+    Click 'Not interested' on a home feed video card.
+
+    This is a video-level signal that removes the specific video from the feed.
+    It does NOT affect channel-level recommendations — use _click_dont_recommend
+    for that purpose.
+
+    Returns True if the option was found and clicked, False otherwise.
+    """
+    card.scroll_into_view_if_needed()
+    card.hover()
+    time.sleep(0.5)
+
+    menu_btn = _find_menu_btn(card)
+    if not menu_btn:
+        logging.debug("Could not find menu button on feed card (Not interested)")
+        return False
+
+    menu_btn.click()
+    time.sleep(1.0)
+
+    target_item = None
+    for item in page.query_selector_all(_NOT_INTERESTED_ITEM_SELECTOR):
+        try:
+            text = (item.inner_text() or "").strip().lower()
+        except Exception:
+            text = (item.evaluate("el => el.textContent") or "").strip().lower()
+        if _NOT_INTERESTED_PHRASE in text:
+            target_item = item
+            break
+
+    if not target_item:
+        page.keyboard.press("Escape")
+        return False
+
+    # New YouTube UI wraps the action in a button inside the list item
+    btn = target_item.query_selector("button.yt-list-item-view-model__button-or-anchor")
+    if btn:
+        btn.click()
+    else:
+        target_item.click()
+    time.sleep(0.5)
+    return True
+
+
 def _click_dont_recommend(page, card) -> bool:
     """
     Click 'Don't recommend channel' on a home feed card.
@@ -499,10 +553,25 @@ def process_channels(channel_sources: dict[str, str],
                         continue
                     logging.info(
                         f"CLICKBAIT: {path} — {video_title!r} "
-                        f"(confidence {conf:.2f}) — blocking..."
+                        f"(confidence {conf:.2f}) — marking Not interested..."
                     )
-                    canonical = path
-                    source = "clickbait"
+                    if dry_run:
+                        logging.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
+                        found_match_this_pass = True
+                        continue
+                    try:
+                        success = _click_not_interested(page, card)
+                    except Exception as e:
+                        logging.error(f"FAIL clickbait {path}: {e}")
+                        continue
+                    if success:
+                        logging.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
+                        found_match_this_pass = True
+                        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+                        break  # rescan after DOM change
+                    else:
+                        logging.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
+                    continue
                 else:
                     source = resolved_sources.get(canonical, "unknown")
 

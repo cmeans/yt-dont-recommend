@@ -1,5 +1,7 @@
 # YouTube "Don't Recommend Channel" Bulk Trainer
 
+> **Early development / alpha:** This tool is functional and used daily by its author, but it is under active development with frequent releases. Breaking changes between versions are possible. **Auto-upgrade is not recommended** until the tool stabilises — enable it only if you are comfortable testing new features as they land and are willing to use `--revert` when something goes wrong.
+
 Automates YouTube's "Don't recommend channel" action in bulk, using any channel blocklist you provide. Because the signal is tied to your **Google account** (not the device), it trains the algorithm everywhere you're signed in — including Fire TV, mobile apps, smart TVs, and game consoles.
 
 No browser extension can do this. Extensions filter content client-side on a single browser. This tool affects the server-side recommendation engine.
@@ -165,34 +167,45 @@ For a full list of options:
 yt-dont-recommend --help
 ```
 
-```bash
-# Dry run — see what channels would be processed
-yt-dont-recommend --dry-run
+Running without `--blocklist` or `--clickbait` prints help. Choose one or both:
 
-# Process all built-in sources consecutively (default)
-yt-dont-recommend
+```bash
+# Channel-level: "Don't recommend channel" for every channel on the blocklist
+yt-dont-recommend --blocklist
+
+# Video-level: scan the feed for clickbait titles and click "Not interested"
+# (requires: pip install yt-dont-recommend[clickbait])
+yt-dont-recommend --clickbait
+
+# Both at once
+yt-dont-recommend --blocklist --clickbait
+```
+
+```bash
+# Dry run — see what would be processed without clicking anything
+yt-dont-recommend --blocklist --dry-run
 
 # Use a specific built-in source
-yt-dont-recommend --source deslop
-yt-dont-recommend --source aislist
+yt-dont-recommend --blocklist --source deslop
+yt-dont-recommend --blocklist --source aislist
 
-# Use multiple sources explicitly (comma-separated)
-yt-dont-recommend --source deslop,aislist
+# Use multiple sources (comma-separated)
+yt-dont-recommend --blocklist --source deslop,aislist
 
 # Use a local blocklist file
-yt-dont-recommend --source /path/to/my-list.txt
+yt-dont-recommend --blocklist --source /path/to/my-list.txt
 
 # Use a remote blocklist URL
-yt-dont-recommend --source https://example.com/blocklist.txt
+yt-dont-recommend --blocklist --source https://example.com/blocklist.txt
 
 # Process only 10 channels (good for first test)
-yt-dont-recommend --limit 10
+yt-dont-recommend --blocklist --limit 10
 
 # Protect specific channels from ever being blocked (overrides the default exclude file)
-yt-dont-recommend --exclude ~/.yt-dont-recommend/exclude.txt
+yt-dont-recommend --blocklist --exclude ~/.yt-dont-recommend/exclude.txt
 
 # Run in headless mode (no visible browser)
-yt-dont-recommend --headless
+yt-dont-recommend --blocklist --headless
 
 # Check progress — per-source breakdown, totals, and subscription-protected channels
 # "skipped" = appeared in feed but menu action failed; "failed" = error during attempt
@@ -281,7 +294,7 @@ This format is shared with the [DeSlop](https://github.com/NikoboiNFTB/DeSlop) p
 | `deslop`  | DeSlop project (~130+ channels, plain text, actively maintained)  |
 | `aislist` | AiSList community text list (~8400+ channels, broader)            |
 
-Running without `--source` processes all built-in sources consecutively. The state tracker prevents re-processing the same channel twice across sources or runs.
+Running `--blocklist` without `--source` processes all built-in sources. The state tracker prevents re-processing the same channel twice across sources or runs.
 
 ## How It Works
 
@@ -372,7 +385,7 @@ If you prefer to manage cron yourself, use `crontab -e` and add one of the follo
 
 ```bash
 # Twice daily — 3am and 3pm
-0 3,15 * * * /path/to/yt-dont-recommend --headless
+0 3,15 * * * /path/to/yt-dont-recommend --blocklist --headless
 ```
 
 Find the full path with `which yt-dont-recommend`.
@@ -380,13 +393,13 @@ Find the full path with `which yt-dont-recommend`.
 **Cloned repo (uv):**
 
 ```bash
-0 3,15 * * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --headless
+0 3,15 * * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --blocklist --headless
 ```
 
 **Cloned repo (pip/venv):**
 
 ```bash
-0 3,15 * * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --headless
+0 3,15 * * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --blocklist --headless
 ```
 
 ## Notifications
@@ -439,6 +452,8 @@ yt-dont-recommend --check-update
 ```
 
 ### Auto-upgrade
+
+> **Not recommended during early development.** The tool is in active alpha and releases can contain breaking changes. Enable auto-upgrade only if you are comfortable running the latest code immediately and using `--revert` when needed. If you run unattended scheduled jobs, a bad release could silently stop blocking until you notice.
 
 Enable automatic upgrades — the tool will upgrade itself when a new version is detected:
 

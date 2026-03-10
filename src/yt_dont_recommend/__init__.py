@@ -423,9 +423,9 @@ def _first_run_welcome() -> None:
     print("\nWelcome to yt-dont-recommend!")
     print()
     print("Quick start:")
-    print("  1. yt-dont-recommend --login            # sign into your Google account (required once)")
-    print("  2. yt-dont-recommend --schedule install  # set up twice-daily automatic runs")
-    print("  3. yt-dont-recommend --dry-run           # preview what would be blocked")
+    print("  1. yt-dont-recommend --login                  # sign into your Google account (required once)")
+    print("  2. yt-dont-recommend --schedule install       # set up twice-daily automatic runs")
+    print("  3. yt-dont-recommend --blocklist --dry-run    # preview what would be blocked")
     print()
     print("Run yt-dont-recommend --help for all options.")
     print()
@@ -522,10 +522,14 @@ def main():
     )
     parser.add_argument("--headless", action="store_true",
                         help="Run browser in headless mode (no visible window)")
+    parser.add_argument("--blocklist", action="store_true",
+                        help="Run channel-level 'Don't recommend channel' blocking using "
+                             "configured blocklist sources (use --source to specify; "
+                             "defaults to all built-in sources)")
     parser.add_argument("--clickbait", action="store_true",
-                        help="Classify video titles in the feed and block channels "
-                             "with flagged clickbait content (requires: "
-                             "pip install yt-dont-recommend[clickbait])")
+                        help="Scan feed videos for clickbait and click 'Not interested' "
+                             "(video-level action; does not affect channel recommendations; "
+                             "requires: pip install yt-dont-recommend[clickbait])")
     parser.add_argument("--verbose", action="store_true",
                         help="Enable debug logging")
     parser.add_argument("--reset-state", action="store_true",
@@ -758,6 +762,14 @@ def main():
         ok = check_selectors(args.test_channel)
         sys.exit(0 if ok else 1)
 
+    # Determine operating mode. Running without --blocklist or --clickbait shows help.
+    run_blocklist = args.blocklist or (args.source is not None)
+    run_clickbait = args.clickbait
+
+    if not run_blocklist and not run_clickbait:
+        parser.print_help()
+        return
+
     # Periodic version check (at most once per 24 h; non-blocking on network failure)
     state = load_state()
     latest = check_for_update(state)
@@ -768,20 +780,6 @@ def main():
             do_auto_upgrade(state)
         save_state(state)
 
-    # Resolve which sources to run
-    if args.source is None:
-        sources = DEFAULT_SOURCES
-    else:
-        sources = [s.strip() for s in args.source.split(",")]
-
-    # Build exclusion set once (shared across all sources)
-    exclude_source = args.exclude or (str(DEFAULT_EXCLUDE_FILE) if DEFAULT_EXCLUDE_FILE.exists() else None)
-    exclude_set: set[str] = set()
-    if exclude_source:
-        exclude_set = {c.lower() for c in resolve_source(exclude_source, quiet=True)}
-        label = "--exclude" if args.exclude else f"default exclude file ({DEFAULT_EXCLUDE_FILE})"
-        logging.info(f"Loaded {len(exclude_set)} exclusion(s) via {label}")
-
     # Load state once; per-source setup (check_removals, channel collection) is
     # fast and needs no browser. A single browser session is opened afterward
     # for one combined feed scan across all sources.
@@ -790,66 +788,81 @@ def main():
     channel_sources: dict[str, str] = {}  # {canonical: source} — unprocessed channels
     all_unblocks: list[str] = []
 
-    for source in sources:
-        if len(sources) > 1:
-            logging.info(f"--- Source: {source} ---")
-        try:
-            channels = resolve_source(source)
-        except RuntimeError as e:
-            logging.error(f"Could not load source '{source}': {e} — skipping.")
-            continue
+    if run_blocklist:
+        # Resolve which sources to run
+        if args.source is None:
+            sources = DEFAULT_SOURCES
+        else:
+            sources = [s.strip() for s in args.source.split(",")]
 
-        # Track source size and notify on growth
-        sizes = state.setdefault("source_sizes", {})
-        prev = sizes.get(source)
-        if prev is not None and len(channels) > prev:
+        # Build exclusion set once (shared across all sources)
+        exclude_source = args.exclude or (str(DEFAULT_EXCLUDE_FILE) if DEFAULT_EXCLUDE_FILE.exists() else None)
+        exclude_set: set[str] = set()
+        if exclude_source:
+            exclude_set = {c.lower() for c in resolve_source(exclude_source, quiet=True)}
+            label = "--exclude" if args.exclude else f"default exclude file ({DEFAULT_EXCLUDE_FILE})"
+            logging.info(f"Loaded {len(exclude_set)} exclusion(s) via {label}")
+
+        for source in sources:
+            if len(sources) > 1:
+                logging.info(f"--- Source: {source} ---")
+            try:
+                channels = resolve_source(source)
+            except RuntimeError as e:
+                logging.error(f"Could not load source '{source}': {e} — skipping.")
+                continue
+
+            # Track source size and notify on growth
+            sizes = state.setdefault("source_sizes", {})
+            prev = sizes.get(source)
+            if prev is not None and len(channels) > prev:
+                logging.info(
+                    f"*** Blocklist '{source}' grew by {len(channels) - prev} channel(s) "
+                    f"({prev} → {len(channels)}) since last run"
+                )
+            sizes[source] = len(channels)
+
+            if exclude_set:
+                before = len(channels)
+                channels = [c for c in channels if c.lower() not in exclude_set]
+                logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
+
+            # Per-source removal detection (no browser required)
+            to_unblock = check_removals(state, channels, source, args.unblock_policy)
+            for ch in to_unblock:
+                if ch not in all_unblocks:
+                    all_unblocks.append(ch)
+
+            # Collect unprocessed channels; first source wins on overlap
+            new_for_source = 0
+            for ch in channels:
+                if ch not in processed_set and ch not in channel_sources:
+                    channel_sources[ch] = source
+                    new_for_source += 1
+            already_done = sum(1 for ch in channels if ch in processed_set)
             logging.info(
-                f"*** Blocklist '{source}' grew by {len(channels) - prev} channel(s) "
-                f"({prev} → {len(channels)}) since last run"
+                f"{len(channels)} channels in blocklist, "
+                f"{already_done} already blocked, "
+                f"{new_for_source} added to scan queue"
             )
-        sizes[source] = len(channels)
 
-        if exclude_set:
-            before = len(channels)
-            channels = [c for c in channels if c.lower() not in exclude_set]
-            logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
-
-        # Per-source removal detection (no browser required)
-        to_unblock = check_removals(state, channels, source, args.unblock_policy)
-        for ch in to_unblock:
+        # Add any pending unblocks from previous failed runs
+        pending = state.get("pending_unblock", {})
+        for ch in pending:
             if ch not in all_unblocks:
                 all_unblocks.append(ch)
+        if pending:
+            logging.info(
+                f"Retrying {len(pending)} pending unblock(s) from a previous run: {list(pending)}"
+            )
 
-        # Collect unprocessed channels; first source wins on overlap
-        new_for_source = 0
-        for ch in channels:
-            if ch not in processed_set and ch not in channel_sources:
-                channel_sources[ch] = source
-                new_for_source += 1
-        already_done = sum(1 for ch in channels if ch in processed_set)
-        logging.info(
-            f"{len(channels)} channels in blocklist, "
-            f"{already_done} already blocked, "
-            f"{new_for_source} added to scan queue"
-        )
+        save_state(state)  # persist source_sizes before opening browser
 
-    # Add any pending unblocks from previous failed runs
-    pending = state.get("pending_unblock", {})
-    for ch in pending:
-        if ch not in all_unblocks:
-            all_unblocks.append(ch)
-    if pending:
-        logging.info(
-            f"Retrying {len(pending)} pending unblock(s) from a previous run: {list(pending)}"
-        )
-
-    save_state(state)  # persist source_sizes before opening browser
-
-    if len(sources) > 1 and (channel_sources or all_unblocks):
-        logging.info(f"--- Processing {len(sources)} source(s) ---")
+        if len(sources) > 1 and (channel_sources or all_unblocks):
+            logging.info(f"--- Processing {len(sources)} source(s) ---")
 
     clickbait_cfg = None
-    if args.clickbait:
+    if run_clickbait:
         from .clickbait import load_config as _load_clickbait_config
         clickbait_cfg = _load_clickbait_config()
         logging.info("Clickbait detection enabled.")

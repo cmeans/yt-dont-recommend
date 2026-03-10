@@ -126,7 +126,7 @@ def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
 
     plist = {
         "Label": _LAUNCHD_LABEL,
-        "ProgramArguments": [bin_path, "--headless"],
+        "ProgramArguments": [bin_path, "--blocklist", "--headless"],
         "StartCalendarInterval": [
             {"Hour": h, "Minute": 0} for h in hours
         ],
@@ -180,7 +180,7 @@ def _schedule_linux(action: str, bin_path: str, hours: list[int]) -> None:
         print("Replacing existing schedule...")
 
     hours_str = ",".join(str(h) for h in hours)
-    cron_line = f"0 {hours_str} * * * {bin_path} --headless >> /dev/null 2>&1  {_CRON_MARKER}"
+    cron_line = f"0 {hours_str} * * * {bin_path} --blocklist --headless >> /dev/null 2>&1  {_CRON_MARKER}"
     new_lines = [l for l in other if l.strip()] + [cron_line]
     new_crontab = "\n".join(new_lines) + "\n"
     subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
