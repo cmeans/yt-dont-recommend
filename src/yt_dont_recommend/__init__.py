@@ -838,9 +838,7 @@ def main():
     save_state(state)  # persist source_sizes before opening browser
 
     if len(sources) > 1 and (channel_sources or all_unblocks):
-        logging.info(
-            f"--- Processing {len(channel_sources)} channel(s) from {len(sources)} source(s) ---"
-        )
+        logging.info(f"--- Processing {len(sources)} source(s) ---")
 
     if not channel_sources and not all_unblocks:
         logging.info("Nothing to do.")
