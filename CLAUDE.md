@@ -96,7 +96,7 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 
 - **Blocklist fetching**: `resolve_source()` handles built-in keys, HTTP(S) URLs, and local file paths. `parse_text_blocklist()` and `parse_json_blocklist()` handle format variants. JSON format is auto-detected by leading `{` or `[`.
 - **State management**: `~/.yt-dont-recommend/processed.json` tracks which channels have been handled (crash-safe, saved after each action). See State Schema below for all keys.
-- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs). Launch args: `--disable-blink-features=AutomationControlled`, `--disable-infobars`, `ignore_default_args=["--enable-automation"]`. A single browser session is opened once per `main()` invocation via `open_browser()` and shared across all sources — avoids repeated auth checks and repeated Google password-verification prompts.
+- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs). Launch args: `--disable-blink-features=AutomationControlled`, `--disable-infobars`, `ignore_default_args=["--enable-automation"]`. `main()` collects channels from all sources into a combined `{channel: source}` dict (no browser needed for this), then opens one browser session via `open_browser()` and calls `process_channels()` once — a single feed scan covers all sources. Avoids repeated auth checks and scroll passes.
 - **Subscription protection**: `fetch_subscriptions(page)` scrapes `youtube.com/feed/channels`, returns a lowercase set of handles. Called once per run in `process_channels()`. Subscribed channels are skipped with a one-time WARNING logged and stored in `state["would_have_blocked"]`.
 - **Blocklist removal detection**: `check_removals()` runs at the start of each `process_channels()` call, compares the current list against `state["blocked_by"]`, and auto-unblocks channels no longer on the list, per `--unblock-policy`.
 - **Blocklist growth tracking**: Each run records source list sizes in `state["source_sizes"]`. When a source has grown since the last run, it logs prominently.
@@ -158,15 +158,18 @@ This ensures old binaries (post-revert) can always read state written by newer o
 ```python
 def open_browser(headless: bool = False) -> tuple | None:
     # Returns (pw_cm, context, page) or None if not logged in.
-    # Pass as _browser= to process_channels() to share across sources.
 
 def close_browser(handle: tuple) -> None:
 
-def process_channels(channels: list[str], source: str,
-                     dry_run: bool = False, limit: int | None = None,
-                     headless: bool = False, unblock_policy: str = "all",
-                     subscriptions: set[str] | None = None,
-                     _browser: tuple | None = None) -> set[str] | None:
+def process_channels(channel_sources: dict[str, str],
+                     to_unblock: list[str] | None = None,
+                     state: dict | None = None,
+                     dry_run: bool = False,
+                     limit: int | None = None,
+                     headless: bool = False,
+                     _browser: tuple | None = None) -> None:
+    # channel_sources: {canonical_handle: source_name} — all unprocessed channels
+    # from all sources merged by main(). Single feed scan covers everything.
 
 def check_removals(state: dict, current_channels: list[str],
                    source: str, unblock_policy: str) -> list[str]:

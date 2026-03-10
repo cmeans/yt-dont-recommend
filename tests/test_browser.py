@@ -17,7 +17,11 @@ from unittest.mock import MagicMock, patch
 
 import yt_dont_recommend as ydr
 import yt_dont_recommend.browser as browser_mod
-from yt_dont_recommend.browser import _perform_browser_unblocks, _MAX_DISPLAY_NAME_RETRIES
+from yt_dont_recommend.browser import (
+    _perform_browser_unblocks,
+    _MAX_DISPLAY_NAME_RETRIES,
+    process_channels,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -336,10 +340,14 @@ class TestPerformBrowserUnblocks:
 # ---------------------------------------------------------------------------
 
 class TestPendingAttemptedThisRun:
-    """Verify the module-level set that prevents double verification per run."""
+    """Verify the module-level set that prevents re-attempting unblocks in one process run.
+
+    process_channels() filters its to_unblock list against this set before
+    calling _perform_browser_unblocks(), so a channel that already failed
+    verification won't trigger a second Google password prompt in the same run.
+    """
 
     def setup_method(self):
-        # Reset the set before each test to avoid cross-test pollution
         browser_mod._pending_attempted_this_run.clear()
 
     def teardown_method(self):
@@ -354,21 +362,59 @@ class TestPendingAttemptedThisRun:
         assert "@beta" in browser_mod._pending_attempted_this_run
 
     def test_already_attempted_channels_excluded_from_retry(self):
+        """Channels already in the set are filtered out of to_unblock."""
         browser_mod._pending_attempted_this_run.add("@alpha")
-        pending = {"@alpha": {}, "@beta": {}}
-        # Simulate the filtering in process_channels
-        pending_to_retry = {
-            ch: info for ch, info in pending.items()
-            if ch not in browser_mod._pending_attempted_this_run
-        }
-        assert "@alpha" not in pending_to_retry
-        assert "@beta" in pending_to_retry
+        to_unblock = ["@alpha", "@beta"]
+        # Simulate the filtering applied at the top of process_channels
+        filtered = [ch for ch in to_unblock
+                    if ch not in browser_mod._pending_attempted_this_run]
+        assert "@alpha" not in filtered
+        assert "@beta" in filtered
 
-    def test_fresh_channels_from_check_removals_not_filtered(self):
-        """Channels newly detected as removed (not in pending set) should not be skipped."""
+    def test_fresh_channels_not_filtered(self):
+        """Channels not in the set pass through unaffected."""
         browser_mod._pending_attempted_this_run.add("@old-pending")
         to_unblock = ["@newly-removed", "@old-pending"]
-        # Only newly-removed should survive the filter (old-pending was already tried)
         filtered = [ch for ch in to_unblock
                     if ch not in browser_mod._pending_attempted_this_run]
         assert filtered == ["@newly-removed"]
+
+
+# ---------------------------------------------------------------------------
+# process_channels() — new combined-source API
+# ---------------------------------------------------------------------------
+
+class TestProcessChannels:
+    """Tests for the combined-source process_channels() function.
+
+    Live browser interaction is not exercised here. These tests verify
+    early-return behaviour that requires no browser at all.
+    """
+
+    def setup_method(self):
+        browser_mod._pending_attempted_this_run.clear()
+
+    def teardown_method(self):
+        browser_mod._pending_attempted_this_run.clear()
+
+    def test_empty_inputs_returns_without_opening_browser(self):
+        """Nothing to do → returns immediately, no browser opened."""
+        with patch("yt_dont_recommend.browser.open_browser") as mock_open:
+            process_channels({}, to_unblock=[], state={
+                "processed": [], "blocked_by": {}, "would_have_blocked": {},
+                "pending_unblock": {}, "ucxxx_to_handle": {},
+                "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
+            })
+            mock_open.assert_not_called()
+
+    def test_already_attempted_unblocks_filtered_before_browser(self):
+        """Channels in _pending_attempted_this_run are dropped from to_unblock;
+        if that empties to_unblock and channel_sources is also empty, no browser."""
+        browser_mod._pending_attempted_this_run.add("@alpha")
+        with patch("yt_dont_recommend.browser.open_browser") as mock_open:
+            process_channels({}, to_unblock=["@alpha"], state={
+                "processed": [], "blocked_by": {}, "would_have_blocked": {},
+                "pending_unblock": {}, "ucxxx_to_handle": {},
+                "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
+            })
+            mock_open.assert_not_called()

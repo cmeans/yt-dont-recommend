@@ -141,30 +141,29 @@ def fetch_subscriptions(page) -> set[str]:
     return _fetch_subscriptions(page)
 
 
-def process_channels(channels: list[str], source: str,
-                     dry_run: bool = False, limit: int | None = None,
-                     headless: bool = False, unblock_policy: str = "all",
-                     subscriptions: set[str] | None = None,
-                     _browser: tuple | None = None) -> set[str] | None:
+def process_channels(channel_sources: dict[str, str],
+                     to_unblock: list[str] | None = None,
+                     state: dict | None = None,
+                     dry_run: bool = False,
+                     limit: int | None = None,
+                     headless: bool = False,
+                     _browser: tuple | None = None) -> None:
     """
-    Scan the YouTube home feed and click 'Don't recommend channel' on any
-    card whose channel is in the blocklist.
+    Scan the YouTube home feed once and block every channel in channel_sources.
 
-    The feed is scrolled repeatedly to load new cards. Stops when the limit
-    is reached, the feed is exhausted, or no blocklist channels have appeared
-    after MAX_NO_PROGRESS_SCROLLS consecutive scrolls.
-
-    Note: this only acts on channels YouTube is actively recommending to you.
-    Channels not currently in your feed are not being recommended and don't
-    need blocking. Run again periodically — as YouTube's algorithm adapts,
-    fewer blocklisted channels will appear.
+    channel_sources: {canonical_handle: source_name} — unprocessed channels
+        from all sources merged together by the caller.
+    to_unblock: channels to remove from myactivity before scanning.
+    state: loaded state dict; loaded fresh if None.
     """
     from .browser import process_channels as _process_channels
     return _process_channels(
-        channels, source,
-        dry_run=dry_run, limit=limit,
-        headless=headless, unblock_policy=unblock_policy,
-        subscriptions=subscriptions,
+        channel_sources,
+        to_unblock=to_unblock,
+        state=state,
+        dry_run=dry_run,
+        limit=limit,
+        headless=headless,
         _browser=_browser,
     )
 
@@ -775,52 +774,88 @@ def main():
         label = "--exclude" if args.exclude else f"default exclude file ({DEFAULT_EXCLUDE_FILE})"
         logging.info(f"Loaded {len(exclude_set)} exclusion(s) via {label}")
 
-    run_subscriptions: set[str] | None = None  # shared across sources; fetched once on first active source
+    # Load state once; per-source setup (check_removals, channel collection) is
+    # fast and needs no browser. A single browser session is opened afterward
+    # for one combined feed scan across all sources.
+    state = load_state()
+    processed_set = set(state["processed"])
+    channel_sources: dict[str, str] = {}  # {canonical: source} — unprocessed channels
+    all_unblocks: list[str] = []
 
-    # Open one browser session shared across all sources to avoid repeated
-    # auth checks and unnecessary startup overhead.
-    from .browser import open_browser, close_browser
-    browser_handle = open_browser(headless=args.headless)
-    if browser_handle is None:
-        return  # write_attention already called by open_browser
+    for source in sources:
+        if len(sources) > 1:
+            logging.info(f"--- Source: {source} ---")
+        try:
+            channels = resolve_source(source)
+        except RuntimeError as e:
+            logging.error(f"Could not load source '{source}': {e} — skipping.")
+            continue
 
-    try:
-        for source in sources:
-            if len(sources) > 1:
-                logging.info(f"--- Source: {source} ---")
-            try:
-                channels = resolve_source(source)
-            except RuntimeError as e:
-                logging.error(f"Could not load source '{source}': {e} — skipping.")
-                continue
-            # Track source size and notify on growth
-            _st = load_state()
-            _sizes = _st.setdefault("source_sizes", {})
-            _prev = _sizes.get(source)
-            if _prev is not None and len(channels) > _prev:
-                _growth = len(channels) - _prev
-                logging.info(f"*** Blocklist '{source}' grew by {_growth} channel(s) ({_prev} → {len(channels)}) since last run")
-            _sizes[source] = len(channels)
-            save_state(_st)
-            del _st, _sizes, _prev
-            if exclude_set:
-                before = len(channels)
-                channels = [c for c in channels if c.lower() not in exclude_set]
-                logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
-            result = process_channels(
-                channels,
-                source=source,
+        # Track source size and notify on growth
+        sizes = state.setdefault("source_sizes", {})
+        prev = sizes.get(source)
+        if prev is not None and len(channels) > prev:
+            logging.info(
+                f"*** Blocklist '{source}' grew by {len(channels) - prev} channel(s) "
+                f"({prev} → {len(channels)}) since last run"
+            )
+        sizes[source] = len(channels)
+
+        if exclude_set:
+            before = len(channels)
+            channels = [c for c in channels if c.lower() not in exclude_set]
+            logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
+
+        # Per-source removal detection (no browser required)
+        to_unblock = check_removals(state, channels, source, args.unblock_policy)
+        for ch in to_unblock:
+            if ch not in all_unblocks:
+                all_unblocks.append(ch)
+
+        # Collect unprocessed channels; first source wins on overlap
+        new_for_source = 0
+        for ch in channels:
+            if ch not in processed_set and ch not in channel_sources:
+                channel_sources[ch] = source
+                new_for_source += 1
+        already_done = sum(1 for ch in channels if ch in processed_set)
+        logging.info(
+            f"{len(channels)} channels in blocklist, "
+            f"{already_done} already blocked, "
+            f"{new_for_source} added to scan queue"
+        )
+
+    # Add any pending unblocks from previous failed runs
+    pending = state.get("pending_unblock", {})
+    for ch in pending:
+        if ch not in all_unblocks:
+            all_unblocks.append(ch)
+    if pending:
+        logging.info(
+            f"Retrying {len(pending)} pending unblock(s) from a previous run: {list(pending)}"
+        )
+
+    save_state(state)  # persist source_sizes before opening browser
+
+    if not channel_sources and not all_unblocks:
+        logging.info("Nothing to do.")
+    else:
+        from .browser import open_browser, close_browser
+        browser_handle = open_browser(headless=args.headless)
+        if browser_handle is None:
+            return  # write_attention already called by open_browser
+        try:
+            process_channels(
+                channel_sources,
+                to_unblock=all_unblocks,
+                state=state,
                 dry_run=args.dry_run,
                 limit=args.limit,
                 headless=args.headless,
-                unblock_policy=args.unblock_policy,
-                subscriptions=run_subscriptions,
                 _browser=browser_handle,
             )
-            if result is not None:
-                run_subscriptions = result
-    finally:
-        close_browser(browser_handle)
+        finally:
+            close_browser(browser_handle)
 
     # Re-read _had_attention from state module since it may have been set there
     import yt_dont_recommend.state as _state_mod

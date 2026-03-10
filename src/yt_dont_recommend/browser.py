@@ -309,68 +309,51 @@ def close_browser(handle: tuple) -> None:
     pw_cm.__exit__(None, None, None)
 
 
-def process_channels(channels: list[str], source: str,
-                     dry_run: bool = False, limit: int | None = None,
-                     headless: bool = False, unblock_policy: str = "all",
-                     subscriptions: set[str] | None = None,
-                     _browser: tuple | None = None) -> set[str] | None:
+def process_channels(channel_sources: dict[str, str],
+                     to_unblock: list[str] | None = None,
+                     state: dict | None = None,
+                     dry_run: bool = False,
+                     limit: int | None = None,
+                     headless: bool = False,
+                     _browser: tuple | None = None) -> None:
     """
-    Scan the YouTube home feed and click 'Don't recommend channel' on any
-    card whose channel is in the blocklist.
+    Scan the YouTube home feed once and click 'Don't recommend channel' for
+    every channel in channel_sources.
 
-    The feed is scrolled repeatedly to load new cards. Stops when the limit
-    is reached, the feed is exhausted, or no blocklist channels have appeared
-    after MAX_NO_PROGRESS_SCROLLS consecutive scrolls.
+    channel_sources: {canonical_handle: source_name} — channels not yet in
+        state["processed"], collected from all sources by the caller.
+    to_unblock: channels whose myactivity feedback entry should be deleted
+        first (from check_removals() results and pending_unblock retries).
+    state: already-loaded state dict (mutated in place). Loaded fresh if None.
 
-    Note: this only acts on channels YouTube is actively recommending to you.
-    Channels not currently in your feed are not being recommended and don't
-    need blocking. Run again periodically — as YouTube's algorithm adapts,
-    fewer blocklisted channels will appear.
+    The feed is scrolled until exhausted or limit is reached. All sources are
+    processed in a single pass — no redundant scrolling.
     """
     pkg = _pkg()
 
     MAX_NO_PROGRESS_SCROLLS = 20
 
-    state = pkg.load_state()
+    if state is None:
+        state = pkg.load_state()
+    if to_unblock is None:
+        to_unblock = []
+
     processed_set = set(state["processed"])
 
-    # Retry any browser unblocks that failed on a previous run
-    pending = state.get("pending_unblock", {})
-    # Only retry pending unblocks that haven't been attempted yet in this run.
-    # Each invocation processes multiple sources; without this guard a failed
-    # unblock would trigger Google's password-verification prompt once per source.
-    pending_to_retry = {ch: info for ch, info in pending.items()
-                        if ch not in _pending_attempted_this_run}
-    if pending_to_retry:
-        logging.info(f"Retrying {len(pending_to_retry)} pending unblock(s) from a previous run: {list(pending_to_retry)}")
+    # Filter to_unblock against channels already attempted in this process run.
+    to_unblock = [ch for ch in to_unblock if ch not in _pending_attempted_this_run]
 
-    # Check for channels newly removed from the blocklist since the last run
-    to_unblock = pkg.check_removals(state, channels, source, unblock_policy)
-    # Merge in any channels that were pending from a previous failed unblock
-    for ch in pending_to_retry:
-        if ch not in to_unblock:
-            to_unblock.append(ch)
-    if to_unblock:
-        processed_set = set(state["processed"])  # refresh after removals
-
-    unblocked = {c for c in channels if c not in processed_set}
-    already_done = len(channels) - len(unblocked)
-    logging.info(
-        f"{len(channels)} channels in blocklist, "
-        f"{already_done} already blocked, "
-        f"{len(unblocked)} remaining"
-    )
-
-    if not unblocked and not to_unblock:
-        logging.info("Nothing to do for this source.")
+    if not channel_sources and not to_unblock:
+        logging.info("Nothing to do.")
         return
 
-    if dry_run:
-        logging.info(
-            f"DRY RUN — scanning home feed for any of {len(unblocked)} blocklisted channel(s)..."
-        )
+    n_sources = len(set(channel_sources.values())) if channel_sources else 0
 
-    channel_lookup = {c.lower(): c for c in unblocked}
+    if dry_run and channel_sources:
+        logging.info(
+            f"DRY RUN — scanning home feed for {len(channel_sources)} channel(s) "
+            f"across {n_sources} source(s)..."
+        )
 
     _own_browser = _browser is None
     _pw_cm = None
@@ -387,7 +370,6 @@ def process_channels(channels: list[str], source: str,
         if to_unblock and not dry_run:
             _pending_attempted_this_run.update(to_unblock)
             successfully_unblocked = _perform_browser_unblocks(page, to_unblock, state)
-            # Clear successfully unblocked channels from pending_unblock
             pending_unblock = state.setdefault("pending_unblock", {})
             for ch in successfully_unblocked:
                 pending_unblock.pop(ch, None)
@@ -395,25 +377,35 @@ def process_channels(channels: list[str], source: str,
         elif to_unblock and dry_run:
             logging.info(f"DRY RUN — would reverse YouTube block for: {', '.join(to_unblock)}")
 
-        if not unblocked:
-            return subscriptions
+        if not channel_sources:
+            return
 
-        if subscriptions is None:
-            subscriptions = fetch_subscriptions(page)
-        else:
-            logging.info(f"Reusing {len(subscriptions)} subscriptions from previous source.")
+        subscriptions = fetch_subscriptions(page)
 
-        # Resolve any UCxxx channel IDs in the blocklist to @handles.
-        # Modern YouTube feed cards expose only @handle links, so UCxxx entries
-        # will never match without this step.
-        resolved_channels = _resolve_ucxxx_to_handles(page, list(unblocked), state)
-        channel_lookup = {c.lower(): c for c in resolved_channels}
+        # Resolve any UCxxx IDs to @handles and preserve source attribution.
+        # Modern feed cards only expose @handle links, so UCxxx entries won't
+        # match without this step.
+        resolved_list = _resolve_ucxxx_to_handles(page, list(channel_sources.keys()), state)
+        cache = state.get("ucxxx_to_handle", {})
+        reverse_cache = {v: k for k, v in cache.items() if v}  # @handle → UCxxx
+        resolved_sources: dict[str, str] = {}
+        for ch in resolved_list:
+            if ch in channel_sources:
+                resolved_sources[ch] = channel_sources[ch]
+            else:
+                orig = reverse_cache.get(ch)
+                if orig and orig in channel_sources:
+                    resolved_sources[ch] = channel_sources[orig]
+        channel_lookup = {ch.lower(): ch for ch in resolved_sources}
 
-        # Navigate back to home feed
+        # Navigate to home feed
         page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
         time.sleep(PAGE_LOAD_WAIT)
 
-        logging.info("Scanning home feed for blocklisted channels...")
+        logging.info(
+            f"Scanning home feed for {len(channel_lookup)} channel(s) "
+            f"across {n_sources} source(s)..."
+        )
 
         blocked_count = 0
         no_progress_scrolls = 0
@@ -462,6 +454,8 @@ def process_channels(channels: list[str], source: str,
                 if not canonical or canonical in processed_set:
                     continue
 
+                source = resolved_sources.get(canonical, "unknown")
+
                 # Check subscription protection before blocking
                 if canonical.lower() in subscriptions:
                     whb = state["would_have_blocked"]
@@ -483,14 +477,12 @@ def process_channels(channels: list[str], source: str,
                     continue
 
                 if dry_run:
-                    logging.info(f"WOULD BLOCK: {canonical}")
+                    logging.info(f"WOULD BLOCK: {canonical} (source: {source})")
                     blocked_count += 1
                     found_match_this_pass = True
                     continue
 
                 # Capture display name from card for later unblocking.
-                # channel_link (already found above) is the channel anchor — its text IS
-                # the display name in YouTube's current yt-lockup-view-model card structure.
                 display_name = (channel_link.inner_text() or "").strip() or None
 
                 logging.info(f"Found in feed: {canonical} — blocking...")
@@ -538,8 +530,7 @@ def process_channels(channels: list[str], source: str,
                     logging.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
                     pkg.save_state(state)
 
-            # Selector health check: if several consecutive passes have enough
-            # cards but zero parseable channel links, the selector is likely broken.
+            # Selector health check
             if len(cards) >= MIN_CARDS_FOR_SELECTOR_CHECK and pass_parseable == 0:
                 zero_parse_passes += 1
                 if zero_parse_passes >= SELECTOR_WARN_AFTER:
@@ -571,10 +562,9 @@ def process_channels(channels: list[str], source: str,
                 _pw_cm.__exit__(None, None, None)
 
     if dry_run:
-        logging.info(f"DRY RUN complete. Would have blocked {blocked_count} channel(s) from this source.")
+        logging.info(f"DRY RUN complete. Would have blocked {blocked_count} channel(s).")
     else:
         logging.info(f"Done. Blocked {blocked_count} channel(s) this run. Stats: {state['stats']}")
-    return subscriptions
 
 
 def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[str]:
