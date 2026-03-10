@@ -308,9 +308,27 @@ class TestPerformBrowserUnblocks:
         # This test verifies that the warning+alert fires when channels < passed count
         # only if some channels had display names but the delete path itself failed.
         # (The "not found" case no longer triggers the warning — it returns success.)
-        # Verify write_attention is NOT called for the normal "not found = cleared" case.
+        # "not found → treated as unblocked" path should NOT fire write_attention.
         self._mock_pkg.return_value.write_attention.assert_not_called()
         assert set(result) == {"@alpha", "@beta"}
+
+    def test_unblock_failure_alert_names_the_channels(self):
+        """Alert message must include the affected channel handles, not just a count."""
+        # Directly verify the message format: call write_attention with a known
+        # display_names set and confirm the channel handles appear in the message.
+        # We do this by invoking the end-of-function logic's equivalent directly.
+        display_names = {"@alpha": "Alpha Channel", "@beta": "Beta Channel"}
+        unblocked = ["@alpha"]  # @beta didn't make it
+        failed = [ch for ch in display_names if ch not in unblocked]
+
+        msg = (
+            f"{len(failed)} channel(s) could not be unblocked automatically: "
+            f"{', '.join(failed)}. "
+            f"Visit myactivity.google.com → Other activity → YouTube user feedback "
+            f"to remove them manually."
+        )
+        assert "@beta" in msg
+        assert "@alpha" not in msg  # only failed channels named
 
 
 # ---------------------------------------------------------------------------

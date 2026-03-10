@@ -734,10 +734,14 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
         unblocked_channels.append(channel)
         logging.info(f"UNBLOCKED on YouTube: {channel} ({display_name}) — channel can appear in recommendations again")
 
-    if len(unblocked_channels) < len(channels):
-        not_removed = len(channels) - len(unblocked_channels)
+    # Only count channels that actually reached myactivity (had a resolved display name).
+    # Channels that couldn't get a display name are counted separately and retried
+    # on subsequent runs — they should not trigger the manual-intervention alert.
+    failed = [ch for ch in display_names if ch not in unblocked_channels]
+    if failed:
         msg = (
-            f"{not_removed} channel(s) could not be unblocked automatically. "
+            f"{len(failed)} channel(s) could not be unblocked automatically: "
+            f"{', '.join(failed)}. "
             f"Visit myactivity.google.com → Other activity → YouTube user feedback to remove them manually."
         )
         logging.warning(msg)
