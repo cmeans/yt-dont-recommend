@@ -679,10 +679,13 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
                 if i % 10 == 0 and i > 0:
                     logging.info(f"Still waiting for verification... ({i*3}s elapsed)")
             if not verified:
-                logging.error(
-                    "Timed out waiting for Google verification. "
-                    "Channels NOT unblocked on YouTube: " + ", ".join(channels)
+                msg = (
+                    "Timed out waiting for Google verification — "
+                    "pending unblocks will retry next run. "
+                    "Channels NOT unblocked: " + ", ".join(channels)
                 )
+                logging.error(msg)
+                pkg.write_attention(msg)
                 return []
 
         time.sleep(3)
@@ -733,10 +736,12 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
 
     if len(unblocked_channels) < len(channels):
         not_removed = len(channels) - len(unblocked_channels)
-        logging.warning(
+        msg = (
             f"{not_removed} channel(s) could not be unblocked automatically. "
             f"Visit myactivity.google.com → Other activity → YouTube user feedback to remove them manually."
         )
+        logging.warning(msg)
+        pkg.write_attention(msg)
     return unblocked_channels
 
 

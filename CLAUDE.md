@@ -120,7 +120,9 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
   "stats": {"total_blocked": 1, "total_skipped": 0, "total_failed": 0},
   "source_sizes": {"deslop": 121, "aislist": 8400},
   "ucxxx_to_handle": {"UCxxx...": "@handle"},
-  "pending_unblock": {},
+  "pending_unblock": {
+    "@channel1": {"sources": ["deslop"], "blocked_at": "...", "_retry_count": 1}
+  },
   "notify_topic": "ydr-<random-hex>",
   "last_version_check": "2026-03-08T...",
   "latest_known_version": "0.1.13",
@@ -133,6 +135,8 @@ Single-file Python script (`yt_dont_recommend.py`). Key components:
 ```
 
 `load_state()` is backward-compatible: missing keys are populated via `setdefault`. If `state_version` in the file exceeds the binary's `STATE_VERSION` constant, a warning is logged (state was written by a newer binary — occurs after `--revert`).
+
+`pending_unblock` entries carry an internal `_retry_count` sub-key (prefixed `_` to indicate it is not part of the public schema). It tracks consecutive display-name lookup failures for that channel. After `_MAX_DISPLAY_NAME_RETRIES` (3) failures the channel is removed from `pending_unblock` automatically. This key does not require a `STATE_VERSION` bump — old binaries ignore it.
 
 ### State Schema Policy
 
