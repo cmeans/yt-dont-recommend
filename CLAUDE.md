@@ -240,6 +240,7 @@ def fetch_subscriptions(page) -> set[str]:
 | `--limit N` | Stop after N channels |
 | `--dry-run` | Show what would be processed without acting |
 | `--headless` | Run without a visible browser window |
+| `--clickbait` | Classify video titles in the feed and block channels with flagged clickbait content. Requires `pip install yt-dont-recommend[clickbait]`. Config: `~/.yt-dont-recommend/clickbait-config.yaml`. |
 | `--unblock-policy {all,any}` | When to auto-unblock channels removed from lists (default: `all`) |
 | `--stats` | Show blocked count, per-source breakdown, success/skip/fail totals, and `would_have_blocked` entries |
 | `--export-state [FILE]` | Dump all blocked channels as a standard plain-text blocklist with source annotations; writes to FILE or stdout |

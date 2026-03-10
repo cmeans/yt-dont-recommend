@@ -315,6 +315,7 @@ def process_channels(channel_sources: dict[str, str],
                      dry_run: bool = False,
                      limit: int | None = None,
                      headless: bool = False,
+                     clickbait_cfg: dict | None = None,
                      _browser: tuple | None = None) -> None:
     """
     Scan the YouTube home feed once and click 'Don't recommend channel' for
@@ -402,9 +403,25 @@ def process_channels(channel_sources: dict[str, str],
         page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
         time.sleep(PAGE_LOAD_WAIT)
 
+        # Set up clickbait classifier if requested
+        _classify_video = None
+        if clickbait_cfg is not None:
+            try:
+                from .clickbait import classify_video as _classify_video  # type: ignore[assignment]
+            except ImportError:
+                logging.warning(
+                    "--clickbait: ollama package not installed. "
+                    "Run: pip install yt-dont-recommend[clickbait]"
+                )
+                clickbait_cfg = None
+
+        _clickbait_evaluated: set[str] = set()  # channels evaluated this run (avoid re-classifying)
+        processed_set_lower = {c.lower() for c in processed_set}
+
+        _extra = " + clickbait detection" if clickbait_cfg is not None else ""
         logging.info(
             f"Scanning home feed for {len(channel_lookup)} channel(s) "
-            f"across {n_sources} source(s)..."
+            f"across {n_sources} source(s){_extra}..."
         )
 
         blocked_count = 0
@@ -451,10 +468,43 @@ def process_channels(channel_sources: dict[str, str],
                 seen_paths.add(path.lower())
                 logging.debug(f"Feed card channel: {path}")
                 canonical = channel_lookup.get(path.lower())
-                if not canonical or canonical in processed_set:
+                if canonical and canonical in processed_set:
                     continue
 
-                source = resolved_sources.get(canonical, "unknown")
+                if not canonical:
+                    # Not on blocklist — check for clickbait if enabled
+                    if (clickbait_cfg is None
+                            or path.lower() in processed_set_lower
+                            or path.lower() in _clickbait_evaluated):
+                        continue
+                    video_link = card.query_selector("a[href*='/watch?v=']")
+                    if not video_link:
+                        continue
+                    vid_href = video_link.get_attribute("href") or ""
+                    m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', vid_href)
+                    if not m:
+                        continue
+                    video_id = m.group(1)
+                    video_title = (video_link.inner_text() or "").strip() or None
+                    if not video_title:
+                        continue
+                    _clickbait_evaluated.add(path.lower())
+                    result = _classify_video(video_id, video_title, clickbait_cfg)
+                    conf = result.get("confidence", 0.0)
+                    if not result.get("flagged"):
+                        logging.debug(
+                            f"clickbait: {path} — {video_title!r} "
+                            f"score={conf:.2f} not flagged"
+                        )
+                        continue
+                    logging.info(
+                        f"CLICKBAIT: {path} — {video_title!r} "
+                        f"(confidence {conf:.2f}) — blocking..."
+                    )
+                    canonical = path
+                    source = "clickbait"
+                else:
+                    source = resolved_sources.get(canonical, "unknown")
 
                 # Check subscription protection before blocking
                 if canonical.lower() in subscriptions:
@@ -497,6 +547,7 @@ def process_channels(channel_sources: dict[str, str],
                 if success:
                     state["processed"].append(canonical)
                     processed_set.add(canonical)
+                    processed_set_lower.add(canonical.lower())
                     state["stats"]["total_blocked"] += 1
                     blocked_count += 1
                     found_match_this_pass = True

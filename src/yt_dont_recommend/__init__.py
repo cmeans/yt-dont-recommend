@@ -147,6 +147,7 @@ def process_channels(channel_sources: dict[str, str],
                      dry_run: bool = False,
                      limit: int | None = None,
                      headless: bool = False,
+                     clickbait_cfg: dict | None = None,
                      _browser: tuple | None = None) -> None:
     """
     Scan the YouTube home feed once and block every channel in channel_sources.
@@ -155,6 +156,8 @@ def process_channels(channel_sources: dict[str, str],
         from all sources merged together by the caller.
     to_unblock: channels to remove from myactivity before scanning.
     state: loaded state dict; loaded fresh if None.
+    clickbait_cfg: loaded clickbait config dict; when set, also classifies
+        non-listed channels and blocks those with flagged video titles.
     """
     from .browser import process_channels as _process_channels
     return _process_channels(
@@ -164,6 +167,7 @@ def process_channels(channel_sources: dict[str, str],
         dry_run=dry_run,
         limit=limit,
         headless=headless,
+        clickbait_cfg=clickbait_cfg,
         _browser=_browser,
     )
 
@@ -518,6 +522,10 @@ def main():
     )
     parser.add_argument("--headless", action="store_true",
                         help="Run browser in headless mode (no visible window)")
+    parser.add_argument("--clickbait", action="store_true",
+                        help="Classify video titles in the feed and block channels "
+                             "with flagged clickbait content (requires: "
+                             "pip install yt-dont-recommend[clickbait])")
     parser.add_argument("--verbose", action="store_true",
                         help="Enable debug logging")
     parser.add_argument("--reset-state", action="store_true",
@@ -840,7 +848,13 @@ def main():
     if len(sources) > 1 and (channel_sources or all_unblocks):
         logging.info(f"--- Processing {len(sources)} source(s) ---")
 
-    if not channel_sources and not all_unblocks:
+    clickbait_cfg = None
+    if args.clickbait:
+        from .clickbait import load_config as _load_clickbait_config
+        clickbait_cfg = _load_clickbait_config()
+        logging.info("Clickbait detection enabled.")
+
+    if not channel_sources and not all_unblocks and clickbait_cfg is None:
         logging.info("Nothing to do.")
     else:
         from .browser import open_browser, close_browser
@@ -855,6 +869,7 @@ def main():
                 dry_run=args.dry_run,
                 limit=args.limit,
                 headless=args.headless,
+                clickbait_cfg=clickbait_cfg,
                 _browser=browser_handle,
             )
         finally:
