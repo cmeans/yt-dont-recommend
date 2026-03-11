@@ -15,11 +15,11 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 import yt_dont_recommend as ydr
-import yt_dont_recommend.browser as browser_mod
-from yt_dont_recommend.browser import (
+import yt_dont_recommend.unblock as unblock_mod
+from yt_dont_recommend.browser import process_channels
+from yt_dont_recommend.unblock import (
     _perform_browser_unblocks,
     _MAX_DISPLAY_NAME_RETRIES,
-    process_channels,
 )
 
 
@@ -136,7 +136,7 @@ class TestPerformBrowserUnblocks:
 
     def setup_method(self):
         # write_attention requires a real file path; stub it out
-        self._wa_patch = patch("yt_dont_recommend.browser._pkg")
+        self._wa_patch = patch("yt_dont_recommend.unblock._pkg")
         self._mock_pkg = self._wa_patch.start()
         self._mock_pkg.return_value.write_attention = MagicMock()
         self._mock_pkg.return_value.save_state = MagicMock()
@@ -355,35 +355,35 @@ class TestPendingAttemptedThisRun:
     """
 
     def setup_method(self):
-        browser_mod._pending_attempted_this_run.clear()
+        unblock_mod._pending_attempted_this_run.clear()
 
     def teardown_method(self):
-        browser_mod._pending_attempted_this_run.clear()
+        unblock_mod._pending_attempted_this_run.clear()
 
     def test_set_starts_empty_after_clear(self):
-        assert len(browser_mod._pending_attempted_this_run) == 0
+        assert len(unblock_mod._pending_attempted_this_run) == 0
 
     def test_channels_added_after_attempt(self):
-        browser_mod._pending_attempted_this_run.update(["@alpha", "@beta"])
-        assert "@alpha" in browser_mod._pending_attempted_this_run
-        assert "@beta" in browser_mod._pending_attempted_this_run
+        unblock_mod._pending_attempted_this_run.update(["@alpha", "@beta"])
+        assert "@alpha" in unblock_mod._pending_attempted_this_run
+        assert "@beta" in unblock_mod._pending_attempted_this_run
 
     def test_already_attempted_channels_excluded_from_retry(self):
         """Channels already in the set are filtered out of to_unblock."""
-        browser_mod._pending_attempted_this_run.add("@alpha")
+        unblock_mod._pending_attempted_this_run.add("@alpha")
         to_unblock = ["@alpha", "@beta"]
         # Simulate the filtering applied at the top of process_channels
         filtered = [ch for ch in to_unblock
-                    if ch not in browser_mod._pending_attempted_this_run]
+                    if ch not in unblock_mod._pending_attempted_this_run]
         assert "@alpha" not in filtered
         assert "@beta" in filtered
 
     def test_fresh_channels_not_filtered(self):
         """Channels not in the set pass through unaffected."""
-        browser_mod._pending_attempted_this_run.add("@old-pending")
+        unblock_mod._pending_attempted_this_run.add("@old-pending")
         to_unblock = ["@newly-removed", "@old-pending"]
         filtered = [ch for ch in to_unblock
-                    if ch not in browser_mod._pending_attempted_this_run]
+                    if ch not in unblock_mod._pending_attempted_this_run]
         assert filtered == ["@newly-removed"]
 
 
@@ -399,10 +399,10 @@ class TestProcessChannels:
     """
 
     def setup_method(self):
-        browser_mod._pending_attempted_this_run.clear()
+        unblock_mod._pending_attempted_this_run.clear()
 
     def teardown_method(self):
-        browser_mod._pending_attempted_this_run.clear()
+        unblock_mod._pending_attempted_this_run.clear()
 
     def test_empty_inputs_returns_without_opening_browser(self):
         """Nothing to do → returns immediately, no browser opened."""
@@ -417,7 +417,7 @@ class TestProcessChannels:
     def test_already_attempted_unblocks_filtered_before_browser(self):
         """Channels in _pending_attempted_this_run are dropped from to_unblock;
         if that empties to_unblock and channel_sources is also empty, no browser."""
-        browser_mod._pending_attempted_this_run.add("@alpha")
+        unblock_mod._pending_attempted_this_run.add("@alpha")
         with patch("yt_dont_recommend.browser.open_browser") as mock_open:
             process_channels({}, to_unblock=["@alpha"], state={
                 "processed": [], "blocked_by": {}, "would_have_blocked": {},

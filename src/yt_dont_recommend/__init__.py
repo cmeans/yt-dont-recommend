@@ -204,7 +204,7 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     Saves a timestamped report and screenshots to ~/.yt-dont-recommend/.
     Returns True if the target option was found (exit code 0), False otherwise (exit code 1).
     """
-    from .browser import check_selectors as _check_selectors
+    from .diagnostics import check_selectors as _check_selectors
     return _check_selectors(test_channel)
 
 
