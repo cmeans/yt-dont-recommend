@@ -677,6 +677,7 @@ def main() -> None:
     all_unblocks: list[str] = []
 
     if run_blocklist:
+        log.info("Blocklist mode enabled%s.", " (dry run)" if args.dry_run else "")
         # Resolve which sources to run
         if args.source is None:
             sources = DEFAULT_SOURCES
@@ -741,10 +742,11 @@ def main() -> None:
                     channel_sources[ch] = source
                     new_for_source += 1
             already_done = sum(1 for ch in channels if ch in processed_set)
+            queue_label = "would scan" if args.dry_run else "added to scan queue"
             log.info(
                 f"{len(channels)} channels in blocklist, "
                 f"{already_done} already blocked, "
-                f"{new_for_source} added to scan queue"
+                f"{new_for_source} {queue_label}"
             )
 
         # Add any pending unblocks from previous failed runs

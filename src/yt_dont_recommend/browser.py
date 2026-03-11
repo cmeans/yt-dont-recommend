@@ -90,26 +90,118 @@ def do_login() -> None:
     log.info("Login session saved. You can now run without --login.")
 
 
+def _find_system_chrome() -> str | None:
+    """Search for a system Chrome or Chromium executable across common install locations.
+
+    Tries PATH-based names first, then fixed paths for non-standard installs
+    (RPM on Fedora/RHEL, deb on Debian/Ubuntu, Flatpak). Returns the first
+    found executable path, or None.
+    """
+    import shutil
+    import subprocess
+
+    # Ordered by preference: Chrome (real UA) before Chromium (open-source build)
+    candidates_in_path = [
+        "google-chrome-stable",
+        "google-chrome",
+        "chromium-browser",
+        "chromium",
+    ]
+    home = Path.home()
+    fixed_paths = [
+        # RPM / deb standard install locations
+        "/opt/google/chrome/google-chrome",
+        "/opt/google/chrome-beta/google-chrome",
+        "/opt/google/chrome-unstable/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+        # Snap
+        "/snap/bin/chromium",
+        "/snap/chromium/current/usr/lib/chromium-browser/chromium-browser",
+        # Flatpak stable — system install
+        "/var/lib/flatpak/app/com.google.Chrome/current/active/files/extra/chrome",
+        # Flatpak stable — user install
+        str(home / ".local/share/flatpak/app/com.google.Chrome/current/active/files/extra/chrome"),
+        # Flatpak beta / canary — system
+        "/var/lib/flatpak/app/com.google.ChromeBeta/current/active/files/extra/chrome",
+        "/var/lib/flatpak/app/com.google.ChromeDev/current/active/files/extra/chrome",
+        # Flatpak Chromium (open-source) — system
+        "/var/lib/flatpak/app/org.chromium.Chromium/current/active/files/chromium",
+        # Flatpak Chromium — user
+        str(home / ".local/share/flatpak/app/org.chromium.Chromium/current/active/files/chromium"),
+    ]
+
+    for name in candidates_in_path:
+        found = shutil.which(name)
+        if found:
+            return found
+    for path in fixed_paths:
+        if Path(path).exists():
+            return path
+
+    # Dynamic Flatpak detection — handles non-default install branches/arches
+    for flatpak_id in ("com.google.Chrome", "com.google.ChromeBeta", "org.chromium.Chromium"):
+        try:
+            result = subprocess.run(
+                ["flatpak", "info", "--show-location", flatpak_id],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                loc = result.stdout.strip()
+                for rel in ("files/extra/chrome", "files/chromium"):
+                    candidate = str(Path(loc) / rel)
+                    if Path(candidate).exists():
+                        return candidate
+        except Exception:
+            pass
+
+    return None
+
+
 def _launch_context(p: Any, profile_dir: Path, **kwargs: Any) -> Any:
     """Launch a persistent browser context, preferring system Chrome over bundled Chromium.
 
-    Tries channel="chrome" first (uses the user's real Chrome installation and its
-    authentic User-Agent / Client Hints) unless disabled via use_system_chrome: false
-    in ~/.yt-dont-recommend/config.yaml. Falls back to Playwright's bundled Chromium
-    if Chrome is not found, fails to launch, or is explicitly disabled.
+    Tries channel="chrome" (Playwright's built-in detection) first, then falls back
+    to a manual path search across common Chrome/Chromium install locations (handles
+    RPM/deb/Flatpak variants on Linux). Falls back to Playwright's bundled Chromium
+    if nothing is found, or if use_system_chrome is set to false in config.yaml.
     """
     from .config import load_browser_config
     use_system_chrome = load_browser_config().get("use_system_chrome", True)
-    if use_system_chrome:
-        try:
-            ctx = p.chromium.launch_persistent_context(str(profile_dir), channel="chrome", **kwargs)
-            log.info("Browser: system Chrome")
-            return ctx
-        except Exception:
-            log.info("Browser: bundled Chromium (system Chrome not found)")
-    else:
+    if not use_system_chrome:
         log.info("Browser: bundled Chromium (use_system_chrome disabled)")
-    return p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+        return p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+
+    # Try Playwright's built-in channel detection first
+    try:
+        ctx = p.chromium.launch_persistent_context(str(profile_dir), channel="chrome", **kwargs)
+        ua = ctx.pages[0].evaluate("navigator.userAgent") if ctx.pages else "unknown"
+        log.info("Browser: system Chrome (channel=chrome) — UA: %s", ua)
+        return ctx
+    except Exception as e:
+        log.debug("Browser: channel=chrome failed (%s) — trying manual path search", e)
+
+    # Fall back to manual path search for non-standard install locations (Flatpak, Snap, etc.)
+    exe = _find_system_chrome()
+    if exe:
+        log.debug("Browser: found system Chrome/Chromium at %s", exe)
+        try:
+            ctx = p.chromium.launch_persistent_context(str(profile_dir), executable_path=exe, **kwargs)
+            ua = ctx.pages[0].evaluate("navigator.userAgent") if ctx.pages else "unknown"
+            log.info("Browser: system Chrome/Chromium (%s) — UA: %s", exe, ua)
+            return ctx
+        except Exception as e:
+            log.warning("Browser: failed to launch %s (%s) — falling back to bundled Chromium", exe, e)
+    else:
+        log.debug("Browser: no system Chrome/Chromium found on this machine")
+
+    log.info("Browser: bundled Chromium (Playwright built-in)")
+    ctx = p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
+    ua = ctx.pages[0].evaluate("navigator.userAgent") if ctx.pages else "unknown"
+    log.info("Browser: UA: %s", ua)
+    return ctx
 
 
 def _find_menu_btn(card: Any) -> Any:
