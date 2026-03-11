@@ -81,23 +81,23 @@ class TestVersionChecking:
     def test_check_for_update_returns_none_when_pypi_unavailable(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value=None):
+        with patch("yt_dont_recommend.cli._get_latest_pypi_version", return_value=None):
             result = ydr.check_for_update(state, force=True)
         assert result is None
 
     def test_check_for_update_returns_none_when_already_latest(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.1.0"), \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
+        with patch("yt_dont_recommend.cli._get_latest_pypi_version", return_value="0.1.0"), \
+             patch("yt_dont_recommend.cli._get_current_version", return_value="0.1.4"):
             result = ydr.check_for_update(state, force=True)
         assert result is None
 
     def test_check_for_update_returns_version_when_newer(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.2.0"), \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
+        with patch("yt_dont_recommend.cli._get_latest_pypi_version", return_value="0.2.0"), \
+             patch("yt_dont_recommend.cli._get_current_version", return_value="0.1.4"):
             result = ydr.check_for_update(state, force=True)
         assert result == "0.2.0"
 
@@ -108,8 +108,8 @@ class TestVersionChecking:
         # Simulate a recent check that found a newer version
         state["last_version_check"] = datetime.now().isoformat()
         state["latest_known_version"] = "0.2.0"
-        with patch("yt_dont_recommend._get_latest_pypi_version") as mock_pypi, \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"):
+        with patch("yt_dont_recommend.cli._get_latest_pypi_version") as mock_pypi, \
+             patch("yt_dont_recommend.cli._get_current_version", return_value="0.1.4"):
             result = ydr.check_for_update(state, force=False)
             mock_pypi.assert_not_called()  # should use cached value, not hit PyPI
         assert result == "0.2.0"
@@ -118,9 +118,9 @@ class TestVersionChecking:
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
         state["notify_topic"] = "test-topic"
-        with patch("yt_dont_recommend._get_latest_pypi_version", return_value="0.2.0"), \
-             patch("yt_dont_recommend._get_current_version", return_value="0.1.4"), \
-             patch("yt_dont_recommend._ntfy_notify") as mock_ntfy:
+        with patch("yt_dont_recommend.cli._get_latest_pypi_version", return_value="0.2.0"), \
+             patch("yt_dont_recommend.cli._get_current_version", return_value="0.1.4"), \
+             patch("yt_dont_recommend.cli._ntfy_notify") as mock_ntfy:
             ydr.check_for_update(state, force=True)
             assert mock_ntfy.call_count == 1
             # Second call with same version should not re-notify
@@ -227,11 +227,15 @@ class TestVersionChecking:
 
     def test_revert_explicit_version_skips_state_lookup(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr("yt_dont_recommend.cli.STATE_FILE", tmp_path / "processed.json")
         monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.14")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.1.14")
         monkeypatch.setattr(ydr, "_detect_installer", lambda: "uv")
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
         ran = []
+        import yt_dont_recommend.cli as cli_mod
         monkeypatch.setattr(
-            ydr.subprocess, "run",
+            cli_mod.subprocess, "run",
             lambda cmd, **kw: ran.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})()
         )
         ydr.do_revert("0.1.10")
@@ -241,7 +245,9 @@ class TestVersionChecking:
 
     def test_revert_no_op_when_already_on_target(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr("yt_dont_recommend.cli.STATE_FILE", tmp_path / "processed.json")
         monkeypatch.setattr(ydr, "_get_current_version", lambda: "0.1.10")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.1.10")
         ydr.do_revert("0.1.10")
         captured = capsys.readouterr()
         assert "nothing to do" in captured.out

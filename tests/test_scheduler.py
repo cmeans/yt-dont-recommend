@@ -44,18 +44,24 @@ class TestSchedule:
         assert ydr._format_hours([15, 3]) == "3:00 AM and 3:00 PM"
 
     def test_schedule_cmd_uses_default_hours(self, monkeypatch):
+        import yt_dont_recommend.scheduler as sched_mod
         called_with = []
         monkeypatch.setattr(ydr, "_find_installed_binary", lambda: "/usr/bin/yt-dont-recommend")
+        monkeypatch.setattr(sched_mod, "_find_installed_binary", lambda: "/usr/bin/yt-dont-recommend")
         monkeypatch.setattr(ydr, "_schedule_linux", lambda a, b, h: called_with.append(h))
-        monkeypatch.setattr(ydr.sys, "platform", "linux")
+        monkeypatch.setattr(sched_mod, "_schedule_linux", lambda a, b, h: called_with.append(h))
+        monkeypatch.setattr(sched_mod.sys, "platform", "linux")
         ydr.schedule_cmd("install")
         assert called_with[0] == list(ydr._SCHEDULE_HOURS)
 
     def test_schedule_cmd_passes_custom_hours(self, monkeypatch):
+        import yt_dont_recommend.scheduler as sched_mod
         called_with = []
         monkeypatch.setattr(ydr, "_find_installed_binary", lambda: "/usr/bin/yt-dont-recommend")
+        monkeypatch.setattr(sched_mod, "_find_installed_binary", lambda: "/usr/bin/yt-dont-recommend")
         monkeypatch.setattr(ydr, "_schedule_linux", lambda a, b, h: called_with.append(h))
-        monkeypatch.setattr(ydr.sys, "platform", "linux")
+        monkeypatch.setattr(sched_mod, "_schedule_linux", lambda a, b, h: called_with.append(h))
+        monkeypatch.setattr(sched_mod.sys, "platform", "linux")
         ydr.schedule_cmd("install", hours=[6, 18])
         assert called_with[0] == [6, 18]
 
@@ -70,7 +76,8 @@ class TestSchedule:
                 return type("R", (), {"returncode": 0, "stdout": existing})()
             return type("R", (), {"returncode": 0, "stdout": ""})()
 
-        monkeypatch.setattr(ydr.subprocess, "run", fake_run)
+        import yt_dont_recommend.scheduler as sched_mod
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
         ydr._schedule_linux("install", "/bin/yt-dont-recommend", [6, 18])
         captured = capsys.readouterr()
         assert "Replacing" in captured.out

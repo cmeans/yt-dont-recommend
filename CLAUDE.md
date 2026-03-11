@@ -102,7 +102,8 @@ The `aislist` source is plain text with `!` comments, ~8400+ channels. Format co
 
 `src/yt_dont_recommend/` package. Modules:
 
-- `__init__.py` — `main()` entry point + re-exports all public names
+- `__init__.py` — re-exports all public names; thin browser wrappers
+- `cli.py` — `main()` entry point, argument parsing, all CLI command handlers
 - `config.py` — constants, file paths, selectors, logging setup (no package imports)
 - `state.py` — `load_state`, `save_state`, `write_attention`, `_had_attention`
 - `blocklist.py` — `resolve_source`, `parse_*_blocklist`, `normalize_handle`, `check_removals`
@@ -164,7 +165,7 @@ video:
 - `phi3.5` title: 93% accuracy, ~8s/title, 0 parse failures
 - `gemma3:4b` thumbnail two-step: 100% accuracy on 6-video set, ~65s/video
 
-**`_pkg()` pattern**: sub-modules use late import of `yt_dont_recommend` for names that tests patch. `__init__.py` re-exports all public names so `patch("yt_dont_recommend.X")` still works.
+**`_pkg()` pattern**: sub-modules use late import of `yt_dont_recommend` for names that tests patch. `__init__.py` re-exports all public names so `patch("yt_dont_recommend.X")` still works for external callers. Functions that live in `cli.py` must be patched as `yt_dont_recommend.cli.X` in tests.
 
 ### State Schema
 

@@ -3,13 +3,12 @@ Tests for yt_dont_recommend.browser and related CLI/main() functionality.
 
 Browser automation functions (do_login, process_channels, check_selectors)
 require a live YouTube session and are not tested here. This file covers:
-  - CLI-level tests and first-run/uninstall logic in __init__.py
+  - CLI-level tests and first-run/uninstall logic in cli.py
   - _perform_browser_unblocks() logic (mocked page; no live session needed)
   - _pending_attempted_this_run deduplication set
 
 Functions under test are imported directly from yt_dont_recommend, but
-patch targets remain yt_dont_recommend.X (the re-exported name in __init__.py),
-as they did in the original test_yt_dont_recommend.py.
+patch targets that live in cli.py must be patched as yt_dont_recommend.cli.X.
 """
 
 import pytest
@@ -49,27 +48,35 @@ class TestFirstRunAndUninstall:
         assert "--schedule install" in captured.out
 
     def test_do_uninstall_removes_data_dir(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "data" / "processed.json")
+        state_file = tmp_path / "data" / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
+        monkeypatch.setattr("yt_dont_recommend.cli.STATE_FILE", state_file)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         (data_dir / "processed.json").write_text("{}")
         # Simulate user answering "y" to the removal prompt
         monkeypatch.setattr("builtins.input", lambda _: "y")
         monkeypatch.setattr(ydr, "schedule_cmd", lambda action: None)
+        monkeypatch.setattr("yt_dont_recommend.cli.schedule_cmd", lambda action: None)
         monkeypatch.setattr(ydr, "_detect_installer", lambda: "uv")
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
         ydr.do_uninstall()
         assert not data_dir.exists()
         captured = capsys.readouterr()
         assert "uv tool uninstall" in captured.out
 
     def test_do_uninstall_keeps_data_dir_on_no(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "data" / "processed.json")
+        state_file = tmp_path / "data" / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
+        monkeypatch.setattr("yt_dont_recommend.cli.STATE_FILE", state_file)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         (data_dir / "processed.json").write_text("{}")
         monkeypatch.setattr("builtins.input", lambda _: "n")
         monkeypatch.setattr(ydr, "schedule_cmd", lambda action: None)
+        monkeypatch.setattr("yt_dont_recommend.cli.schedule_cmd", lambda action: None)
         monkeypatch.setattr(ydr, "_detect_installer", lambda: "pipx")
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "pipx")
         ydr.do_uninstall()
         assert data_dir.exists()
         captured = capsys.readouterr()

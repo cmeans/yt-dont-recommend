@@ -30,7 +30,7 @@ clickbait = [
 ]
 
 [project.scripts]
-yt-dont-recommend = "yt_dont_recommend:main"
+yt-dont-recommend = "yt_dont_recommend.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/yt_dont_recommend"]
