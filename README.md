@@ -411,6 +411,11 @@ yt-dont-recommend --schedule remove
 
 Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
 
+> **`--clickbait` and scheduled runs:** `--schedule install` sets up `--blocklist` only. Clickbait detection (`--clickbait`) requires Ollama to be running at the time of execution and performs LLM inference per video (~8 s/title), making it unsuitable for fully unattended scheduling on most systems. If you want to include clickbait detection in your schedule, add it manually via `crontab -e`:
+> ```
+> 0 3,15 * * * /path/to/yt-dont-recommend --blocklist --clickbait --headless
+> ```
+
 ### Manual cron setup (advanced)
 
 If you prefer to manage cron yourself, use `crontab -e` and add one of the following.

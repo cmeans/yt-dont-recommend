@@ -147,6 +147,7 @@ def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
     print(f"Scheduled to run at {_format_hours(hours)} daily.")
     print(f"Plist: {plist_path}")
     print(f"\nRun logs: {LOG_FILE}")
+    print("Note: scheduled runs use --blocklist only. To include --clickbait, edit the plist manually.")
 
 
 def _schedule_linux(action: str, bin_path: str, hours: list[int]) -> None:
@@ -204,6 +205,7 @@ def _schedule_linux(action: str, bin_path: str, hours: list[int]) -> None:
     print(f"Entry: {cron_line}")
     print(f"\nRun logs: {LOG_FILE}")
     print("To verify: crontab -l")
+    print("Note: scheduled runs use --blocklist only. To include --clickbait, edit crontab -e manually.")
 
 
 def schedule_cmd(action: str, hours: list[int] | None = None) -> None:
