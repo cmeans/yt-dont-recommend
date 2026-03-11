@@ -774,7 +774,7 @@ def main() -> None:
                 f"  {_clickbait_install_cmd()}"
             )
             return
-        log.info("Clickbait detection enabled.")
+        log.info("Clickbait detection enabled%s.", " (dry run)" if args.dry_run else "")
         from .clickbait import load_config as _load_clickbait_config
         clickbait_cfg = _load_clickbait_config()
         _v = clickbait_cfg["video"]

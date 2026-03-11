@@ -232,6 +232,64 @@ def _launch_context(p: Any, profile_dir: Path, **kwargs: Any) -> Any:
     return ctx
 
 
+def _extract_feed_videos_from_json(page: Any) -> dict:
+    """Extract video metadata from the ytInitialData JSON blob embedded in the page.
+
+    Returns {video_id: {"title": str, "channel_handle": str | None}} for all
+    videoRenderer entries found in the home feed richGridRenderer on initial load.
+
+    Only covers the first page of cards (loaded at page.goto time). Scrolled
+    continuation content is not captured here — callers must fall back to DOM
+    extraction for videos not in the returned dict.
+
+    Returns an empty dict on any failure (missing ytInitialData, JS error, etc.)
+    so callers can safely treat it as a best-effort supplement.
+    """
+    try:
+        data = page.evaluate("""
+            () => {
+                if (!window.ytInitialData) return null;
+                const d = window.ytInitialData;
+                const tabs = d?.contents?.twoColumnBrowseResultsRenderer?.tabs ?? [];
+                let contents = null;
+                for (const tab of tabs) {
+                    if (tab?.tabRenderer?.selected) {
+                        contents = tab?.tabRenderer?.content?.richGridRenderer?.contents ?? null;
+                        break;
+                    }
+                }
+                if (!contents) return null;
+
+                const videos = [];
+                for (const item of contents) {
+                    const vr = item?.richItemRenderer?.content?.videoRenderer;
+                    if (!vr) continue;
+                    const videoId = vr.videoId;
+                    const title = vr?.title?.runs?.[0]?.text ?? null;
+                    // YouTube A/B tests shortBylineText vs ownerText — try both
+                    const ep = vr?.shortBylineText?.runs?.[0]?.navigationEndpoint
+                             ?? vr?.ownerText?.runs?.[0]?.navigationEndpoint
+                             ?? null;
+                    const canonicalUrl = ep?.browseEndpoint?.canonicalBaseUrl ?? null;
+                    // canonicalBaseUrl is "/@handle" — strip the leading slash
+                    const channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                    if (videoId && title) {
+                        videos.push({video_id: videoId, title, channel_handle: channelHandle});
+                    }
+                }
+                return videos;
+            }
+        """)
+        if not data:
+            return {}
+        result = {item["video_id"]: item for item in data}
+        log.debug("ytInitialData: %d video entries on initial page load", len(result))
+        return result
+    except Exception as exc:
+        log.debug("ytInitialData extraction failed: %s", exc)
+        return {}
+
+
 def _find_menu_btn(card: Any) -> Any:
     """Find the 'More actions' menu button within a feed card. Returns element or None."""
     for sel in MENU_BTN_SELECTORS:
@@ -637,6 +695,10 @@ def process_channels(channel_sources: dict[str, str],
 
         _run_blocklist = bool(channel_lookup)
         _run_clickbait = clickbait_cfg is not None
+        # Extract video metadata from ytInitialData (initial page load only).
+        # Used as a reliable title source for clickbait classification; cards
+        # loaded by subsequent scrolls fall back to DOM extraction.
+        _json_videos: dict = _extract_feed_videos_from_json(page) if _run_clickbait else {}
         blocked_count = 0
         clickbait_count = 0
         no_progress_scrolls = 0
@@ -720,23 +782,34 @@ def process_channels(channel_sources: dict[str, str],
                         log.debug(f"clickbait: {path} — no video ID in href {vid_href!r}, skipping")
                         continue
                     video_id = m.group(1)
-                    # Prefer the title attribute (clean, no duration).
-                    # Fall back to the text-only span, then aria-label with
-                    # duration stripped ("Title 2 minutes, 4 seconds" → "Title").
-                    video_title = _title_el.get_attribute("title") or None
-                    if not video_title:
-                        _text_el = card.query_selector("yt-formatted-string#video-title, #video-title")
-                        if _text_el:
-                            video_title = _text_el.inner_text().strip() or None
-                    if not video_title:
-                        aria = _title_el.get_attribute("aria-label") or ""
-                        video_title = re.sub(
-                            r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
-                            "", aria
-                        ).strip() or None
+                    # Prefer JSON title from ytInitialData (clean, no duration suffix).
+                    # Falls back to DOM extraction for scrolled cards not in the JSON.
+                    json_meta = _json_videos.get(video_id)
+                    if json_meta and json_meta.get("title"):
+                        video_title: str | None = json_meta["title"]
+                        log.debug(f"clickbait: {path}/{video_id} — title from ytInitialData JSON")
+                    else:
+                        if _json_videos:
+                            # JSON was populated but this video_id wasn't in it (scrolled card)
+                            log.debug(f"clickbait: {path}/{video_id} — not in ytInitialData, falling back to DOM")
+                        video_title = None
+                        # DOM fallback: title attribute (clean), then text span, then
+                        # aria-label with duration suffix stripped.
+                        video_title = _title_el.get_attribute("title") or None
+                        if not video_title:
+                            _text_el = card.query_selector("yt-formatted-string#video-title, #video-title")
+                            if _text_el:
+                                video_title = _text_el.inner_text().strip() or None
+                        if not video_title:
+                            aria = _title_el.get_attribute("aria-label") or ""
+                            video_title = re.sub(
+                                r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
+                                "", aria
+                            ).strip() or None
                     if not video_title:
                         log.debug(f"clickbait: {path} — could not extract title, skipping")
                         continue
+
                     _clickbait_evaluated.add(path.lower())
                     evaluated_clickbait_this_pass += 1
                     result = _classify_video(video_id, video_title, clickbait_cfg)

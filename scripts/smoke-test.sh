@@ -86,6 +86,24 @@ check        "--schedule status exits 0"    yt-dont-recommend --schedule status
 check_output "no-args prints usage"  "usage:" yt-dont-recommend
 
 # ---------------------------------------------------------------------------
+# Clickbait extras checks (no browser, no ollama daemon required)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Clickbait extras ==="
+
+# Find the Python interpreter inside the tool's isolated environment
+TOOL_PYTHON="$(uv tool dir)/yt-dont-recommend/bin/python"
+if [ ! -f "$TOOL_PYTHON" ]; then
+    fail "tool Python not found at $TOOL_PYTHON"
+else
+    check "ollama importable"              "$TOOL_PYTHON" -c "import ollama"
+    check "pyyaml importable"             "$TOOL_PYTHON" -c "import yaml"
+    check "youtube-transcript-api importable" "$TOOL_PYTHON" -c "import youtube_transcript_api"
+    check "clickbait module loads"        "$TOOL_PYTHON" -c "from yt_dont_recommend.clickbait import load_config; load_config()"
+    check_output "--clickbait in --help"  "clickbait" yt-dont-recommend --help
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

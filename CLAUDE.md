@@ -80,6 +80,16 @@ Check the home feed manually (or via an ad-hoc script) immediately after the unb
 
 ---
 
+## browser.py — ytInitialData JSON extraction
+
+`_extract_feed_videos_from_json(page)` extracts `{video_id: {title, channel_handle}}` from `window.ytInitialData` on initial page load. Used as reliable title source for clickbait classification (avoids DOM attribute scraping noise). Only covers initial page load; scrolled cards fall back to DOM extraction automatically.
+
+Called once in `process_channels()` after `page.goto()`, only when `_run_clickbait=True`. Returns `{}` on any failure — purely additive. Debug log `"ytInitialData: N video entries"` — N=0 means extraction failed.
+
+JSON path: `contents.twoColumnBrowseResultsRenderer.tabs[selected].tabRenderer.content.richGridRenderer.contents[].richItemRenderer.content.videoRenderer`. Channel handle via `shortBylineText` or `ownerText` (YouTube A/B tests both).
+
+---
+
 ## Confirmed Findings from Live Testing (2026-03-05)
 
 ### "Don't Recommend" context — RESOLVED
