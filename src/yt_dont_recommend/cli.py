@@ -546,8 +546,6 @@ def main() -> None:
         do_revert(None if args.revert is True else args.revert)
         return
 
-    check_attention_flag()
-
     if args.schedule:
         schedule_hours = None
         if args.schedule_hours:
@@ -654,6 +652,8 @@ def main() -> None:
     if not run_blocklist and not run_clickbait:
         parser.print_help()
         return
+
+    check_attention_flag()
 
     # Periodic version check (at most once per 24 h; non-blocking on network failure)
     state = load_state()
