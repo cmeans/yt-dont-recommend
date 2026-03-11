@@ -120,7 +120,7 @@ def _click_not_interested(page: Any, card: Any) -> bool:
     """
     card.scroll_into_view_if_needed()
     card.hover()
-    time.sleep(0.5)
+    time.sleep(random.uniform(0.3, 0.7))
 
     menu_btn = _find_menu_btn(card)
     if not menu_btn:
@@ -128,7 +128,7 @@ def _click_not_interested(page: Any, card: Any) -> bool:
         return False
 
     menu_btn.click()
-    time.sleep(1.0)
+    time.sleep(random.uniform(0.7, 1.5))
 
     target_item = None
     for item in page.query_selector_all(_NOT_INTERESTED_ITEM_SELECTOR):
@@ -150,7 +150,7 @@ def _click_not_interested(page: Any, card: Any) -> bool:
         btn.click()
     else:
         target_item.click()
-    time.sleep(0.5)
+    time.sleep(random.uniform(0.3, 0.7))
     return True
 
 
@@ -166,7 +166,7 @@ def _click_dont_recommend(page: Any, card: Any) -> bool:
     """
     card.scroll_into_view_if_needed()
     card.hover()
-    time.sleep(0.5)
+    time.sleep(random.uniform(0.3, 0.7))
 
     menu_btn = _find_menu_btn(card)
     if not menu_btn:
@@ -174,7 +174,7 @@ def _click_dont_recommend(page: Any, card: Any) -> bool:
         return False
 
     menu_btn.click()
-    time.sleep(1.0)
+    time.sleep(random.uniform(0.7, 1.5))
 
     target_item = None
     for item in page.query_selector_all(MENU_ITEM_SELECTOR):
@@ -188,7 +188,7 @@ def _click_dont_recommend(page: Any, card: Any) -> bool:
         return False
 
     target_item.click()
-    time.sleep(0.5)
+    time.sleep(random.uniform(0.3, 0.7))
     return True
 
 
@@ -203,7 +203,7 @@ def fetch_subscriptions(page: Any) -> set[str]:
 
     log.info("Fetching subscriptions list...")
     page.goto("https://www.youtube.com/feed/channels", wait_until="domcontentloaded", timeout=60000)
-    time.sleep(PAGE_LOAD_WAIT)
+    time.sleep(random.uniform(PAGE_LOAD_WAIT, PAGE_LOAD_WAIT + 1.5))
 
     subscriptions: set[str] = set()
     prev_count = -1
@@ -227,7 +227,7 @@ def fetch_subscriptions(page: Any) -> set[str]:
         prev_count = len(subscriptions)
 
         page.evaluate("window.scrollBy(0, window.innerHeight * 3)")
-        time.sleep(1.5)
+        time.sleep(random.uniform(1.0, 2.5))
 
     if subscriptions:
         log.info(f"Found {len(subscriptions)} subscribed channels")
@@ -280,7 +280,7 @@ def _resolve_ucxxx_to_handles(page: Any, channels: list[str], state: dict) -> li
                     f"https://www.youtube.com/channel/{ucxxx}",
                     wait_until="domcontentloaded", timeout=30000,
                 )
-                time.sleep(1.0)
+                time.sleep(random.uniform(0.7, 1.5))
                 path = page.url.replace("https://www.youtube.com", "").split("?")[0].rstrip("/")
                 if path.startswith("/@"):
                     handle = path[1:]  # strip leading /
@@ -342,7 +342,7 @@ def open_browser(headless: bool = False) -> tuple | None:
     page = context.pages[0] if context.pages else context.new_page()
 
     page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
-    time.sleep(PAGE_LOAD_WAIT)
+    time.sleep(random.uniform(PAGE_LOAD_WAIT, PAGE_LOAD_WAIT + 1.5))
 
     avatar = page.query_selector("button#avatar-btn, img#img[alt]")
     if not avatar:
@@ -450,7 +450,7 @@ def process_channels(channel_sources: dict[str, str],
 
         # Navigate to home feed
         page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(PAGE_LOAD_WAIT)
+        time.sleep(random.uniform(PAGE_LOAD_WAIT, PAGE_LOAD_WAIT + 1.5))
 
         # Set up clickbait classifier if requested
         _classify_video = None
@@ -675,7 +675,7 @@ def process_channels(channel_sources: dict[str, str],
 
                     if blocked_count % LONG_PAUSE_EVERY == 0:
                         log.info(f"Taking a {LONG_PAUSE_SECONDS}s break...")
-                        time.sleep(LONG_PAUSE_SECONDS)
+                        time.sleep(random.uniform(LONG_PAUSE_SECONDS * 0.8, LONG_PAUSE_SECONDS * 1.3))
                     else:
                         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
