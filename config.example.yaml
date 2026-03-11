@@ -20,3 +20,10 @@ timing:
   # Maximum actions (blocks + clickbait marks) per session.
   # Use --no-limit on the command line to override for a single run.
   session_cap: 75       # default: 75
+
+browser:
+  # Use the system-installed Google Chrome instead of Playwright's bundled Chromium.
+  # System Chrome produces an authentic User-Agent and Client Hints, which improves
+  # anti-detection. Falls back to bundled Chromium automatically if Chrome is not found.
+  # Set to false if you need reproducible behaviour or don't have Chrome installed.
+  use_system_chrome: true  # default: true

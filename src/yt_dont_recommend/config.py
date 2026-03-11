@@ -166,6 +166,33 @@ def load_timing_config() -> dict:
         return {}
 
 
+def load_browser_config() -> dict:
+    """Load browser behaviour overrides from ~/.yt-dont-recommend/config.yaml.
+
+    Returns a dict with any of the following keys present in the file's
+    `browser:` section (all optional; missing keys fall back to defaults):
+        use_system_chrome (bool, default True)
+
+    Returns an empty dict if the file is absent, unparseable, or pyyaml
+    is not installed.
+    """
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        browser = data.get("browser", {})
+        if not isinstance(browser, dict):
+            return {}
+        allowed = {"use_system_chrome"}
+        return {k: v for k, v in browser.items() if k in allowed}
+    except Exception:
+        return {}
+
+
 def _n(count: int, word: str) -> str:
     """Return '{count} {word}' with correct plural — e.g. _n(1,'channel') → '1 channel',
     _n(2,'channel') → '2 channels'. Works for all regular English nouns."""

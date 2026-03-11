@@ -369,7 +369,7 @@ All data lives in `~/.yt-dont-recommend/`:
 | `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings, notification topic |
 | `run.log` | Timestamped log of all actions (rotates at 1 MB, 5 backups kept) |
 | `needs-attention.txt` | Alert flag written when action is required (e.g. selector failure, expired login session); auto-cleared on a successful run |
-| `config.yaml` | Optional: override timing delays, long-pause frequency, page load wait, and per-session action cap. Copy from [`config.example.yaml`](config.example.yaml). Requires `pyyaml` (`pip install pyyaml`). |
+| `config.yaml` | Optional: override timing delays, per-session cap, and browser behaviour (e.g. `use_system_chrome`). Copy from [`config.example.yaml`](config.example.yaml). Requires `pyyaml` (`pip install pyyaml`). |
 | `clickbait-config.yaml` | Optional: configure clickbait model, thresholds, and pipeline stages. Copy from [`clickbait-config.example.yaml`](clickbait-config.example.yaml). |
 
 ## Caveats

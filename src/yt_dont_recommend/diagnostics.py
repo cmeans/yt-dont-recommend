@@ -137,8 +137,9 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(PROFILE_DIR),
+        from .browser import _launch_context
+        context = _launch_context(
+            p, PROFILE_DIR,
             headless=False,  # always visible for diagnostics
             args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--disable-infobars"],
             ignore_default_args=["--enable-automation"],

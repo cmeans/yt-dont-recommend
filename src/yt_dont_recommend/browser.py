@@ -70,8 +70,8 @@ def do_login() -> None:
     print()
 
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(PROFILE_DIR),
+        context = _launch_context(
+            p, PROFILE_DIR,
             headless=False,
             args=["--disable-blink-features=AutomationControlled", "--disable-infobars"],
             ignore_default_args=["--enable-automation"],
@@ -88,6 +88,28 @@ def do_login() -> None:
         context.close()
 
     log.info("Login session saved. You can now run without --login.")
+
+
+def _launch_context(p: Any, profile_dir: Path, **kwargs: Any) -> Any:
+    """Launch a persistent browser context, preferring system Chrome over bundled Chromium.
+
+    Tries channel="chrome" first (uses the user's real Chrome installation and its
+    authentic User-Agent / Client Hints) unless disabled via use_system_chrome: false
+    in ~/.yt-dont-recommend/config.yaml. Falls back to Playwright's bundled Chromium
+    if Chrome is not found, fails to launch, or is explicitly disabled.
+    """
+    from .config import load_browser_config
+    use_system_chrome = load_browser_config().get("use_system_chrome", True)
+    if use_system_chrome:
+        try:
+            ctx = p.chromium.launch_persistent_context(str(profile_dir), channel="chrome", **kwargs)
+            log.info("Browser: system Chrome")
+            return ctx
+        except Exception:
+            log.info("Browser: bundled Chromium (system Chrome not found)")
+    else:
+        log.info("Browser: bundled Chromium (use_system_chrome disabled)")
+    return p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
 
 
 def _find_menu_btn(card: Any) -> Any:
@@ -334,8 +356,8 @@ def open_browser(headless: bool = False) -> tuple | None:
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     pw_cm = sync_playwright()
     p = pw_cm.__enter__()
-    context = p.chromium.launch_persistent_context(
-        str(PROFILE_DIR),
+    context = _launch_context(
+        p, PROFILE_DIR,
         headless=headless,
         args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--disable-infobars"],
         ignore_default_args=["--enable-automation"],

@@ -104,7 +104,7 @@ The `aislist` source is plain text with `!` comments, ~8400+ channels. Format co
 
 - `__init__.py` — re-exports all public names; thin browser wrappers
 - `cli.py` — `main()` entry point, argument parsing, all CLI command handlers
-- `config.py` — constants, file paths, selectors, `pick_viewport()`, `load_timing_config()`, logging setup (no package imports)
+- `config.py` — constants, file paths, selectors, `pick_viewport()`, `load_timing_config()`, `load_browser_config()`, logging setup (no package imports)
 - `state.py` — `load_state`, `save_state`, `write_attention`, `_had_attention`
 - `blocklist.py` — `resolve_source`, `parse_*_blocklist`, `normalize_handle`, `check_removals`
 - `scheduler.py` — `_parse_schedule_hours`, `schedule_cmd`, platform helpers
@@ -125,6 +125,7 @@ Key components:
 - **Version tracking**: At startup, the running version is compared to `state["current_version"]`; on change, the old value is rotated to `state["previous_version"]`. This makes `--revert` work regardless of whether the upgrade was automatic or manual. **Tested 2026-03-08**: manual upgrade 0.1.9→0.1.16→0.1.17, `--revert` correctly dropped back to 0.1.16, auto-upgrade was disabled automatically.
 - **Logging**: `RotatingFileHandler` — `run.log` caps at 1 MB with 5 backups (`run.log.1`–`run.log.5`).
 - **Rate limiting**: All interaction delays are jittered with `random.uniform()`. Defaults: 3–7s between actions, 30s pause every 25 channels (±20%), 1.0–2.5s scroll. All timing overridable via `~/.yt-dont-recommend/config.yaml` (`timing:` section). Per-session action cap of 75 by default; use `--no-limit` to remove it.
+- **Browser selection**: `_launch_context()` in `browser.py` tries `channel="chrome"` (system Chrome) first for authentic UA/Client Hints, falling back to bundled Chromium. Controlled by `browser.use_system_chrome` in `config.yaml` (default: `true`). `load_browser_config()` in `config.py` reads this setting.
 
 ### Clickbait Detection Module (`clickbait.py`)
 
