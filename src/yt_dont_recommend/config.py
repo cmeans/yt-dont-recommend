@@ -37,8 +37,13 @@ STATE_FILE = Path.home() / ".yt-dont-recommend" / "processed.json"
 # Log file
 LOG_FILE = Path.home() / ".yt-dont-recommend" / "run.log"
 
-# Default personal exclusion list — loaded automatically if present
-DEFAULT_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "exclude.txt"
+# Default personal exclusion lists — loaded automatically if present.
+# blocklist-exclude.txt: channels never blocked via --blocklist.
+# clickbait-exclude.txt: channels never evaluated for clickbait.
+# Legacy name (exclude.txt) is accepted for blocklist exclusions with a deprecation warning.
+DEFAULT_BLOCKLIST_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "blocklist-exclude.txt"
+DEFAULT_CLICKBAIT_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "clickbait-exclude.txt"
+_LEGACY_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "exclude.txt"
 
 # Delays (seconds) — be respectful to avoid rate limiting
 MIN_DELAY = 3.0
@@ -56,7 +61,7 @@ SELECTOR_WARN_AFTER = 3
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 
 # Version
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.
@@ -97,6 +102,14 @@ MENU_ITEM_SELECTOR = (
 TARGET_PHRASES = ("don't recommend", "dont recommend")
 
 
+# --- Helpers ---
+
+def _n(count: int, word: str) -> str:
+    """Return '{count} {word}' with correct plural — e.g. _n(1,'channel') → '1 channel',
+    _n(2,'channel') → '2 channels'. Works for all regular English nouns."""
+    return f"{count} {word if count == 1 else word + 's'}"
+
+
 # --- Logging Setup ---
 
 def setup_logging(verbose: bool = False):
@@ -107,9 +120,12 @@ def setup_logging(verbose: bool = False):
     )
     logging.basicConfig(
         level=level,
-        format="%(asctime)s [%(levelname)s] %(message)s",
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
             file_handler,
         ],
     )
+    # Suppress request logs from httpx/httpcore (used internally by ollama)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

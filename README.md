@@ -64,6 +64,36 @@ After `--login` your session is saved to `~/.yt-dont-recommend/browser-profile/`
 
 On the very first run the tool will print a quick-start reminder with the recommended next steps.
 
+### Clickbait detection extras
+
+`--clickbait` requires [Ollama](https://ollama.com) (a local LLM runtime) plus additional Python dependencies.
+
+**Step 1 — Install Ollama** by following the instructions at [ollama.com](https://ollama.com). Ollama must be running when `--clickbait` is used.
+
+**Step 2 — Pull the required model(s):**
+
+```bash
+# Title classification (required — fast, ~8s/title)
+ollama pull phi3.5
+
+# Thumbnail classification (optional — slow, ~65s/video; only needed if you enable it in config)
+ollama pull gemma3:4b
+```
+
+**Step 3 — Install the Python extras** the same way you installed the tool:
+
+**With uv:**
+```bash
+uv tool install 'yt-dont-recommend[clickbait]'
+```
+
+**With pipx:**
+```bash
+pipx install 'yt-dont-recommend[clickbait]'
+```
+
+For configuration (model selection, thresholds, thumbnail and transcript stages), see the [clickbait configuration file](clickbait-config.example.yaml) — copy it to `~/.yt-dont-recommend/clickbait-config.yaml` and edit to taste.
+
 ---
 
 ## Upgrading
@@ -174,7 +204,7 @@ Running without `--blocklist` or `--clickbait` prints help. Choose one or both:
 yt-dont-recommend --blocklist
 
 # Video-level: scan the feed for clickbait titles and click "Not interested"
-# (requires: pip install yt-dont-recommend[clickbait])
+# (requires clickbait extras — see below)
 yt-dont-recommend --clickbait
 
 # Both at once
@@ -202,7 +232,7 @@ yt-dont-recommend --blocklist --source https://example.com/blocklist.txt
 yt-dont-recommend --blocklist --limit 10
 
 # Protect specific channels from ever being blocked (overrides the default exclude file)
-yt-dont-recommend --blocklist --exclude ~/.yt-dont-recommend/exclude.txt
+yt-dont-recommend --blocklist --exclude ~/.yt-dont-recommend/blocklist-exclude.txt
 
 # Run in headless mode (no visible browser)
 yt-dont-recommend --blocklist --headless
@@ -228,33 +258,39 @@ yt-dont-recommend --reset-state
 yt-dont-recommend --list-sources
 ```
 
-## Exclusion List
+## Exclusion Lists
 
-If a community blocklist includes a channel you want to keep, add it to your personal exclusion file:
+There are two separate exclusion files, each serving a different purpose:
+
+| File | Purpose |
+|------|---------|
+| `~/.yt-dont-recommend/blocklist-exclude.txt` | Channels to never block via `--blocklist`, regardless of what community lists say |
+| `~/.yt-dont-recommend/clickbait-exclude.txt` | Channels to never evaluate for clickbait via `--clickbait` |
+
+Both are loaded automatically when present — no flag required. Both use the same plain-text format as blocklists and support inline `#` comments:
 
 ```
-~/.yt-dont-recommend/exclude.txt
-```
-
-This file is loaded automatically on every run — no flag required. The format is the same plain-text format as blocklists, and supports inline `#` comments:
-
-```
-# Channels I want to keep despite being on community lists
+# blocklist-exclude.txt — channels to keep despite appearing on community lists
 @SomeChannel
-@AnotherChannel  # keeping this one — it's a friend's channel
+@FriendsChannel  # friend's channel — keep it
+
+# clickbait-exclude.txt — channels whose titles should never be flagged
+@katmabu  # congressional campaign — want to see all content regardless of title framing
 ```
 
-To use a different file instead (or a remote URL), pass `--exclude`:
+To use a different file (or a remote URL) instead of the default:
 
 ```bash
-yt-dont-recommend --exclude /path/to/other-list.txt
+# Override blocklist exclusions
+yt-dont-recommend --blocklist --exclude /path/to/my-blocklist-exclusions.txt
+
+# Override clickbait exclusions
+yt-dont-recommend --clickbait --clickbait-exclude /path/to/my-clickbait-exclusions.txt
 ```
 
-```bash
-yt-dont-recommend --exclude https://example.com/my-exclusions.txt
-```
+Both flags also accept HTTPS URLs. Neither accepts built-in source names.
 
-`--exclude` does not accept built-in source names.
+> **Migrating from `exclude.txt`:** If you have an existing `~/.yt-dont-recommend/exclude.txt`, rename it to `blocklist-exclude.txt`. The old name still works but logs a deprecation warning.
 
 ## Subscription Protection
 
@@ -262,7 +298,7 @@ The tool automatically skips any channel you are subscribed to — even if it ap
 
 When a subscribed channel appears on the blocklist, a `WARNING` is logged and the event is recorded in state under `would_have_blocked`. This warning fires only once per channel (not on every run). Use `--stats` to see the full list.
 
-If a channel you subscribe to genuinely should be blocked, add it to your exclusion file (`~/.yt-dont-recommend/exclude.txt`) to suppress the warning, or unsubscribe and let the tool handle it on the next run.
+If a channel you subscribe to genuinely should be blocked, add it to your blocklist exclusion file (`~/.yt-dont-recommend/blocklist-exclude.txt`) to suppress the warning, or unsubscribe and let the tool handle it on the next run.
 
 ## Auto-Unblock (False Positive Correction)
 
@@ -510,6 +546,14 @@ To test against a specific channel instead of the default (`@YouTube`):
 ```bash
 yt-dont-recommend --check-selectors --test-channel @SomeChannel
 ```
+
+## Acknowledgments
+
+The clickbait detection feature was informed by:
+
+- **ThumbnailTruth** — Naveed, Uzmi & Qazi (2025). *ThumbnailTruth: A Multi-Modal LLM Approach for Detecting Misleading YouTube Thumbnails Across Diverse Cultural Settings.* [arXiv:2509.04714](https://arxiv.org/abs/2509.04714). Their multi-modal dataset and finding that frontier models achieve 93%+ accuracy on thumbnail-based clickbait detection shaped the design of the thumbnail classification stage.
+
+- **Visual Description Grounding** — The two-step thumbnail pipeline (describe what you see literally, then classify from that description) follows an established technique for reducing hallucination in vision-language models. By committing to a factual description before applying classification pressure, the model cannot rationalize a predetermined label by confabulating matching visual evidence.
 
 ## License
 

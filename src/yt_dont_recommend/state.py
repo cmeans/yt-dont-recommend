@@ -10,6 +10,8 @@ monkeypatch.setattr(ydr, "STATE_FILE", ...) works correctly in tests.
 import json
 import logging
 import subprocess
+
+log = logging.getLogger(__name__)
 import sys
 from datetime import datetime
 from urllib.request import urlopen, Request
@@ -76,7 +78,7 @@ def load_state() -> dict:
         # Schema version guard — warn if state was written by a newer binary
         file_sv = s.get("state_version", 0)
         if file_sv > STATE_VERSION:
-            logging.warning(
+            log.warning(
                 f"State file was written by a newer version of yt-dont-recommend "
                 f"(schema v{file_sv}, this binary expects v{STATE_VERSION}). "
                 "Some state fields may be ignored. Upgrade to restore full functionality."
@@ -147,9 +149,9 @@ def _ntfy_notify(topic: str, message: str) -> None:
         )
         with urlopen(req, timeout=10):
             pass
-        logging.debug("ntfy notification sent to topic %s", topic)
+        log.debug("ntfy notification sent to topic %s", topic)
     except Exception as exc:
-        logging.debug("ntfy notification failed (topic %s): %s", topic, exc)
+        log.debug("ntfy notification failed (topic %s): %s", topic, exc)
 
 
 def write_attention(message: str) -> None:
@@ -167,7 +169,7 @@ def write_attention(message: str) -> None:
     timestamp = datetime.now().isoformat(timespec="seconds")
     with open(ATTENTION_FILE, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
-    logging.warning(f"ATTENTION: {message}")
+    log.warning(f"ATTENTION: {message}")
     _desktop_notify(message)
     state = load_state()
     topic = state.get("notify_topic")

@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import re
+
 import time
 import urllib.request
 from copy import deepcopy
@@ -30,7 +31,7 @@ log = logging.getLogger(__name__)
 _DEFAULT_CONFIG: dict = {
     "video": {
         "title": {
-            "model": {"name": "phi3.5", "params": {}},
+            "model": {"name": "llama3.1:8b", "params": {}},
             "threshold": 0.75,
             "ambiguous_low": 0.4,
         },
@@ -69,40 +70,202 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _apply_prompt(template: str, **vars: str) -> str:
+    """Substitute {var} placeholders in *template*.
+
+    Uses simple string replacement rather than str.format() so that literal
+    JSON braces in the prompt (e.g. {"is_clickbait": true}) are left untouched.
+    Only the known variable names passed as kwargs are replaced.
+    """
+    result = template
+    for key, value in vars.items():
+        result = result.replace(f"{{{key}}}", str(value))
+    return result
+
+
 _DEFAULT_CONFIG_YAML = """\
 # yt-dont-recommend clickbait detection config
-# Generated on first run. Edit to tune behaviour.
+# Generated on first run. Edit to tune behavior.
 # Full docs: https://github.com/cmeans/yt-dont-recommend
+#
+# Prompt placeholders:
+#   {title}       — video title
+#   {description} — thumbnail visual description (thumbnail classify prompt only)
+#   {transcript}  — transcript text (transcript prompt only)
+#   {chars}       — transcript character count (transcript prompt only)
 
 video:
   title:
-    # Local LLM model for title classification (requires ollama)
-    model: {name: phi3.5, params: {}}
+    # Benchmarked models (title classification):
+    #   phi3.5       — 93% accuracy, ~8s/title, 0 parse failures. Fast but over-flags
+    #                  educational and news titles; raise threshold to compensate.
+    #   llama3.1:8b  — better calibrated for nuanced judgment; ~6-8s/title in
+    #                  practice (hardware-dependent). Recommended for accuracy.
+    #   llama3.2:1b  — AVOID: flags everything indiscriminately (27% accuracy in tests).
+    model:
+      name: llama3.1:8b
+      params: {}
     # Score >= threshold → flagged as clickbait
+    # 0.75 is calibrated for llama3.1:8b; phi3.5 users should raise to 0.85
     threshold: 0.75
     # Score in [ambiguous_low, threshold) → escalate to thumbnail (if enabled)
     ambiguous_low: 0.4
+    prompt: |
+      You are a YouTube clickbait detector. Classify the video title below.
+
+      CLICKBAIT signals — title manipulates rather than informs:
+      - Withholds key information to force a click ("You won't believe...", "This will SHOCK you", "Here's what happened", "they got caught")
+      - Vague subject or mystery framing with no informational content ("Something MASSIVE...", "This Changes Everything", "What really happened")
+      - Manufactured urgency or outrage with no specific informational payload
+      - Misleading framing that misrepresents what the video actually delivers
+      - Excessive ALL-CAPS used for emotional manipulation across most of the title (not just one or two emphasis words)
+
+      NOT clickbait — default to false for these, even if the topic is alarming or dramatic:
+      - News headlines and news alerts, even on alarming topics — the alarm is in the event, not manufactured by the title ("Spring break travel alert", "Missiles visible in night sky")
+      - Titles quoting or paraphrasing a named person or named source, even when the quote sounds alarming ("Oil expert warns of 'nightmare scenario'", "Senator says X")
+      - Factual or educational questions, even if the topic sounds dramatic ("How Black Holes Die", "Firing Guns in Space")
+      - Named technical subjects, proper nouns, or specific things described directly ("Yamato Wave Motion Gun", "Apollo 11 Descent Engine")
+      - Comparison or "vs" titles that directly state their subject
+      - Opinion or analysis pieces that announce their argument up front ("Why X isn't working", "The Real Reason Y")
+      - Titles that state exactly what the video covers without withholding information
+
+      Confidence guide — use the full scale, not just 0.10 and 0.80:
+      - 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
+      - 0.85: Clear clickbait signal — strong manipulation with minimal information ("Something MASSIVE Entered...", "STUNS Everyone SILENT")
+      - 0.75: Probably clickbait — sensational framing but some real information present
+      - 0.30: Mild sensational wording but probably honest ("The Biggest Flaw in Starship Design", "Why Batman Looks Like a Billion Bucks")
+      - 0.10: Clearly not clickbait — factual, descriptive, newsworthy, or directly named subject
+
+      When in doubt, default to NOT clickbait.
+
+      Title: {title}
+
+      Reply with raw JSON only — no code fences, no explanation outside the JSON:
+      {"is_clickbait": true, "confidence": 0.9, "reasoning": "one sentence"}
+      or
+      {"is_clickbait": false, "confidence": 0.1, "reasoning": "one sentence"}
 
   thumbnail:
     # Thumbnail classification is slow (~65s/video) — disabled by default
     enabled: false
-    model: {name: gemma3:4b, params: {}}
+    # Must be a multimodal (vision) Ollama model. Benchmarked models:
+    #   gemma3:4b          — 100% accuracy on 6-video test set with two_step: true, ~65s/video.
+    #                        Recommended. Always use two_step: true with this model.
+    #   llava:7b           — tested; over-flagged at 33% accuracy. Not recommended.
+    #   llama3.2-vision    — newer vision model; not yet benchmarked on this task.
+    model:
+      name: gemma3:4b
+      params: {}
     threshold: 0.75
     # two_step: use Visual Description Grounding (recommended, more accurate)
     two_step: true
     timeout: 90
     time_budget: 120
+    # prompt_describe: step 1 of two_step — describe the thumbnail literally
+    prompt_describe: |
+      Look carefully at this image and report only what you literally see.
+
+      Structure your answer exactly like this:
+
+      PEOPLE: [count and each person's facial expression — use precise words: neutral, smiling, serious, open-mouthed, wide-eyed, exaggerated-shock, etc.]
+      TEXT: [quote every word of visible text exactly, or "none"]
+      GRAPHICS: [arrows, circles, highlight boxes, split-panels, badges — or "none"]
+      COMPOSITION: [brief factual note on layout, background color, any staging]
+    # prompt_classify: step 2 of two_step — classify from the visual description
+    prompt_classify: |
+      You are a YouTube clickbait detector.
+
+      Title (for context only — do not analyze the title wording): {title}
+
+      Thumbnail visual description:
+      {description}
+
+      Your job is to find clickbait signals in the VISUAL DESCRIPTION only.
+      The title is provided so you can check if the thumbnail mismatches the topic —
+      not as a source of clickbait signals itself.
+
+      STRONG signals — flag HIGH (confidence >= 0.85) only if the description explicitly shows:
+        S1. Exaggerated-shock expression: gaping mouth, wildly wide eyes in a clearly PERFORMED/STAGED way.
+            NOT: smiling, serious, neutral, natural surprise, or a character in a dramatic scene.
+        S2. Sensational TEXT overlay: quoted words like "SHOCKING", "EXPOSED", "YOU WON'T BELIEVE",
+            "can you spot the fake?", "GONE WRONG", etc. S2 applies ONLY to text — never to a person's expression.
+        S3. Graphic manipulation: red circles, arrows, or highlight boxes explicitly pointed at something
+            to manufacture alarm.
+        S4. Side-by-side split panel: two DISTINCT images placed next to each other for comparison.
+            NOT: a person in front of a busy or colorful background, a cluttered set, multiple posters on a wall.
+
+      DEFAULT to LOW (is_clickbait: false, confidence <= 0.30) when:
+        - No S1/S2/S3/S4 signal is explicitly present in the description
+        - The only "drama" comes from the subject matter itself (a rocket, a galaxy, a black hole)
+        - A person is present but their expression is neutral, smiling, or serious
+        - Background is colorful, dark, or dramatic but has no text overlay or graphic manipulation
+        - A scientific visualization (sphere, nebula, planet, diagram) matches the topic of the title
+
+      If you cannot point to a specific S1/S2/S3/S4 item in the description, output is_clickbait: false.
+
+      Reply with raw JSON only — no code fences, no explanation outside the JSON:
+      {"is_clickbait": true, "confidence": 0.9, "reasoning": "S2: thumbnail shows text overlay reading X"}
+      or
+      {"is_clickbait": false, "confidence": 0.1, "reasoning": "no S1-S4 signals found"}
+    # prompt_single: used when two_step is false
+    prompt_single: |
+      You are a YouTube clickbait detector. Classify this video thumbnail.
+
+      Title: {title}
+
+      Clickbait signals to look for:
+      - Shocked, exaggerated, or distressed facial expressions (S1)
+      - Bold text overlays making sensational claims (S2)
+      - Red circles, arrows, or highlight boxes (S3)
+      - Side-by-side comparisons designed to provoke curiosity (S4)
+
+      Reply with raw JSON only — no code fences, no explanation outside the JSON:
+      {"is_clickbait": true, "confidence": 0.9, "reasoning": "S1: exaggerated expression"}
+      or
+      {"is_clickbait": false, "confidence": 0.1, "reasoning": "no clickbait signals"}
 
   transcript:
     # Transcript classification — disabled by default
     enabled: false
-    model: {name: phi3.5, params: {}}
+    # Benchmarked models (transcript classification):
+    #   phi3.5       — default; not yet end-to-end benchmarked for this task.
+    #   llama3.1:8b  — recommended for longer-text comprehension; better at
+    #                  judging whether a transcript matches a title's premise.
+    model:
+      name: phi3.5
+      params: {}
     threshold: 0.75
     # no_transcript: what to do when a transcript isn't available
     #   pass       — treat as not clickbait
     #   flag       — treat as clickbait
     #   title-only — rely on title result only
     no_transcript: pass
+    prompt: |
+      You are a YouTube clickbait detector resolving an ambiguous title.
+
+      The title was flagged as potentially clickbait. Use the transcript excerpt to
+      determine whether the title's framing is honest.
+
+      Title: {title}
+
+      Transcript excerpt (first ~{chars} chars):
+      {transcript}
+
+      Decision rules:
+      - If the transcript covers the topic the title claims → the title is HONEST
+        → lower your confidence that it is clickbait (is_clickbait: false)
+      - If the transcript content clearly mismatches the title's promise or framing
+        → the title is MISLEADING → raise confidence (is_clickbait: true)
+      - If the transcript is substantive and on-topic, that is strong evidence
+        AGAINST clickbait even if the title has mild sensational wording
+
+      The transcript is evidence of what the video actually delivers. If it delivers
+      on the title's premise, that is NOT clickbait.
+
+      Reply with raw JSON only — no code fences, no explanation outside the JSON:
+      {"is_clickbait": true, "confidence": 0.9, "reasoning": "transcript does not match title because ..."}
+      or
+      {"is_clickbait": false, "confidence": 0.1, "reasoning": "transcript confirms title's topic"}
 """
 
 
@@ -224,13 +387,13 @@ PEOPLE: [count and each person's facial expression — use precise words: \
 neutral, smiling, serious, open-mouthed, wide-eyed, exaggerated-shock, etc.]
 TEXT: [quote every word of visible text exactly, or "none"]
 GRAPHICS: [arrows, circles, highlight boxes, split-panels, badges — or "none"]
-COMPOSITION: [brief factual note on layout, background colour, any staging]
+COMPOSITION: [brief factual note on layout, background color, any staging]
 """
 
 _THUMB_CLASSIFY_PROMPT = """\
 You are a YouTube clickbait detector.
 
-Title (for context only — do not analyse the title wording): {title}
+Title (for context only — do not analyze the title wording): {title}
 
 Thumbnail visual description:
 {description}
@@ -250,7 +413,7 @@ explicitly shows:
   S3. Graphic manipulation: red circles, arrows, or highlight boxes \
       explicitly pointed at something to manufacture alarm.
   S4. Side-by-side split panel: two DISTINCT images placed next to each \
-      other for comparison. NOT: a person in front of a busy or colourful \
+      other for comparison. NOT: a person in front of a busy or colorful \
       background, a cluttered set, multiple posters on a wall.
 
 DEFAULT to LOW (is_clickbait: false, confidence <= 0.30) when:
@@ -258,18 +421,18 @@ DEFAULT to LOW (is_clickbait: false, confidence <= 0.30) when:
   - The only "drama" comes from the subject matter itself \
     (a rocket, a galaxy, a black hole, a character from a show)
   - A person is present but their expression is neutral, smiling, or serious
-  - Background is colourful, dark, or dramatic but has no text overlay or \
+  - Background is colorful, dark, or dramatic but has no text overlay or \
     graphic manipulation
-  - A scientific visualisation (sphere, nebula, planet, diagram) matches \
+  - A scientific visualization (sphere, nebula, planet, diagram) matches \
     the topic of the title
 
 If you cannot point to a specific S1/S2/S3/S4 item in the description, \
 output is_clickbait: false.
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
-{{"is_clickbait": true, "confidence": 0.9, "reasoning": "S2: thumbnail shows text overlay reading X"}}
+{"is_clickbait": true, "confidence": 0.9, "reasoning": "S2: thumbnail shows text overlay reading X"}
 or
-{{"is_clickbait": false, "confidence": 0.1, "reasoning": "no S1-S4 signals found"}}
+{"is_clickbait": false, "confidence": 0.1, "reasoning": "no S1-S4 signals found"}
 """
 
 _THUMB_SINGLE_PROMPT = """\
@@ -284,9 +447,9 @@ Clickbait signals to look for:
 - Side-by-side comparisons designed to provoke curiosity (S4)
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
-{{"is_clickbait": true, "confidence": 0.9, "reasoning": "S1: exaggerated expression"}}
+{"is_clickbait": true, "confidence": 0.9, "reasoning": "S1: exaggerated expression"}
 or
-{{"is_clickbait": false, "confidence": 0.1, "reasoning": "no clickbait signals"}}
+{"is_clickbait": false, "confidence": 0.1, "reasoning": "no clickbait signals"}
 """
 
 _TRANSCRIPT_PROMPT = """\
@@ -312,9 +475,9 @@ The transcript is evidence of what the video actually delivers. If it delivers \
 on the title's premise, that is NOT clickbait.
 
 Reply with raw JSON only — no code fences, no explanation outside the JSON:
-{{"is_clickbait": true, "confidence": 0.9, "reasoning": "transcript does not match title because ..."}}
+{"is_clickbait": true, "confidence": 0.9, "reasoning": "transcript does not match title because ..."}
 or
-{{"is_clickbait": false, "confidence": 0.1, "reasoning": "transcript confirms title's topic"}}
+{"is_clickbait": false, "confidence": 0.1, "reasoning": "transcript confirms title's topic"}
 """
 
 _TRANSCRIPT_CHAR_LIMIT = 6000
@@ -411,7 +574,7 @@ def classify_title(video_id: str, title: str, cfg: dict) -> dict:
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
 
-    prompt = _TITLE_PROMPT.format(title=title)
+    prompt = _apply_prompt(title_cfg.get("prompt") or _TITLE_PROMPT, title=title)
     t0 = time.monotonic()
     try:
         raw = _ollama_chat(model, prompt, params=params)
@@ -462,19 +625,21 @@ def classify_thumbnail(video_id: str, title: str, cfg: dict) -> dict:
     t0 = time.monotonic()
     try:
         if two_step:
+            describe_tmpl  = thumb_cfg.get("prompt_describe")  or _THUMB_DESCRIBE_PROMPT
+            classify_tmpl  = thumb_cfg.get("prompt_classify")  or _THUMB_CLASSIFY_PROMPT
             description = _ollama_chat(
-                model, _THUMB_DESCRIBE_PROMPT, img_b64=img_b64,
+                model, describe_tmpl, img_b64=img_b64,
                 params=params, timeout=timeout,
             )
-            classify_prompt = _THUMB_CLASSIFY_PROMPT.format(
-                title=title,
-                description=description.strip(),
+            classify_prompt = _apply_prompt(
+                classify_tmpl, title=title, description=description.strip(),
             )
             raw = _ollama_chat(model, classify_prompt, params=params, timeout=timeout)
             result = extract_json(raw)
             result["_description"] = description.strip()[:200]
         else:
-            prompt = _THUMB_SINGLE_PROMPT.format(title=title)
+            single_tmpl = thumb_cfg.get("prompt_single") or _THUMB_SINGLE_PROMPT
+            prompt = _apply_prompt(single_tmpl, title=title)
             raw    = _ollama_chat(model, prompt, img_b64=img_b64,
                                   params=params, timeout=timeout)
             result = extract_json(raw)
@@ -544,10 +709,9 @@ def classify_transcript(video_id: str, title: str, cfg: dict) -> dict:
             "tx_status":    status,
         }
 
-    prompt = _TRANSCRIPT_PROMPT.format(
-        title=title,
-        transcript=transcript,
-        chars=len(transcript),
+    prompt = _apply_prompt(
+        tx_cfg.get("prompt") or _TRANSCRIPT_PROMPT,
+        title=title, transcript=transcript, chars=str(len(transcript)),
     )
     t0 = time.monotonic()
     try:

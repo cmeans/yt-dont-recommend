@@ -218,7 +218,7 @@ class TestClassifyTitle:
         ):
             result = classify_title("vid1", "How to bake bread", _cfg())
         assert result["stage"] == "title"
-        assert result["model"] == "phi3.5"
+        assert result["model"] == "llama3.1:8b"
         assert result["video_id"] == "vid1"
         assert "elapsed" in result
 

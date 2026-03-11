@@ -11,6 +11,8 @@ patch("yt_dont_recommend.fetch_remote") works correctly in tests.
 import json
 import logging
 import sys
+
+log = logging.getLogger(__name__)
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen, Request
@@ -112,7 +114,7 @@ def parse_json_blocklist(raw: str) -> list[str]:
                 elif key.startswith("@"):
                     channels.append(key)
     except json.JSONDecodeError:
-        logging.warning("Failed to parse as JSON; falling back to line-by-line text parsing")
+        log.warning("Failed to parse as JSON; falling back to line-by-line text parsing")
         channels = parse_text_blocklist(raw)
     return channels
 
@@ -144,33 +146,33 @@ def resolve_source(source: str, quiet: bool = False) -> list[str]:
 
     if source in BUILTIN_SOURCES:
         info = BUILTIN_SOURCES[source]
-        logging.info(f"Fetching built-in source '{source}' ({info['name']}): {info['url']}")
+        log.info(f"Fetching built-in source '{source}' ({info['name']}): {info['url']}")
         raw = _fetch(info["url"])
         channels = parse_text_blocklist(raw) if info["format"] == "text" else parse_json_blocklist(raw)
-        logging.info(f"Fetched {len(channels)} channels from {info['name']}")
+        log.info(f"Fetched {len(channels)} channels from {info['name']}")
         return channels
 
     if source.startswith("http://") or source.startswith("https://"):
         if not quiet:
-            logging.info(f"Fetching remote blocklist: {source}")
+            log.info(f"Fetching remote blocklist: {source}")
         raw = _fetch(source)
         stripped = raw.lstrip()
         channels = parse_json_blocklist(raw) if stripped.startswith(("{", "[")) else parse_text_blocklist(raw)
         if not quiet:
-            logging.info(f"Fetched {len(channels)} channels from {source}")
+            log.info(f"Fetched {len(channels)} channels from {source}")
         return channels
 
     path = Path(source).expanduser().resolve()
     if not path.exists():
-        logging.error(f"File not found: {path}")
+        log.error(f"File not found: {path}")
         sys.exit(1)
     if not quiet:
-        logging.info(f"Reading local blocklist: {path}")
+        log.info(f"Reading local blocklist: {path}")
     raw = path.read_text(encoding="utf-8")
     stripped = raw.lstrip()
     channels = parse_json_blocklist(raw) if stripped.startswith(("{", "[")) else parse_text_blocklist(raw)
     if not quiet:
-        logging.info(f"Read {len(channels)} channels from {path.name}")
+        log.info(f"Read {len(channels)} channels from {path.name}")
     return channels
 
 
@@ -226,13 +228,13 @@ def check_removals(state: dict, current_channels: list[str],
                 pass
             to_unblock.append(channel)
             if other_sources:
-                logging.warning(
+                log.warning(
                     f"*** UNBLOCKING {channel} — dropped from '{source}'. "
                     f"NOTE: still present in {other_sources} but unblocking "
                     f"because --unblock-policy=any."
                 )
             else:
-                logging.warning(
+                log.warning(
                     f"*** UNBLOCKING {channel} — removed from '{source}' blocklist "
                     f"(possible false positive correction by list maintainer)."
                 )
@@ -240,7 +242,7 @@ def check_removals(state: dict, current_channels: list[str],
         else:
             # policy == "all" and other sources still assert the block
             info["sources"] = other_sources
-            logging.info(
+            log.info(
                 f"NOTE: {channel} was dropped from '{source}' but is still "
                 f"blocked by: {other_sources}. Will unblock when removed from all sources."
             )

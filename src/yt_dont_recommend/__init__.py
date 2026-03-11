@@ -53,6 +53,8 @@ import argparse
 import json
 import logging
 import secrets
+
+log = logging.getLogger(__name__)
 import shutil
 import subprocess
 import sys
@@ -68,7 +70,9 @@ from .config import (
     PROFILE_DIR,
     STATE_FILE,
     LOG_FILE,
-    DEFAULT_EXCLUDE_FILE,
+    DEFAULT_BLOCKLIST_EXCLUDE_FILE,
+    DEFAULT_CLICKBAIT_EXCLUDE_FILE,
+    _LEGACY_EXCLUDE_FILE,
     MIN_DELAY,
     MAX_DELAY,
     PAGE_LOAD_WAIT,
@@ -89,6 +93,7 @@ from .config import (
     _LAUNCHD_PLIST,
     _CRON_MARKER,
     setup_logging,
+    _n,
 )
 
 # --- Re-exports from state ---
@@ -148,6 +153,7 @@ def process_channels(channel_sources: dict[str, str],
                      limit: int | None = None,
                      headless: bool = False,
                      clickbait_cfg: dict | None = None,
+                     exclude_set: set | None = None,
                      _browser: tuple | None = None) -> None:
     """
     Scan the YouTube home feed once and block every channel in channel_sources.
@@ -158,6 +164,7 @@ def process_channels(channel_sources: dict[str, str],
     state: loaded state dict; loaded fresh if None.
     clickbait_cfg: loaded clickbait config dict; when set, also classifies
         non-listed channels and blocks those with flagged video titles.
+    exclude_set: lowercased channel handles to skip for clickbait evaluation.
     """
     from .browser import process_channels as _process_channels
     return _process_channels(
@@ -168,6 +175,7 @@ def process_channels(channel_sources: dict[str, str],
         limit=limit,
         headless=headless,
         clickbait_cfg=clickbait_cfg,
+        exclude_set=exclude_set,
         _browser=_browser,
     )
 
@@ -298,18 +306,18 @@ def do_auto_upgrade(state: dict) -> bool:
     elif installer == "pipx":
         cmd = ["pipx", "upgrade", "yt-dont-recommend"]
     else:
-        logging.warning(
+        log.warning(
             "Auto-upgrade: cannot detect package manager (uv or pipx). "
             "Upgrade manually: uv tool upgrade yt-dont-recommend"
         )
         return False
 
-    logging.info(f"Auto-upgrading yt-dont-recommend via {installer}...")
+    log.info(f"Auto-upgrading yt-dont-recommend via {installer}...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
         state["previous_version"] = current
         save_state(state)
-        logging.info("Upgrade complete — new version takes effect on next run.")
+        log.info("Upgrade complete — new version takes effect on next run.")
         return True
     else:
         write_attention(f"Auto-upgrade failed: {result.stderr.strip()}")
@@ -475,6 +483,16 @@ def do_uninstall() -> None:
 
 # --- Main ---
 
+def _clickbait_install_cmd() -> str:
+    """Return the install command appropriate for how this tool was installed."""
+    path_str = str(Path(sys.argv[0]).resolve()).lower()
+    if "uv/tools" in path_str or "uv\\tools" in path_str:
+        return "uv tool install 'yt-dont-recommend[clickbait]'"
+    if "pipx" in path_str:
+        return "pipx install 'yt-dont-recommend[clickbait]'"
+    return "pip install 'yt-dont-recommend[clickbait]'"
+
+
 def main():
     builtin_keys = ", ".join(BUILTIN_SOURCES.keys())
 
@@ -515,9 +533,20 @@ def main():
         default=None,
         metavar="SOURCE",
         help=(
-            f"Channels to never block, regardless of the blocklist. "
+            f"Channels to never block via --blocklist, regardless of the source list. "
             f"Accepts a local file path or HTTP/HTTPS URL in the same plain-text format as --source. "
-            f"If not specified, {DEFAULT_EXCLUDE_FILE} is loaded automatically if it exists."
+            f"If not specified, {DEFAULT_BLOCKLIST_EXCLUDE_FILE} is loaded automatically if it exists "
+            f"(legacy: {_LEGACY_EXCLUDE_FILE} is also accepted with a deprecation warning)."
+        ),
+    )
+    parser.add_argument(
+        "--clickbait-exclude",
+        default=None,
+        metavar="SOURCE",
+        help=(
+            f"Channels to never evaluate for clickbait, regardless of title framing. "
+            f"Accepts a local file path or HTTP/HTTPS URL in the same plain-text format as --source. "
+            f"If not specified, {DEFAULT_CLICKBAIT_EXCLUDE_FILE} is loaded automatically if it exists."
         ),
     )
     parser.add_argument("--headless", action="store_true",
@@ -749,9 +778,9 @@ def main():
     if args.reset_state:
         if STATE_FILE.exists():
             STATE_FILE.unlink()
-            logging.info("State reset.")
+            log.info("State reset.")
         else:
-            logging.info("No state file to reset.")
+            log.info("No state file to reset.")
         return
 
     if args.login:
@@ -775,7 +804,7 @@ def main():
     latest = check_for_update(state)
     if latest:
         current = _get_current_version()
-        logging.info(f"New version available: {latest} (you have {current}) — run --check-update for details")
+        log.info(f"New version available: {latest} (you have {current}) — run --check-update for details")
         if state.get("auto_upgrade"):
             do_auto_upgrade(state)
         save_state(state)
@@ -795,29 +824,42 @@ def main():
         else:
             sources = [s.strip() for s in args.source.split(",")]
 
-        # Build exclusion set once (shared across all sources)
-        exclude_source = args.exclude or (str(DEFAULT_EXCLUDE_FILE) if DEFAULT_EXCLUDE_FILE.exists() else None)
+        # Build blocklist exclusion set
+        if args.exclude:
+            blocklist_exclude_source = args.exclude
+            blocklist_exclude_label = "--exclude"
+        elif DEFAULT_BLOCKLIST_EXCLUDE_FILE.exists():
+            blocklist_exclude_source = str(DEFAULT_BLOCKLIST_EXCLUDE_FILE)
+            blocklist_exclude_label = f"default exclude file ({DEFAULT_BLOCKLIST_EXCLUDE_FILE})"
+        elif _LEGACY_EXCLUDE_FILE.exists():
+            blocklist_exclude_source = str(_LEGACY_EXCLUDE_FILE)
+            blocklist_exclude_label = f"legacy exclude file ({_LEGACY_EXCLUDE_FILE})"
+            log.warning(
+                f"{_LEGACY_EXCLUDE_FILE} is deprecated — rename it to {DEFAULT_BLOCKLIST_EXCLUDE_FILE}"
+            )
+        else:
+            blocklist_exclude_source = None
+            blocklist_exclude_label = None
         exclude_set: set[str] = set()
-        if exclude_source:
-            exclude_set = {c.lower() for c in resolve_source(exclude_source, quiet=True)}
-            label = "--exclude" if args.exclude else f"default exclude file ({DEFAULT_EXCLUDE_FILE})"
-            logging.info(f"Loaded {len(exclude_set)} exclusion(s) via {label}")
+        if blocklist_exclude_source:
+            exclude_set = {c.lower() for c in resolve_source(blocklist_exclude_source, quiet=True)}
+            log.info(f"Loaded {_n(len(exclude_set), 'blocklist exclusion')} via {blocklist_exclude_label}")
 
         for source in sources:
             if len(sources) > 1:
-                logging.info(f"--- Source: {source} ---")
+                log.info(f"--- Source: {source} ---")
             try:
                 channels = resolve_source(source)
             except RuntimeError as e:
-                logging.error(f"Could not load source '{source}': {e} — skipping.")
+                log.error(f"Could not load source '{source}': {e} — skipping.")
                 continue
 
             # Track source size and notify on growth
             sizes = state.setdefault("source_sizes", {})
             prev = sizes.get(source)
             if prev is not None and len(channels) > prev:
-                logging.info(
-                    f"*** Blocklist '{source}' grew by {len(channels) - prev} channel(s) "
+                log.info(
+                    f"*** Blocklist '{source}' grew by {_n(len(channels) - prev, 'channel')} "
                     f"({prev} → {len(channels)}) since last run"
                 )
             sizes[source] = len(channels)
@@ -825,7 +867,7 @@ def main():
             if exclude_set:
                 before = len(channels)
                 channels = [c for c in channels if c.lower() not in exclude_set]
-                logging.info(f"Excluded {before - len(channels)} channel(s) ({len(channels)} remaining)")
+                log.info(f"Excluded {_n(before - len(channels), 'channel')} ({len(channels)} remaining)")
 
             # Per-source removal detection (no browser required)
             to_unblock = check_removals(state, channels, source, args.unblock_policy)
@@ -840,7 +882,7 @@ def main():
                     channel_sources[ch] = source
                     new_for_source += 1
             already_done = sum(1 for ch in channels if ch in processed_set)
-            logging.info(
+            log.info(
                 f"{len(channels)} channels in blocklist, "
                 f"{already_done} already blocked, "
                 f"{new_for_source} added to scan queue"
@@ -852,23 +894,62 @@ def main():
             if ch not in all_unblocks:
                 all_unblocks.append(ch)
         if pending:
-            logging.info(
-                f"Retrying {len(pending)} pending unblock(s) from a previous run: {list(pending)}"
+            log.info(
+                f"Retrying {_n(len(pending), 'pending unblock')} from a previous run: {list(pending)}"
             )
 
         save_state(state)  # persist source_sizes before opening browser
 
         if len(sources) > 1 and (channel_sources or all_unblocks):
-            logging.info(f"--- Processing {len(sources)} source(s) ---")
+            log.info(f"--- Processing {_n(len(sources), 'source')} ---")
 
     clickbait_cfg = None
     if run_clickbait:
+        try:
+            import ollama as _  # noqa: F401
+        except ImportError:
+            log.error(
+                "--clickbait requires additional dependencies. Install with:\n"
+                f"  {_clickbait_install_cmd()}"
+            )
+            return
+        log.info("Clickbait detection enabled.")
         from .clickbait import load_config as _load_clickbait_config
         clickbait_cfg = _load_clickbait_config()
-        logging.info("Clickbait detection enabled.")
+        _v = clickbait_cfg["video"]
+        _thumb = _v["thumbnail"]
+        _trans = _v["transcript"]
+        _thumb_str = (
+            f"{_thumb['model']['name']} threshold={_thumb['threshold']}"
+            if _thumb["enabled"] else "disabled"
+        )
+        _trans_str = (
+            f"{_trans['model']['name']} threshold={_trans['threshold']}"
+            if _trans["enabled"] else "disabled"
+        )
+        log.info(
+            f"Clickbait config: title={_v['title']['model']['name']} "
+            f"threshold={_v['title']['threshold']} | "
+            f"thumbnail={_thumb_str} | transcript={_trans_str}"
+        )
+
+    # Build clickbait exclusion set (independent of blocklist exclusions)
+    if args.clickbait_exclude:
+        clickbait_exclude_source = args.clickbait_exclude
+        clickbait_exclude_label = "--clickbait-exclude"
+    elif DEFAULT_CLICKBAIT_EXCLUDE_FILE.exists():
+        clickbait_exclude_source = str(DEFAULT_CLICKBAIT_EXCLUDE_FILE)
+        clickbait_exclude_label = f"default clickbait exclude file ({DEFAULT_CLICKBAIT_EXCLUDE_FILE})"
+    else:
+        clickbait_exclude_source = None
+        clickbait_exclude_label = None
+    clickbait_exclude_set: set[str] = set()
+    if clickbait_exclude_source:
+        clickbait_exclude_set = {c.lower() for c in resolve_source(clickbait_exclude_source, quiet=True)}
+        log.info(f"Loaded {_n(len(clickbait_exclude_set), 'clickbait exclusion')} via {clickbait_exclude_label}")
 
     if not channel_sources and not all_unblocks and clickbait_cfg is None:
-        logging.info("Nothing to do.")
+        log.info("Nothing to do.")
     else:
         from .browser import open_browser, close_browser
         browser_handle = open_browser(headless=args.headless)
@@ -883,6 +964,7 @@ def main():
                 limit=args.limit,
                 headless=args.headless,
                 clickbait_cfg=clickbait_cfg,
+                exclude_set=clickbait_exclude_set or None,
                 _browser=browser_handle,
             )
         finally:

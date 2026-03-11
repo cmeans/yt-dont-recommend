@@ -61,7 +61,7 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== Install ==="
-uv tool install --force "$WHEEL" --quiet
+uv tool install --force "$WHEEL" --with ollama --with pyyaml --with youtube-transcript-api --quiet
 ok "uv tool install succeeded"
 
 # ---------------------------------------------------------------------------

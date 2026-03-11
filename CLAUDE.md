@@ -1,5 +1,13 @@
 # CLAUDE.md — Project Context for Claude Code
 
+## Session Management (READ THIS FIRST)
+
+**If the user says `/clear` or asks to clear the conversation mid-task:**
+Warn them: "This will wipe the conversation thread. Suggest `/compact` instead unless you want a genuine fresh start. Any unsaved in-progress work will be lost."
+
+**`/compact`** — use when context is filling up. Summarizes and continues. Safe.
+**`/clear`** — wipes everything. Only appropriate for a genuine fresh start.
+
 ## What This Is
 
 A Python/Playwright script that bulk-trains a YouTube account's recommendation algorithm by automating the "Don't recommend channel" action against channel blocklists. Ships with community-maintained AI slop blocklists, but supports any blocklist for any reason.
@@ -237,7 +245,8 @@ def fetch_subscriptions(page) -> set[str]:
 | `--login` | Open browser for Google account authentication |
 | `--blocklist` | Run channel-level "Don't recommend channel" blocking. **Required** to enable blocklist mode; running without `--blocklist` or `--clickbait` shows help. |
 | `--source` | Blocklist source(s) to use with `--blocklist`. Built-in names (comma-separated), local file path, or HTTP(S) URL. Defaults to all built-in sources. |
-| `--exclude` | Exclusion list: local file path or HTTP(S) URL (not built-in names) |
+| `--exclude` | Channels to never block via `--blocklist`. Local file path or HTTP(S) URL. Auto-loads `~/.yt-dont-recommend/blocklist-exclude.txt` (legacy: `exclude.txt` accepted with deprecation warning) |
+| `--clickbait-exclude` | Channels to never evaluate for clickbait. Local file path or HTTP(S) URL. Auto-loads `~/.yt-dont-recommend/clickbait-exclude.txt` |
 | `--limit N` | Stop after N channels |
 | `--dry-run` | Show what would be processed without acting (combine with `--blocklist` or `--clickbait`) |
 | `--headless` | Run without a visible browser window |
@@ -315,6 +324,17 @@ Automating UI interactions violates YouTube's Terms of Service. This is for pers
 - Python 3.x with `.venv` in project root
 - Playwright: `pip install playwright && playwright install chromium` (inside venv)
 - Git remote: `https://github.com/cmeans/yt-dont-recommend.git` (HTTPS; SSH had timeout issues)
+
+## Research Sources & Attribution Policy
+
+**Policy**: Whenever any external resource — paper, article, blog post, Stack Overflow answer, dataset, technique, tool, or anything else — materially informs a design decision, implementation, or prompt, log it here before the session ends. This applies broadly, not just to academic or AI-related work. We do not use other people's work without credit. Update README.md Acknowledgments where appropriate.
+
+### Logged sources
+
+| Source | Used for | Citation |
+|--------|----------|----------|
+| ThumbnailTruth | Thumbnail clickbait detection design; established that multi-modal LLMs achieve 93%+ accuracy combining visual + textual signals; informed thumbnail classification stage | Naveed, Uzmi & Qazi. *ThumbnailTruth: A Multi-Modal LLM Approach for Detecting Misleading YouTube Thumbnails Across Diverse Cultural Settings.* arXiv:2509.04714, Sep 2025. https://arxiv.org/abs/2509.04714 |
+| Visual Description Grounding | Two-step thumbnail pipeline (describe literally → classify from description) to prevent vision model hallucination | General technique in vision-language model literature; no single paper identified yet — flag if a specific source is found |
 
 ## What NOT To Do
 

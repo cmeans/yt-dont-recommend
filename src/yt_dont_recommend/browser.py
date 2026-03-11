@@ -9,6 +9,8 @@ check_removals) to avoid circular import with __init__.py.
 
 import logging
 import random
+
+log = logging.getLogger(__name__)
 import re
 import time
 from datetime import datetime, date
@@ -38,6 +40,7 @@ from .config import (
     MENU_BTN_SELECTORS,
     MENU_ITEM_SELECTOR,
     TARGET_PHRASES,
+    _n,
 )
 
 
@@ -85,7 +88,7 @@ def do_login():
             pass
         context.close()
 
-    logging.info("Login session saved. You can now run without --login.")
+    log.info("Login session saved. You can now run without --login.")
 
 
 def _find_menu_btn(card):
@@ -126,7 +129,7 @@ def _click_not_interested(page, card) -> bool:
 
     menu_btn = _find_menu_btn(card)
     if not menu_btn:
-        logging.debug("Could not find menu button on feed card (Not interested)")
+        log.debug("Could not find menu button on feed card (Not interested)")
         return False
 
     menu_btn.click()
@@ -172,7 +175,7 @@ def _click_dont_recommend(page, card) -> bool:
 
     menu_btn = _find_menu_btn(card)
     if not menu_btn:
-        logging.debug("Could not find menu button on feed card")
+        log.debug("Could not find menu button on feed card")
         return False
 
     menu_btn.click()
@@ -203,7 +206,7 @@ def fetch_subscriptions(page) -> set[str]:
     """
     pkg = _pkg()
 
-    logging.info("Fetching subscriptions list...")
+    log.info("Fetching subscriptions list...")
     page.goto("https://www.youtube.com/feed/channels", wait_until="domcontentloaded", timeout=60000)
     time.sleep(PAGE_LOAD_WAIT)
 
@@ -232,14 +235,14 @@ def fetch_subscriptions(page) -> set[str]:
         time.sleep(1.5)
 
     if subscriptions:
-        logging.info(f"Found {len(subscriptions)} subscribed channels")
+        log.info(f"Found {len(subscriptions)} subscribed channels")
     else:
         msg = (
             "No subscriptions found — the subscriptions page may have changed its layout. "
             "Subscription protection is disabled for this run. "
             "Check manually and run --check-selectors."
         )
-        logging.warning(msg)
+        log.warning(msg)
         pkg.write_attention(msg)
     return subscriptions
 
@@ -272,8 +275,8 @@ def _resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[st
     cached_count = len(ucxxx_entries) - len(uncached)
 
     if uncached:
-        logging.info(
-            f"Resolving {len(uncached)} UCxxx channel ID(s) to @handles"
+        log.info(
+            f"Resolving {_n(len(uncached), 'UCxxx channel ID')} to @handles"
             + (f" ({cached_count} already cached)" if cached_count else "") + "..."
         )
         for ucxxx in uncached:
@@ -287,21 +290,21 @@ def _resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[st
                 if path.startswith("/@"):
                     handle = path[1:]  # strip leading /
                     cache[ucxxx] = handle
-                    logging.debug(f"Resolved {ucxxx} → {handle}")
+                    log.debug(f"Resolved {ucxxx} → {handle}")
                 else:
                     cache[ucxxx] = None  # no @handle; cannot match feed cards
-                    logging.debug(f"No @handle for {ucxxx} — will be skipped")
+                    log.debug(f"No @handle for {ucxxx} — will be skipped")
                 time.sleep(random.uniform(1.0, 2.0))
             except Exception as e:
-                logging.warning(f"Could not resolve {ucxxx}: {e}")
+                log.warning(f"Could not resolve {ucxxx}: {e}")
                 cache[ucxxx] = None
         pkg.save_state(state)
 
     # Summarise unresolvable channels once (at debug level — don't spam on every run)
     unresolvable = [ch for ch in ucxxx_entries if cache.get(ch) is None]
     if unresolvable:
-        logging.debug(
-            f"{len(unresolvable)} UCxxx ID(s) have no @handle on YouTube and "
+        log.debug(
+            f"{_n(len(unresolvable), 'UCxxx ID')} have no @handle on YouTube and "
             f"will be skipped (cannot match feed cards): {unresolvable}"
         )
 
@@ -359,7 +362,7 @@ def open_browser(headless: bool = False):
 def close_browser(handle: tuple) -> None:
     """Close a browser handle returned by open_browser()."""
     pw_cm, context, _page = handle
-    logging.info("Closing browser (saving session to disk)...")
+    log.info("Closing browser (saving session to disk)...")
     context.close()
     pw_cm.__exit__(None, None, None)
 
@@ -371,6 +374,7 @@ def process_channels(channel_sources: dict[str, str],
                      limit: int | None = None,
                      headless: bool = False,
                      clickbait_cfg: dict | None = None,
+                     exclude_set: set[str] | None = None,
                      _browser: tuple | None = None) -> None:
     """
     Scan the YouTube home feed once and click 'Don't recommend channel' for
@@ -400,7 +404,7 @@ def process_channels(channel_sources: dict[str, str],
     to_unblock = [ch for ch in to_unblock if ch not in _pending_attempted_this_run]
 
     if not channel_sources and not to_unblock and clickbait_cfg is None:
-        logging.info("Nothing to do.")
+        log.info("Nothing to do.")
         return
 
     n_sources = len(set(channel_sources.values())) if channel_sources else 0
@@ -426,12 +430,12 @@ def process_channels(channel_sources: dict[str, str],
                 pending_unblock.pop(ch, None)
             pkg.save_state(state)
         elif to_unblock and dry_run:
-            logging.info(f"DRY RUN — would reverse YouTube block for: {', '.join(to_unblock)}")
+            log.info(f"DRY RUN — would reverse YouTube block for: {', '.join(to_unblock)}")
 
         if not channel_sources and clickbait_cfg is None:
             return
 
-        subscriptions = fetch_subscriptions(page)
+        subscriptions = fetch_subscriptions(page) if channel_sources else set()
 
         # Resolve any UCxxx IDs to @handles and preserve source attribution.
         # Modern feed cards only expose @handle links, so UCxxx entries won't
@@ -459,45 +463,52 @@ def process_channels(channel_sources: dict[str, str],
             try:
                 from .clickbait import classify_video as _classify_video  # type: ignore[assignment]
             except ImportError:
-                logging.warning(
-                    "--clickbait: ollama package not installed. "
-                    "Run: pip install yt-dont-recommend[clickbait]"
+                from . import _clickbait_install_cmd
+                log.warning(
+                    "--clickbait: ollama package not installed. Install with:\n"
+                    f"  {_clickbait_install_cmd()}"
                 )
                 clickbait_cfg = None
 
         _clickbait_evaluated: set[str] = set()  # channels evaluated this run (avoid re-classifying)
         processed_set_lower = {c.lower() for c in processed_set}
 
-        _extra = " + clickbait detection" if clickbait_cfg is not None else ""
         _prefix = "DRY RUN — " if dry_run else ""
-        logging.info(
-            f"{_prefix}Scanning home feed for {len(channel_lookup)} channel(s) "
-            f"across {n_sources} source(s){_extra}..."
-        )
+        if channel_lookup and clickbait_cfg is not None:
+            _scan_desc = (f"{_n(len(channel_lookup), 'channel')} across {_n(n_sources, 'source')}"
+                          f" + clickbait detection")
+        elif channel_lookup:
+            _scan_desc = f"{_n(len(channel_lookup), 'channel')} across {_n(n_sources, 'source')}"
+        else:
+            _scan_desc = "clickbait detection"
+        log.info(f"{_prefix}Scanning home feed for {_scan_desc}...")
 
+        _run_blocklist = bool(channel_lookup)
+        _run_clickbait = clickbait_cfg is not None
         blocked_count = 0
+        clickbait_count = 0
         no_progress_scrolls = 0
         zero_parse_passes = 0
         selector_confirmed = False
         seen_paths: set[str] = set()
 
         while True:
-            if limit and blocked_count >= limit:
-                logging.info(f"Reached limit of {limit} channels blocked.")
+            if limit and (blocked_count + clickbait_count) >= limit:
+                log.info(f"Reached limit of {limit} actions.")
                 break
             if no_progress_scrolls >= MAX_NO_PROGRESS_SCROLLS:
-                logging.info(
-                    f"No additional blocklisted channels found after {no_progress_scrolls} "
-                    "consecutive scrolls — feed exhausted for this run."
+                log.info(
+                    f"Feed exhausted after {no_progress_scrolls} consecutive scrolls with no new matches."
                 )
                 break
 
             cards = page.query_selector_all("ytd-rich-item-renderer")
             found_match_this_pass = False
+            evaluated_clickbait_this_pass = 0
             pass_parseable = 0
 
             for card in cards:
-                if limit and blocked_count >= limit:
+                if limit and (blocked_count + clickbait_count) >= limit:
                     break
 
                 channel_link = card.query_selector("a[href^='/@'], a[href^='/channel/UC']")
@@ -517,57 +528,89 @@ def process_channels(channel_sources: dict[str, str],
                 if path.lower() in seen_paths:
                     continue
                 seen_paths.add(path.lower())
-                logging.debug(f"Feed card channel: {path}")
+                log.debug(f"Feed card channel: {path}")
                 canonical = channel_lookup.get(path.lower())
                 if canonical and canonical in processed_set:
                     continue
 
                 if not canonical:
                     # Not on blocklist — check for clickbait if enabled
-                    if (clickbait_cfg is None
-                            or path.lower() in processed_set_lower
-                            or path.lower() in _clickbait_evaluated):
+                    if clickbait_cfg is None or path.lower() in _clickbait_evaluated:
                         continue
-                    video_link = card.query_selector("a[href*='/watch?v=']")
-                    if not video_link:
+                    if exclude_set and path.lower() in exclude_set:
+                        log.debug(f"clickbait: {path} — in exclude list, skipping")
                         continue
-                    vid_href = video_link.get_attribute("href") or ""
+                    # Get video title text. Try stable text-element selectors first,
+                    # then fall back to the link element directly.
+                    # Note: a[href*='/watch?v='] matches a#thumbnail first whose
+                    # inner_text() is the duration overlay — avoid that path.
+                    _title_el = (
+                        card.query_selector("a#video-title-link")
+                        or card.query_selector("a#video-title")
+                        or card.query_selector("h3 a[href*='watch?v=']")
+                    )
+                    if not _title_el:
+                        log.debug(f"clickbait: {path} — no title link found (Shorts or shelf card?), skipping")
+                        continue
+                    vid_href = _title_el.get_attribute("href") or ""
                     m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', vid_href)
                     if not m:
+                        log.debug(f"clickbait: {path} — no video ID in href {vid_href!r}, skipping")
                         continue
                     video_id = m.group(1)
-                    video_title = (video_link.inner_text() or "").strip() or None
+                    # Prefer the title attribute (clean, no duration).
+                    # Fall back to the text-only span, then aria-label with
+                    # duration stripped ("Title 2 minutes, 4 seconds" → "Title").
+                    video_title = _title_el.get_attribute("title") or None
                     if not video_title:
+                        _text_el = card.query_selector("yt-formatted-string#video-title, #video-title")
+                        if _text_el:
+                            video_title = _text_el.inner_text().strip() or None
+                    if not video_title:
+                        aria = _title_el.get_attribute("aria-label") or ""
+                        video_title = re.sub(
+                            r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
+                            "", aria
+                        ).strip() or None
+                    if not video_title:
+                        log.debug(f"clickbait: {path} — could not extract title, skipping")
                         continue
                     _clickbait_evaluated.add(path.lower())
+                    evaluated_clickbait_this_pass += 1
                     result = _classify_video(video_id, video_title, clickbait_cfg)
                     conf = result.get("confidence", 0.0)
                     if not result.get("flagged"):
-                        logging.debug(
+                        _is_cb = result.get("is_clickbait", False)
+                        _rsn   = result.get("title_result", {}).get("reasoning", "")
+                        log.debug(
                             f"clickbait: {path} — {video_title!r} "
-                            f"score={conf:.2f} not flagged"
+                            f"is_clickbait={_is_cb} score={conf:.2f} not flagged"
+                            + (f" — {_rsn}" if _rsn else "")
                         )
                         continue
-                    logging.info(
+                    _stages_str = "+".join(result.get("stages", ["title"]))
+                    log.info(
                         f"CLICKBAIT: {path} — {video_title!r} "
-                        f"(confidence {conf:.2f}) — marking Not interested..."
+                        f"(confidence {conf:.2f}, via {_stages_str}) — marking Not interested..."
                     )
                     if dry_run:
-                        logging.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
+                        log.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
+                        clickbait_count += 1
                         found_match_this_pass = True
                         continue
                     try:
                         success = _click_not_interested(page, card)
                     except Exception as e:
-                        logging.error(f"FAIL clickbait {path}: {e}")
+                        log.error(f"FAIL clickbait {path}: {e}")
                         continue
                     if success:
-                        logging.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
+                        log.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
+                        clickbait_count += 1
                         found_match_this_pass = True
                         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
                         break  # rescan after DOM change
                     else:
-                        logging.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
+                        log.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
                     continue
                 else:
                     source = resolved_sources.get(canonical, "unknown")
@@ -576,7 +619,7 @@ def process_channels(channel_sources: dict[str, str],
                 if canonical.lower() in subscriptions:
                     whb = state["would_have_blocked"]
                     if canonical not in whb or not whb[canonical].get("notified"):
-                        logging.warning(
+                        log.warning(
                             f"SUBSCRIBED CHANNEL IN BLOCKLIST: {canonical} appears in "
                             f"'{source}' but you're subscribed to it — skipping block. "
                             f"Worth checking if the channel's content has changed recently. "
@@ -593,7 +636,7 @@ def process_channels(channel_sources: dict[str, str],
                     continue
 
                 if dry_run:
-                    logging.info(f"WOULD BLOCK: {canonical} (source: {source})")
+                    log.info(f"WOULD BLOCK: {canonical} (source: {source})")
                     blocked_count += 1
                     found_match_this_pass = True
                     continue
@@ -601,11 +644,11 @@ def process_channels(channel_sources: dict[str, str],
                 # Capture display name from card for later unblocking.
                 display_name = (channel_link.inner_text() or "").strip() or None
 
-                logging.info(f"Found in feed: {canonical} — blocking...")
+                log.info(f"Found in feed: {canonical} — blocking...")
                 try:
                     success = _click_dont_recommend(page, card)
                 except Exception as e:
-                    logging.error(f"FAIL {canonical}: {e}")
+                    log.error(f"FAIL {canonical}: {e}")
                     state["stats"]["total_failed"] += 1
                     pkg.save_state(state)
                     continue
@@ -632,11 +675,11 @@ def process_channels(channel_sources: dict[str, str],
                         if display_name and not blocked_by[canonical].get("display_name"):
                             blocked_by[canonical]["display_name"] = display_name
 
-                    logging.info(f"[{blocked_count}] OK {canonical}")
+                    log.info(f"[{blocked_count}] OK {canonical}")
                     pkg.save_state(state)
 
                     if blocked_count % LONG_PAUSE_EVERY == 0:
-                        logging.info(f"Taking a {LONG_PAUSE_SECONDS}s break...")
+                        log.info(f"Taking a {LONG_PAUSE_SECONDS}s break...")
                         time.sleep(LONG_PAUSE_SECONDS)
                     else:
                         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
@@ -644,7 +687,7 @@ def process_channels(channel_sources: dict[str, str],
                     break  # rescan after DOM changes
                 else:
                     state["stats"]["total_skipped"] += 1
-                    logging.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
+                    log.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
                     pkg.save_state(state)
 
             # Selector health check
@@ -663,9 +706,9 @@ def process_channels(channel_sources: dict[str, str],
                     selector_confirmed = True
                     if ATTENTION_FILE.exists():
                         ATTENTION_FILE.unlink()
-                        logging.info("Selector working — previous attention alert cleared.")
+                        log.info("Selector working — previous attention alert cleared.")
 
-            if found_match_this_pass:
+            if found_match_this_pass or evaluated_clickbait_this_pass:
                 no_progress_scrolls = 0
             else:
                 page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
@@ -679,9 +722,19 @@ def process_channels(channel_sources: dict[str, str],
                 _pw_cm.__exit__(None, None, None)
 
     if dry_run:
-        logging.info(f"DRY RUN complete. Would have blocked {blocked_count} channel(s).")
+        parts = []
+        if _run_blocklist:
+            parts.append(f"{_n(blocked_count, 'channel')} blocked")
+        if _run_clickbait:
+            parts.append(f"{_n(clickbait_count, 'video')} marked Not interested")
+        log.info(f"DRY RUN complete. Would have: {', '.join(parts)}.")
     else:
-        logging.info(f"Done. Blocked {blocked_count} channel(s) this run. Stats: {state['stats']}")
+        parts = []
+        if _run_blocklist:
+            parts.append(f"{_n(blocked_count, 'channel')} blocked")
+        if _run_clickbait:
+            parts.append(f"{_n(clickbait_count, 'video')} marked Not interested")
+        log.info(f"Done. {', '.join(parts)} this run. Stats: {state['stats']}")
 
 
 def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[str]:
@@ -708,7 +761,7 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
 
     pkg = _pkg()
 
-    logging.info(f"Reversing YouTube 'Don't recommend' for {len(channels)} channel(s) via myactivity.google.com...")
+    log.info(f"Reversing YouTube 'Don't recommend' for {_n(len(channels), 'channel')} via myactivity.google.com...")
 
     FEEDBACK_URL = "https://myactivity.google.com/page?page=youtube_user_feedback"
 
@@ -735,10 +788,10 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
                             if display_name:
                                 break
             except Exception as e:
-                logging.warning(f"Could not look up display name for {channel}: {e}")
+                log.warning(f"Could not look up display name for {channel}: {e}")
         if display_name:
             display_names[channel] = display_name
-            logging.debug(f"Display name for {channel}: {display_name!r}")
+            log.debug(f"Display name for {channel}: {display_name!r}")
         else:
             # Increment retry count. After _MAX_DISPLAY_NAME_RETRIES failures
             # (channel page unreachable / handle doesn't exist) give up and
@@ -748,19 +801,19 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
             if channel in state.get("pending_unblock", {}):
                 state["pending_unblock"][channel]["_retry_count"] = retry_count
             if retry_count >= _MAX_DISPLAY_NAME_RETRIES:
-                logging.warning(
+                log.warning(
                     f"Could not determine display name for {channel} after "
-                    f"{retry_count} attempt(s) — giving up and clearing from pending queue."
+                    f"{_n(retry_count, 'attempt')} — giving up and clearing from pending queue."
                 )
                 state.setdefault("pending_unblock", {}).pop(channel, None)
             else:
-                logging.warning(
+                log.warning(
                     f"Could not determine display name for {channel} "
                     f"(attempt {retry_count}/{_MAX_DISPLAY_NAME_RETRIES}) — will retry next run."
                 )
 
     if not display_names:
-        logging.warning(
+        log.warning(
             "Could not resolve display names for any channel pending unblock "
             "— channels may not exist or be temporarily unavailable. Will retry next run. "
             "Run: yt-dont-recommend --check-selectors if this persists."
@@ -779,7 +832,7 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
 
     verify = page.query_selector("button:has-text('Verify')")
     if verify:
-        logging.warning(
+        log.warning(
             "Google requires password verification to access YouTube user feedback. "
             "Please enter your Google password in the browser window. "
             "This run will pause for up to 2 minutes."
@@ -807,11 +860,11 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
         if not challenge_appeared:
             # Might not need verification after all (RAPT still valid), or
             # the challenge uses different text — proceed optimistically.
-            logging.info("Password challenge did not appear — proceeding (RAPT may still be valid).")
+            log.info("Password challenge did not appear — proceeding (RAPT may still be valid).")
         else:
             # Phase 2: poll every 3s for a delete button (positive indicator that
             # verification succeeded and the feedback entries loaded).
-            logging.info("Challenge rendered — waiting for you to complete it in the browser window...")
+            log.info("Challenge rendered — waiting for you to complete it in the browser window...")
             verified = False
             for i in range(60):  # up to 3 minutes (60 × 3s)
                 time.sleep(3)
@@ -820,18 +873,18 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
                 except Exception:
                     continue  # page still navigating
                 if btn:
-                    logging.info(f"Verification complete — feedback entries loaded ({i*3}s).")
+                    log.info(f"Verification complete — feedback entries loaded ({i*3}s).")
                     verified = True
                     break
                 if i % 10 == 0 and i > 0:
-                    logging.info(f"Still waiting for verification... ({i*3}s elapsed)")
+                    log.info(f"Still waiting for verification... ({i*3}s elapsed)")
             if not verified:
                 msg = (
                     "Timed out waiting for Google verification — "
                     "pending unblocks will retry next run. "
                     "Channels NOT unblocked: " + ", ".join(channels)
                 )
-                logging.error(msg)
+                log.error(msg)
                 pkg.write_attention(msg)
                 return []
 
@@ -855,7 +908,7 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
             # was never actually blocked), or it was already removed manually.
             # Either way the channel is not blocked on YouTube, so treat this as
             # a successful unblock and clear it from the pending queue.
-            logging.warning(
+            log.warning(
                 f"No feedback entry found for {channel} (display name: {display_name!r}) — "
                 f"treating as already unblocked (entry may have been removed manually or never created)."
             )
@@ -875,11 +928,11 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
             if got_it:
                 break
         if got_it:
-            logging.debug(f"Dismissing 'Deletion complete' dialog for {channel}...")
+            log.debug(f"Dismissing 'Deletion complete' dialog for {channel}...")
             got_it.click()
         time.sleep(1.0)
         unblocked_channels.append(channel)
-        logging.info(f"UNBLOCKED on YouTube: {channel} ({display_name}) — channel can appear in recommendations again")
+        log.info(f"UNBLOCKED on YouTube: {channel} ({display_name}) — channel can appear in recommendations again")
 
     # Only count channels that actually reached myactivity (had a resolved display name).
     # Channels that couldn't get a display name are counted separately and retried
@@ -887,11 +940,11 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
     failed = [ch for ch in display_names if ch not in unblocked_channels]
     if failed:
         msg = (
-            f"{len(failed)} channel(s) could not be unblocked automatically: "
+            f"{_n(len(failed), 'channel')} could not be unblocked automatically: "
             f"{', '.join(failed)}. "
             f"Visit myactivity.google.com → Other activity → YouTube user feedback to remove them manually."
         )
-        logging.warning(msg)
+        log.warning(msg)
         pkg.write_attention(msg)
     return unblocked_channels
 
