@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yt-dont-recommend"
-version = "0.2.8"
+version = "0.2.9"
 requires-python = ">=3.10"
 description = "Bulk-train YouTube's recommendation algorithm via 'Don't recommend channel' — works on Fire TV, mobile, and smart TVs"
 readme = {file = "README-pypi.md", content-type = "text/markdown"}

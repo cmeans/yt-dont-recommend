@@ -644,7 +644,7 @@ def main() -> None:
         return
 
     if args.check_selectors:
-        from .browser import check_selectors
+        from .diagnostics import check_selectors
         ok = check_selectors(args.test_channel)
         sys.exit(0 if ok else 1)
 
@@ -776,6 +776,33 @@ def main() -> None:
         from .clickbait import load_config as _load_clickbait_config
         clickbait_cfg = _load_clickbait_config()
         _v = clickbait_cfg["video"]
+        # Verify the title model is actually available before opening the browser.
+        _title_model = _v["title"]["model"]["name"]
+        _auto_pull   = _v["title"]["model"].get("auto_pull", False)
+        try:
+            import ollama as _ollama
+            _available = {m.model.split(":")[0] for m in _ollama.list().models}
+            _tag = _title_model.split(":")[0]
+            if _tag not in _available:
+                if _auto_pull:
+                    log.info(f"Clickbait title model '{_title_model}' not found — pulling...")
+                    try:
+                        _ollama.pull(_title_model)
+                        log.info(f"Model '{_title_model}' pulled successfully.")
+                    except Exception as _pull_err:
+                        log.error(
+                            f"Failed to pull model '{_title_model}': {_pull_err}"
+                        )
+                        return
+                else:
+                    log.error(
+                        f"Clickbait title model '{_title_model}' is not pulled. "
+                        f"Run: ollama pull {_title_model}  "
+                        f"(or set auto_pull: true in clickbait-config.yaml)"
+                    )
+                    return
+        except Exception as _e:
+            log.warning("Could not verify ollama model availability: %s", _e)
         _thumb = _v["thumbnail"]
         _trans = _v["transcript"]
         _thumb_str = (

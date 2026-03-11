@@ -139,22 +139,24 @@ Standalone detection pipeline. Optional runtime deps (`pip install yt-dont-recom
 ```yaml
 video:
   title:
-    model: {name: phi3.5, params: {}}
+    model: {name: llama3.1:8b, params: {}, auto_pull: false}
     threshold: 0.75
     ambiguous_low: 0.4
   thumbnail:
     enabled: false           # opt-in — slow (~65s/video)
-    model: {name: gemma3:4b, params: {}}
+    model: {name: gemma3:4b, params: {}, auto_pull: false}
     threshold: 0.75
     two_step: true           # Visual Description Grounding (recommended)
     timeout: 90
     time_budget: 120
   transcript:
     enabled: false           # opt-in
-    model: {name: phi3.5, params: {}}
+    model: {name: phi3.5, params: {}, auto_pull: false}
     threshold: 0.75
     no_transcript: pass      # pass | flag | title-only
 ```
+
+**`auto_pull`**: when `true`, the model is pulled automatically via `ollama.pull()` if not already present. The tool fast-fails with an error if the pull fails (e.g. ollama not running). Default: `false`.
 
 **Pipeline** (`classify_video(video_id, title, cfg)`):
 1. Title classification (always)
@@ -164,7 +166,8 @@ video:
 **Result keys**: `video_id`, `title`, `is_clickbait`, `confidence`, `flagged`, `stages`, `title_result`, `thumbnail_result`, `transcript_result`, `classified_at`.
 
 **Proven benchmarks (2026-03-08)**:
-- `phi3.5` title: 93% accuracy, ~8s/title, 0 parse failures
+- `llama3.1:8b` title: improved false-positive rate on news/opinion vs phi3.5; uses full confidence range (0.05–0.95). ~8s/title. Some residual false positives on news interview content — see Known Issues.
+- `phi3.5` title (legacy): 93% accuracy, ~8s/title, 0 parse failures; binary scoring (0.10/0.80 only)
 - `gemma3:4b` thumbnail two-step: 100% accuracy on 6-video set, ~65s/video
 
 **`_pkg()` pattern**: sub-modules use late import of `yt_dont_recommend` for names that tests patch. `__init__.py` re-exports all public names so `patch("yt_dont_recommend.X")` still works for external callers. Functions that live in `cli.py` must be patched as `yt_dont_recommend.cli.X` in tests.

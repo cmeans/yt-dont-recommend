@@ -19,6 +19,7 @@ video:
       #   llama3.2:1b     — AVOID: flags everything indiscriminately (27% accuracy in tests).
       name: llama3.1:8b
       params: {}          # extra Ollama options, e.g. {num_predict: 256}
+      # auto_pull: false  # set to true to pull this model automatically if not found
     threshold: 0.75       # confidence >= this → flagged as clickbait
                           # 0.75 is the recommended value for llama3.1:8b;
                           # phi3.5 users should use 0.85 to reduce false positives
@@ -69,6 +70,7 @@ video:
       #   llama3.2-vision — newer vision model; not yet benchmarked on this task.
       name: gemma3:4b
       params: {}
+      # auto_pull: false  # set to true to pull this model automatically if not found
     threshold: 0.75
     two_step: true        # recommended: describe image first, then classify
                           # (reduces hallucination on vision models)
@@ -147,6 +149,7 @@ video:
       #                     judging whether a transcript matches a title's premise.
       name: phi3.5
       params: {}
+      # auto_pull: false  # set to true to pull this model automatically if not found
     threshold: 0.75
     no_transcript: pass   # action when transcript is unavailable:
                           #   pass       — treat as not clickbait (default; benefit of the doubt)

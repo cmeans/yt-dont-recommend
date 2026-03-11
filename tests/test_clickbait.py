@@ -528,3 +528,46 @@ class TestClassifyVideoPipeline:
         ):
             classify_video("vid1", "A title", cfg=None)
         mock_load.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Missing dependency behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestMissingDependencies:
+    """Verify that absent optional modules produce correct warnings/errors
+    rather than silent wrong results."""
+
+    def test_ollama_missing_raises_import_error_with_hint(self):
+        """_ollama_chat must raise ImportError with an install hint when
+        ollama is not importable — not silently return a wrong result."""
+        from yt_dont_recommend.clickbait import _ollama_chat
+        with patch.dict("sys.modules", {"ollama": None}):
+            with pytest.raises(ImportError, match="ollama not installed"):
+                _ollama_chat("llama3.1:8b", "classify this")
+
+    def test_classify_title_handles_ollama_missing_gracefully(self):
+        """When ollama is absent, classify_title must return a safe not-clickbait
+        default (with 'error' key) rather than propagating the ImportError."""
+        with patch.dict("sys.modules", {"ollama": None}):
+            result = classify_title("vid1", "A title", _cfg())
+        assert result["is_clickbait"] is False
+        assert result["confidence"] == 0.0
+        assert "error" in result
+
+    def test_pyyaml_missing_warning_mentions_customizations_and_install(self, tmp_path, caplog):
+        """When pyyaml is absent and a config file exists, the warning must
+        tell the user their customisations are ignored and give the install
+        command — not just silently fall back."""
+        import logging
+        cfg_file = tmp_path / "cb.yaml"
+        cfg_file.write_text("video:\n  title:\n    threshold: 0.9\n", encoding="utf-8")
+        with patch.dict("sys.modules", {"yaml": None}):
+            with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"):
+                load_config(cfg_file)
+        msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("customizations" in m for m in msgs), \
+            "warning should mention that customizations are lost"
+        assert any("pip install pyyaml" in m for m in msgs), \
+            "warning should include the install command"

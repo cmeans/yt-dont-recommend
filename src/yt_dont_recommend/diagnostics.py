@@ -153,7 +153,9 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
         page.goto("https://www.youtube.com", wait_until="domcontentloaded")
         time.sleep(PAGE_LOAD_WAIT)
 
-        avatar = page.query_selector("button#avatar-btn, img#img[alt]")
+        # button#avatar-btn exists on both logged-in and logged-out pages.
+        # The notification bell only appears when a Google account is active.
+        avatar = page.query_selector("#notification-button, ytd-notification-topbar-button-renderer")
         if not avatar:
             pr("ERROR: Not logged in. Run --login first.")
             context.close()

@@ -349,7 +349,9 @@ def open_browser(headless: bool = False) -> tuple | None:
     page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
     time.sleep(random.uniform(PAGE_LOAD_WAIT, PAGE_LOAD_WAIT + 1.5))
 
-    avatar = page.query_selector("button#avatar-btn, img#img[alt]")
+    # button#avatar-btn exists on both logged-in and logged-out pages.
+    # The notification bell only appears when a Google account is active.
+    avatar = page.query_selector("#notification-button, ytd-notification-topbar-button-renderer")
     if not avatar:
         pkg.write_attention("Not logged in — session may have expired. Run: yt-dont-recommend --login")
         context.close()
@@ -505,9 +507,19 @@ def process_channels(channel_sources: dict[str, str],
                 log.info(f"Reached limit of {limit} actions.")
                 break
             if no_progress_scrolls >= MAX_NO_PROGRESS_SCROLLS:
-                log.info(
-                    f"Feed exhausted after {no_progress_scrolls} consecutive scrolls with no new matches."
+                # Before reporting feed exhaustion, re-check login: an expired
+                # session shows zero cards and is indistinguishable from a quiet feed.
+                still_logged_in = page.query_selector(
+                    "#notification-button, ytd-notification-topbar-button-renderer"
                 )
+                if not still_logged_in:
+                    pkg.write_attention(
+                        "Session expired mid-run — run yt-dont-recommend --login to restore."
+                    )
+                else:
+                    log.info(
+                        f"Feed exhausted after {no_progress_scrolls} consecutive scrolls with no new matches."
+                    )
                 break
 
             cards = page.query_selector_all("ytd-rich-item-renderer")
@@ -715,10 +727,13 @@ def process_channels(channel_sources: dict[str, str],
                         ATTENTION_FILE.unlink()
                         log.info("Selector working — previous attention alert cleared.")
 
-            log.debug(
-                f"Pass: {len(cards)} cards, {pass_parseable} with channel links"
-                + (f", {evaluated_clickbait_this_pass} evaluated for clickbait" if _run_clickbait else "")
-            )
+            # Only log pass summary when there was activity or a diagnostic signal —
+            # suppresses the wall of identical "0 evaluated" lines during feed exhaustion.
+            if found_match_this_pass or evaluated_clickbait_this_pass or not cards or pass_parseable == 0:
+                log.debug(
+                    f"Pass: {len(cards)} cards, {pass_parseable} with channel links"
+                    + (f", {evaluated_clickbait_this_pass} evaluated for clickbait" if _run_clickbait else "")
+                )
 
             if found_match_this_pass or evaluated_clickbait_this_pass:
                 no_progress_scrolls = 0

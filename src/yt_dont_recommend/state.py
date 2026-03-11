@@ -133,6 +133,12 @@ def load_state() -> AppState:
                 f"({len(s['processed'])} entries); blocked_by is now authoritative."
             )
             del s["processed"]
+            # Persist immediately so repeated load_state() calls don't re-trigger.
+            try:
+                with open(STATE_FILE, "w") as f:
+                    json.dump(s, f, indent=2)
+            except Exception:
+                pass  # non-critical; will persist on next save_state()
         return s
     return {
         "blocked_by": {},

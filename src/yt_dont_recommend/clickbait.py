@@ -31,13 +31,13 @@ log = logging.getLogger(__name__)
 _DEFAULT_CONFIG: dict = {
     "video": {
         "title": {
-            "model": {"name": "llama3.1:8b", "params": {}},
+            "model": {"name": "llama3.1:8b", "params": {}, "auto_pull": False},
             "threshold": 0.75,
             "ambiguous_low": 0.4,
         },
         "thumbnail": {
             "enabled": False,
-            "model": {"name": "gemma3:4b", "params": {}},
+            "model": {"name": "gemma3:4b", "params": {}, "auto_pull": False},
             "threshold": 0.75,
             "two_step": True,
             "timeout": 90,
@@ -45,7 +45,7 @@ _DEFAULT_CONFIG: dict = {
         },
         "transcript": {
             "enabled": False,
-            "model": {"name": "phi3.5", "params": {}},
+            "model": {"name": "phi3.5", "params": {}, "auto_pull": False},
             "threshold": 0.75,
             "no_transcript": "pass",  # "pass" | "flag" | "title-only"
         },
@@ -105,6 +105,7 @@ video:
     model:
       name: llama3.1:8b
       params: {}
+      # auto_pull: false  # set to true to pull this model automatically if not found
     # Score >= threshold → flagged as clickbait
     # 0.75 is calibrated for llama3.1:8b; phi3.5 users should raise to 0.85
     threshold: 0.75
@@ -118,23 +119,27 @@ video:
       - Vague subject or mystery framing with no informational content ("Something MASSIVE...", "This Changes Everything", "What really happened")
       - Manufactured urgency or outrage with no specific informational payload
       - Misleading framing that misrepresents what the video actually delivers
-      - Excessive ALL-CAPS used for emotional manipulation across most of the title (not just one or two emphasis words)
+      - ALL-CAPS used for emotional manipulation across most of the title about vague or exaggerated content
 
-      NOT clickbait — default to false for these, even if the topic is alarming or dramatic:
-      - News headlines and news alerts, even on alarming topics — the alarm is in the event, not manufactured by the title ("Spring break travel alert", "Missiles visible in night sky")
-      - Titles quoting or paraphrasing a named person or named source, even when the quote sounds alarming ("Oil expert warns of 'nightmare scenario'", "Senator says X")
-      - Factual or educational questions, even if the topic sounds dramatic ("How Black Holes Die", "Firing Guns in Space")
-      - Named technical subjects, proper nouns, or specific things described directly ("Yamato Wave Motion Gun", "Apollo 11 Descent Engine")
+      NOT clickbait — default to false for all of these, even if the phrasing sounds dramatic:
+      - News headlines and breaking news alerts — the alarm is in the event, not manufactured by the title ("Iran launches attack", "Tornado devastates county")
+      - News titles with a few ALL-CAPS words emphasizing a specific fact ("Iran and Hezbollah LAUNCH JOINT ATTACK against Israel and US" — caps on the verb of a factual sentence is emphasis, not manipulation)
+      - Titles quoting or paraphrasing a named person or source, even if alarming ("Senator says X", "Expert warns of Y")
+      - Opinion and political commentary that states its argument directly — the argument IS the promised content ("Trump's Power Grab Is Backfiring", "The self-immolation of Donald Trump", "How Iran Proves America Needs Europe")
+      - Tutorial and how-to titles, even terse ones ("How To Learn To Code In 2026", "Walk up hills without getting tired")
+      - Factual or educational questions, even on dramatic topics ("How Black Holes Die", "Firing Guns in Space")
+      - Named technical subjects, proper nouns, or specific things described directly
       - Comparison or "vs" titles that directly state their subject
-      - Opinion or analysis pieces that announce their argument up front ("Why X isn't working", "The Real Reason Y")
-      - Titles that state exactly what the video covers without withholding information
+      - Titles containing "Official Trailer", "Official Teaser", "Music Video" — promotional titles are not clickbait
+      - Named TV show segments or recurring episode titles ("Amber Says What: ...", "Show Name Ep. 6")
+      - Titles with specific names, numbers, dates, or verifiable facts
 
       Confidence guide — use the full scale, not just 0.10 and 0.80:
       - 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
       - 0.85: Clear clickbait signal — strong manipulation with minimal information ("Something MASSIVE Entered...", "STUNS Everyone SILENT")
       - 0.75: Probably clickbait — sensational framing but some real information present
       - 0.30: Mild sensational wording but probably honest ("The Biggest Flaw in Starship Design", "Why Batman Looks Like a Billion Bucks")
-      - 0.10: Clearly not clickbait — factual, descriptive, newsworthy, or directly named subject
+      - 0.10: Clearly not clickbait — factual, newsworthy, opinion stating its argument, tutorial, or directly named subject
 
       When in doubt, default to NOT clickbait.
 
@@ -156,6 +161,7 @@ video:
     model:
       name: gemma3:4b
       params: {}
+      # auto_pull: false  # set to true to pull this model automatically if not found
     threshold: 0.75
     # two_step: use Visual Description Grounding (recommended, more accurate)
     two_step: true
@@ -234,6 +240,7 @@ video:
     model:
       name: phi3.5
       params: {}
+      # auto_pull: false  # set to true to pull this model automatically if not found
     threshold: 0.75
     # no_transcript: what to do when a transcript isn't available
     #   pass       — treat as not clickbait
@@ -295,7 +302,10 @@ def load_config(path: "Path | str | None" = None) -> dict:
     try:
         import yaml  # pyyaml — optional dep
     except ImportError:
-        log.warning("pyyaml not installed; ignoring %s — using default clickbait config", cfg_path)
+        log.warning(
+            "pyyaml not installed — %s will be ignored and any customizations lost. "
+            "Install with: pip install pyyaml", cfg_path
+        )
         return deepcopy(_DEFAULT_CONFIG)
 
     try:
@@ -364,11 +374,34 @@ def extract_json(raw: str) -> dict:
 _TITLE_PROMPT = """\
 You are a YouTube clickbait detector. Classify the video title below.
 
-Clickbait signals:
-- Withholds key information to force a click ("You won't believe...", "This will SHOCK you")
-- Excessive capitalization or punctuation used for emotional manipulation
-- Vague, sensational, or exaggerated promises
-- Misleading emotional framing unrelated to actual content
+CLICKBAIT signals — title manipulates rather than informs:
+- Withholds key information to force a click ("You won't believe...", "This will SHOCK you", "Here's what happened", "they got caught")
+- Vague subject or mystery framing with no informational content ("Something MASSIVE...", "This Changes Everything", "What really happened")
+- Manufactured urgency or outrage with no specific informational payload
+- Misleading framing that misrepresents what the video actually delivers
+- ALL-CAPS used for emotional manipulation across most of the title about vague or exaggerated content
+
+NOT clickbait — default to false for all of these, even if the phrasing sounds dramatic:
+- News headlines and breaking news alerts — the alarm is in the event, not manufactured by the title ("Iran launches attack", "Tornado devastates county")
+- News titles with a few ALL-CAPS words emphasizing a specific fact ("Iran and Hezbollah LAUNCH JOINT ATTACK against Israel and US" — caps on the verb of a factual sentence is emphasis, not manipulation)
+- Titles quoting or paraphrasing a named person or source, even if alarming ("Senator says X", "Expert warns of Y")
+- Opinion and political commentary that states its argument directly — the argument IS the promised content ("Trump's Power Grab Is Backfiring", "The self-immolation of Donald Trump", "How Iran Proves America Needs Europe")
+- Tutorial and how-to titles, even terse ones ("How To Learn To Code In 2026", "Walk up hills without getting tired")
+- Factual or educational questions, even on dramatic topics ("How Black Holes Die", "Firing Guns in Space")
+- Named technical subjects, proper nouns, or specific things described directly
+- Comparison or "vs" titles that directly state their subject
+- Titles containing "Official Trailer", "Official Teaser", "Music Video" — promotional titles are not clickbait
+- Named TV show segments or recurring episode titles ("Amber Says What: ...", "Show Name Ep. 6")
+- Titles with specific names, numbers, dates, or verifiable facts
+
+Confidence guide — use the full scale, not just 0.10 and 0.80:
+- 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
+- 0.85: Clear clickbait signal — strong manipulation with minimal information ("Something MASSIVE Entered...", "STUNS Everyone SILENT")
+- 0.75: Probably clickbait — sensational framing but some real information present
+- 0.30: Mild sensational wording but probably honest ("The Biggest Flaw in Starship Design")
+- 0.10: Clearly not clickbait — factual, newsworthy, opinion stating its argument, tutorial, or directly named subject
+
+When in doubt, default to NOT clickbait.
 
 Title: {title}
 

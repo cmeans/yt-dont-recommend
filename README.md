@@ -10,6 +10,7 @@ No browser extension can do this. Extensions filter content client-side on a sin
 
 - [Platform Support](#platform-support)
 - [Install](#install)
+  - [Clickbait Detection Extras](#clickbait-detection-extras)
 - [Upgrading](#upgrading)
 - [Uninstall](#uninstall)
 - [Development Setup](#development-setup)
@@ -26,6 +27,7 @@ No browser extension can do this. Extensions filter content client-side on a sin
 - [Notifications](#notifications)
 - [Updates](#updates)
 - [Checking and Updating Selectors](#checking-and-updating-selectors)
+- [Acknowledgments](#acknowledgments)
 - [License](#license)
 
 ---
@@ -66,6 +68,8 @@ On the very first run the tool will print a quick-start reminder with the recomm
 
 ### Clickbait detection extras
 
+> **Experimental feature.** `--clickbait` is functional but the classification quality depends heavily on the model and feed content. Expect false positives, especially on news and interview titles. The detection pipeline, config schema, and default model are likely to change across releases. Benchmark results and probe scripts live in the [`experiments/`](experiments/) directory.
+
 `--clickbait` requires [Ollama](https://ollama.com) (a local LLM runtime) plus additional Python dependencies.
 
 **Step 1 — Install Ollama** by following the instructions at [ollama.com](https://ollama.com). Ollama must be running when `--clickbait` is used.
@@ -74,11 +78,13 @@ On the very first run the tool will print a quick-start reminder with the recomm
 
 ```bash
 # Title classification (required — fast, ~8s/title)
-ollama pull phi3.5
+ollama pull llama3.1:8b
 
 # Thumbnail classification (optional — slow, ~65s/video; only needed if you enable it in config)
 ollama pull gemma3:4b
 ```
+
+Alternatively, set `auto_pull: true` under `model:` in your `clickbait-config.yaml` and the model will be pulled automatically on first use.
 
 **Step 3 — Install the Python extras** the same way you installed the tool:
 
@@ -93,8 +99,6 @@ pipx install 'yt-dont-recommend[clickbait]'
 ```
 
 For configuration (model selection, thresholds, thumbnail and transcript stages), see the [clickbait configuration file](clickbait-config.example.yaml) — copy it to `~/.yt-dont-recommend/clickbait-config.yaml` and edit to taste.
-
-**Timing configuration** (optional): copy [`config.example.yaml`](config.example.yaml) to `~/.yt-dont-recommend/config.yaml` to override delays, the long-pause frequency, page load wait, and the per-session action cap. Requires `pyyaml` (`pip install pyyaml`); ignored silently if the file is absent.
 
 ---
 
@@ -165,10 +169,8 @@ git clone https://github.com/cmeans/yt-dont-recommend.git
 cd yt-dont-recommend
 uv sync
 uv run playwright install chromium
-uv run python yt_dont_recommend.py --login
+uv run yt-dont-recommend --login
 ```
-
----
 
 **With pip/venv:**
 
@@ -177,16 +179,12 @@ git clone https://github.com/cmeans/yt-dont-recommend.git
 cd yt-dont-recommend
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e '.[dev]'
 playwright install chromium
-python yt_dont_recommend.py --login
+yt-dont-recommend --login
 ```
 
----
-
 A browser window opens — sign into your Google account, then close it. Your session is saved to `~/.yt-dont-recommend/browser-profile/` and reused on every subsequent run.
-
-The [`experiments/`](experiments/) directory contains ad-hoc probe scripts and benchmark results from clickbait detection development (thumbnail classification, transcript analysis, title scoring). Not needed for normal use.
 
 > **Debian/Ubuntu:** after installing Chromium, you may also need system dependencies:
 > - uv tool: `uvx playwright install-deps chromium`
@@ -208,16 +206,25 @@ Running without `--blocklist` or `--clickbait` prints help. Choose one or both:
 yt-dont-recommend --blocklist
 
 # Video-level: scan the feed for clickbait titles and click "Not interested"
-# (requires clickbait extras — see below)
+# (requires clickbait extras — see Clickbait Detection Extras under Install)
 yt-dont-recommend --clickbait
 
 # Both at once
 yt-dont-recommend --blocklist --clickbait
 ```
 
+**Start small on your first real run** — use `--limit 10` to confirm everything is working before processing a full list:
+
+```bash
+yt-dont-recommend --blocklist --limit 10
+```
+
 ```bash
 # Dry run — see what would be processed without clicking anything
 yt-dont-recommend --blocklist --dry-run
+
+# Dry run for clickbait — see what would be flagged without clicking anything
+yt-dont-recommend --clickbait --dry-run
 
 # Use a specific built-in source
 yt-dont-recommend --blocklist --source deslop
@@ -231,9 +238,6 @@ yt-dont-recommend --blocklist --source /path/to/my-list.txt
 
 # Use a remote blocklist URL
 yt-dont-recommend --blocklist --source https://example.com/blocklist.txt
-
-# Process only 10 channels (good for first test)
-yt-dont-recommend --blocklist --limit 10
 
 # Protect specific channels from ever being blocked (overrides the default exclude file)
 yt-dont-recommend --blocklist --exclude ~/.yt-dont-recommend/blocklist-exclude.txt
@@ -331,8 +335,8 @@ This format is shared with the [DeSlop](https://github.com/NikoboiNFTB/DeSlop) p
 
 | Source    | Description                                                       |
 |-----------|-------------------------------------------------------------------|
-| `deslop`  | DeSlop project (~130+ channels, plain text, actively maintained)  |
-| `aislist` | AiSList community text list (~8400+ channels, broader)            |
+| `deslop`  | [DeSlop](https://github.com/NikoboiNFTB/DeSlop) project (~130+ channels, plain text, actively maintained)  |
+| `aislist` | [AiSList](https://github.com/Override92/AiSList) community text list (~8400+ channels, broader)            |
 
 Running `--blocklist` without `--source` processes all built-in sources. The state tracker prevents re-processing the same channel twice across sources or runs.
 
@@ -365,6 +369,8 @@ All data lives in `~/.yt-dont-recommend/`:
 | `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings, notification topic |
 | `run.log` | Timestamped log of all actions (rotates at 1 MB, 5 backups kept) |
 | `needs-attention.txt` | Alert flag written when action is required (e.g. selector failure, expired login session); auto-cleared on a successful run |
+| `config.yaml` | Optional: override timing delays, long-pause frequency, page load wait, and per-session action cap. Copy from [`config.example.yaml`](config.example.yaml). Requires `pyyaml` (`pip install pyyaml`). |
+| `clickbait-config.yaml` | Optional: configure clickbait model, thresholds, and pipeline stages. Copy from [`clickbait-config.example.yaml`](clickbait-config.example.yaml). |
 
 ## Caveats
 
@@ -372,7 +378,6 @@ All data lives in `~/.yt-dont-recommend/`:
 - **Selector fragility:** YouTube's HTML structure changes frequently. The script detects broken selectors automatically — if several consecutive scroll passes yield no parseable channel links, it writes an alert and exits early. The alert is shown prominently on the next interactive run and cleared automatically once a successful run confirms the selector is working again. Run `--check-selectors` to diagnose and get a timestamped report with screenshots.
 - **Home feed matching:** The tool can only block channels that appear in your home feed during a run. Channels on the blocklist that never surface in the feed during that session will not be processed. Resume runs until the list is exhausted.
 - **Handle vs. channel ID:** YouTube feed cards expose `@handle` links only — `UCxxx` IDs in a blocklist are automatically resolved to `@handles` before scanning. Results are cached in state so re-resolution is skipped on subsequent runs. Both built-in sources already use `@handle` format; this only applies to custom blocklists.
-- **Start small:** Use `--limit 10` for your first real run to confirm everything is working before processing a full list.
 - **Session cap:** By default, each run caps at 75 actions (blocks + clickbait marks combined) to keep sessions human-length. Use `--no-limit` to remove the cap for a single run, or set `session_cap` in `~/.yt-dont-recommend/config.yaml`.
 
 ## Running Periodically
@@ -385,7 +390,9 @@ YouTube's home feed refreshes throughout the day, so twice-daily runs are recomm
 yt-dont-recommend --schedule install
 ```
 
-That's it. No crontab editing, no path hunting. Schedules runs at 3:00 AM and 3:00 PM daily using launchd (macOS) or cron (Linux), with the correct binary path filled in automatically.
+That's it. No crontab editing, no path hunting. Schedules `--blocklist --headless` runs at 3:00 AM and 3:00 PM daily using launchd (macOS) or cron (Linux), with the correct binary path filled in automatically.
+
+> **Note:** `--schedule install` sets up blocklist mode only. Clickbait detection (`--clickbait`) requires Ollama to be running and performs LLM inference per video — unsuitable for fully unattended runs on most systems. To include it, set up the schedule manually (see below).
 
 To use different hours, pass `--schedule-hours`:
 
@@ -416,11 +423,6 @@ yt-dont-recommend --schedule remove
 
 Each run picks up where the last left off. New channels added to the blocklist since the last run will be processed when they appear in the home feed.
 
-> **`--clickbait` and scheduled runs:** `--schedule install` sets up `--blocklist` only. Clickbait detection (`--clickbait`) requires Ollama to be running at the time of execution and performs LLM inference per video (~8 s/title), making it unsuitable for fully unattended scheduling on most systems. If you want to include clickbait detection in your schedule, add it manually via `crontab -e`:
-> ```
-> 0 3,15 * * * /path/to/yt-dont-recommend --blocklist --clickbait --headless
-> ```
-
 ### Manual cron setup (advanced)
 
 If you prefer to manage cron yourself, use `crontab -e` and add one of the following.
@@ -439,13 +441,13 @@ Find the full path with `which yt-dont-recommend`.
 **Cloned repo (uv):**
 
 ```bash
-0 3,15 * * * cd /path/to/yt-dont-recommend && uv run python yt_dont_recommend.py --blocklist --headless
+0 3,15 * * * cd /path/to/yt-dont-recommend && uv run yt-dont-recommend --blocklist --headless
 ```
 
 **Cloned repo (pip/venv):**
 
 ```bash
-0 3,15 * * * cd /path/to/yt-dont-recommend && .venv/bin/python yt_dont_recommend.py --blocklist --headless
+0 3,15 * * * /path/to/yt-dont-recommend/.venv/bin/yt-dont-recommend --blocklist --headless
 ```
 
 ## Notifications
