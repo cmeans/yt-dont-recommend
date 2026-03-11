@@ -56,9 +56,15 @@ LONG_PAUSE_SECONDS = 30
 # the feed card selector is probably broken.
 MIN_CARDS_FOR_SELECTOR_CHECK = 10
 SELECTOR_WARN_AFTER = 3
+# Default per-session action cap (blocks + clickbait marks combined).
+# Keeps sessions human-length. Override with --no-limit.
+DEFAULT_SESSION_CAP = 75
 
 # Attention flag file — written when something requires user action between runs
 ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
+
+# Optional user config file — timing overrides live here
+CONFIG_FILE = Path.home() / ".yt-dont-recommend" / "config.yaml"
 
 # Version
 __version__ = "0.2.7"
@@ -103,6 +109,53 @@ TARGET_PHRASES = ("don't recommend", "dont recommend")
 
 
 # --- Helpers ---
+
+# Common desktop resolutions; pick one at random per session to vary the
+# browser fingerprint slightly. Diagnostics keep a fixed 1280x800 baseline.
+_VIEWPORT_POOL = [
+    {"width": 1280, "height": 800},
+    {"width": 1366, "height": 768},
+    {"width": 1440, "height": 900},
+    {"width": 1536, "height": 864},
+    {"width": 1600, "height": 900},
+    {"width": 1920, "height": 1080},
+]
+
+
+def pick_viewport() -> dict:
+    """Return a random viewport size from a pool of common desktop resolutions."""
+    import random
+    return random.choice(_VIEWPORT_POOL)
+
+
+def load_timing_config() -> dict:
+    """Load timing overrides from ~/.yt-dont-recommend/config.yaml.
+
+    Returns a dict with any of the following keys present in the file's
+    `timing:` section (all optional; missing keys fall back to constants):
+        min_delay, max_delay, long_pause_every, long_pause_seconds,
+        page_load_wait, session_cap
+
+    Returns an empty dict if the file is absent, unparseable, or pyyaml
+    is not installed.
+    """
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        timing = data.get("timing", {})
+        if not isinstance(timing, dict):
+            return {}
+        allowed = {"min_delay", "max_delay", "long_pause_every",
+                   "long_pause_seconds", "page_load_wait", "session_cap"}
+        return {k: v for k, v in timing.items() if k in allowed}
+    except Exception:
+        return {}
+
 
 def _n(count: int, word: str) -> str:
     """Return '{count} {word}' with correct plural — e.g. _n(1,'channel') → '1 channel',

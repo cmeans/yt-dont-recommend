@@ -363,7 +363,9 @@ def main() -> None:
         ),
     )
     parser.add_argument("--limit", type=int, default=None,
-                        help="Stop after blocking this many channels")
+                        help="Stop after this many actions (default: 75 per session)")
+    parser.add_argument("--no-limit", action="store_true", default=False,
+                        help="Remove the per-session action cap (process all available channels)")
     parser.add_argument(
         "--unblock-policy", choices=["all", "any"], default="all",
         help=(
@@ -815,7 +817,7 @@ def main() -> None:
                 to_unblock=all_unblocks,
                 state=state,
                 dry_run=args.dry_run,
-                limit=args.limit,
+                limit=None if args.no_limit else args.limit,
                 headless=args.headless,
                 clickbait_cfg=clickbait_cfg,
                 exclude_set=clickbait_exclude_set or None,

@@ -33,6 +33,9 @@ from .config import (
     MENU_ITEM_SELECTOR,
     TARGET_PHRASES,
     _n,
+    pick_viewport,
+    DEFAULT_SESSION_CAP,
+    load_timing_config,
 )
 from .unblock import _perform_browser_unblocks, _pending_attempted_this_run  # noqa: F401
 
@@ -72,8 +75,9 @@ def do_login() -> None:
             headless=False,
             args=["--disable-blink-features=AutomationControlled", "--disable-infobars"],
             ignore_default_args=["--enable-automation"],
-            viewport={"width": 1280, "height": 800},
+            viewport=pick_viewport(),
         )
+        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
         page = context.pages[0] if context.pages else context.new_page()
         page.goto("https://accounts.google.com/ServiceLogin?service=youtube")
 
@@ -335,8 +339,9 @@ def open_browser(headless: bool = False) -> tuple | None:
         headless=headless,
         args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--disable-infobars"],
         ignore_default_args=["--enable-automation"],
-        viewport={"width": 1280, "height": 800},
+        viewport=pick_viewport(),
     )
+    context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
     for extra in context.pages[1:]:
         extra.close()
     page = context.pages[0] if context.pages else context.new_page()
@@ -392,6 +397,14 @@ def process_channels(channel_sources: dict[str, str],
         state = pkg.load_state()
     if to_unblock is None:
         to_unblock = []
+    timing = load_timing_config()
+    _min_delay = float(timing.get("min_delay", MIN_DELAY))
+    _max_delay = float(timing.get("max_delay", MAX_DELAY))
+    _long_pause_every = int(timing.get("long_pause_every", LONG_PAUSE_EVERY))
+    _long_pause_seconds = float(timing.get("long_pause_seconds", LONG_PAUSE_SECONDS))
+    _page_load_wait = float(timing.get("page_load_wait", PAGE_LOAD_WAIT))
+    if limit is None:
+        limit = int(timing.get("session_cap", DEFAULT_SESSION_CAP))
 
     processed_set = set(state["processed"])
 
@@ -450,7 +463,7 @@ def process_channels(channel_sources: dict[str, str],
 
         # Navigate to home feed
         page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(random.uniform(PAGE_LOAD_WAIT, PAGE_LOAD_WAIT + 1.5))
+        time.sleep(random.uniform(_page_load_wait, _page_load_wait + 1.5))
 
         # Set up clickbait classifier if requested
         _classify_video = None
@@ -602,7 +615,7 @@ def process_channels(channel_sources: dict[str, str],
                         log.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
                         clickbait_count += 1
                         found_match_this_pass = True
-                        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+                        time.sleep(random.uniform(_min_delay, _max_delay))
                         break  # rescan after DOM change
                     else:
                         log.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
@@ -673,11 +686,11 @@ def process_channels(channel_sources: dict[str, str],
                     log.info(f"[{blocked_count}] OK {canonical}")
                     pkg.save_state(state)
 
-                    if blocked_count % LONG_PAUSE_EVERY == 0:
-                        log.info(f"Taking a {LONG_PAUSE_SECONDS}s break...")
-                        time.sleep(random.uniform(LONG_PAUSE_SECONDS * 0.8, LONG_PAUSE_SECONDS * 1.3))
+                    if blocked_count % _long_pause_every == 0:
+                        log.info(f"Taking a {_long_pause_seconds:.0f}s break...")
+                        time.sleep(random.uniform(_long_pause_seconds * 0.8, _long_pause_seconds * 1.3))
                     else:
-                        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+                        time.sleep(random.uniform(_min_delay, _max_delay))
 
                     break  # rescan after DOM changes
                 else:

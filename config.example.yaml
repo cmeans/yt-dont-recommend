@@ -1,0 +1,22 @@
+# config.yaml — yt-dont-recommend timing configuration
+#
+# Copy this file to ~/.yt-dont-recommend/config.yaml and edit.
+# All keys are optional — omitted keys fall back to built-in defaults.
+# Requires: pip install pyyaml  (or pip install yt-dont-recommend[clickbait])
+
+timing:
+  # Delay between individual actions (seconds). A random value between
+  # min_delay and max_delay is chosen for each action.
+  min_delay: 3.0        # default: 3.0
+  max_delay: 7.0        # default: 7.0
+
+  # After this many blocks, take a longer break (reduces rate-limit risk).
+  long_pause_every: 25  # default: 25
+  long_pause_seconds: 30 # default: 30  (actual pause is ±20% of this value)
+
+  # Extra wait after navigating to a new page (seconds).
+  page_load_wait: 3.0   # default: 3.0
+
+  # Maximum actions (blocks + clickbait marks) per session.
+  # Use --no-limit on the command line to override for a single run.
+  session_cap: 75       # default: 75

@@ -104,25 +104,27 @@ The `aislist` source is plain text with `!` comments, ~8400+ channels. Format co
 
 - `__init__.py` — re-exports all public names; thin browser wrappers
 - `cli.py` — `main()` entry point, argument parsing, all CLI command handlers
-- `config.py` — constants, file paths, selectors, logging setup (no package imports)
+- `config.py` — constants, file paths, selectors, `pick_viewport()`, `load_timing_config()`, logging setup (no package imports)
 - `state.py` — `load_state`, `save_state`, `write_attention`, `_had_attention`
 - `blocklist.py` — `resolve_source`, `parse_*_blocklist`, `normalize_handle`, `check_removals`
 - `scheduler.py` — `_parse_schedule_hours`, `schedule_cmd`, platform helpers
-- `browser.py` — all Playwright automation
+- `browser.py` — core Playwright automation: `process_channels`, `fetch_subscriptions`, `do_login`, `open_browser`
+- `unblock.py` — `_perform_browser_unblocks`, `_pending_attempted_this_run`, `_MAX_DISPLAY_NAME_RETRIES`
+- `diagnostics.py` — `check_selectors`, `_screenshot` (viewport hardcoded 1280×800 for reproducible reports)
 - `clickbait.py` — clickbait detection: config loading, LLM classifiers, pipeline (see below)
 
 Key components:
 
 - **Blocklist fetching**: `resolve_source()` handles built-in keys, HTTP(S) URLs, and local file paths. `parse_text_blocklist()` and `parse_json_blocklist()` handle format variants. JSON format is auto-detected by leading `{` or `[`.
 - **State management**: `~/.yt-dont-recommend/processed.json` tracks which channels have been handled (crash-safe, saved after each action). See State Schema below for all keys.
-- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs). Launch args: `--disable-blink-features=AutomationControlled`, `--disable-infobars`, `ignore_default_args=["--enable-automation"]`. `main()` collects channels from all sources into a combined `{channel: source}` dict (no browser needed for this), then opens one browser session via `open_browser()` and calls `process_channels()` once — a single feed scan covers all sources. Avoids repeated auth checks and scroll passes.
+- **Browser automation**: Playwright with a persistent Chromium profile (login session persists between runs). Launch args: `--disable-blink-features=AutomationControlled`, `--disable-infobars`, `ignore_default_args=["--enable-automation"]`, `navigator.webdriver` stripped via `add_init_script`. Viewport randomized per session from a pool of common desktop resolutions (1280×800, 1366×768, 1440×900, 1536×864, 1600×900, 1920×1080). `main()` collects channels from all sources into a combined `{channel: source}` dict (no browser needed for this), then opens one browser session via `open_browser()` and calls `process_channels()` once — a single feed scan covers all sources. Avoids repeated auth checks and scroll passes.
 - **Subscription protection**: `fetch_subscriptions(page)` scrapes `youtube.com/feed/channels`, returns a lowercase set of handles. Called once per run in `process_channels()`. Subscribed channels are skipped with a one-time WARNING logged and stored in `state["would_have_blocked"]`.
 - **Blocklist removal detection**: `check_removals()` runs at the start of each `process_channels()` call, compares the current list against `state["blocked_by"]`, and auto-unblocks channels no longer on the list, per `--unblock-policy`.
 - **Blocklist growth tracking**: Each run records source list sizes in `state["source_sizes"]`. When a source has grown since the last run, it logs prominently.
 - **Attention/notification system**: `write_attention(message)` writes `needs-attention.txt`, fires a desktop notification (`osascript`/`notify-send`), and sends an ntfy.sh push if configured. Triggered by: selector failure, expired login session, unblock selector failure, auto-upgrade failure. Auto-cleared on the next successful run.
 - **Version tracking**: At startup, the running version is compared to `state["current_version"]`; on change, the old value is rotated to `state["previous_version"]`. This makes `--revert` work regardless of whether the upgrade was automatic or manual. **Tested 2026-03-08**: manual upgrade 0.1.9→0.1.16→0.1.17, `--revert` correctly dropped back to 0.1.16, auto-upgrade was disabled automatically.
 - **Logging**: `RotatingFileHandler` — `run.log` caps at 1 MB with 5 backups (`run.log.1`–`run.log.5`).
-- **Rate limiting**: Random 3–7s delays between actions, 30s pause every 25 channels. Scroll delay randomised 1.5–3.0s.
+- **Rate limiting**: All interaction delays are jittered with `random.uniform()`. Defaults: 3–7s between actions, 30s pause every 25 channels (±20%), 1.0–2.5s scroll. All timing overridable via `~/.yt-dont-recommend/config.yaml` (`timing:` section). Per-session action cap of 75 by default; use `--no-limit` to remove it.
 
 ### Clickbait Detection Module (`clickbait.py`)
 
@@ -248,7 +250,8 @@ def fetch_subscriptions(page) -> set[str]:
 | `--source` | Blocklist source(s) to use with `--blocklist`. Built-in names (comma-separated), local file path, or HTTP(S) URL. Defaults to all built-in sources. |
 | `--exclude` | Channels to never block via `--blocklist`. Local file path or HTTP(S) URL. Auto-loads `~/.yt-dont-recommend/blocklist-exclude.txt` (legacy: `exclude.txt` accepted with deprecation warning) |
 | `--clickbait-exclude` | Channels to never evaluate for clickbait. Local file path or HTTP(S) URL. Auto-loads `~/.yt-dont-recommend/clickbait-exclude.txt` |
-| `--limit N` | Stop after N channels |
+| `--limit N` | Stop after N actions (default cap: 75 per session) |
+| `--no-limit` | Remove the per-session action cap for this run |
 | `--dry-run` | Show what would be processed without acting (combine with `--blocklist` or `--clickbait`) |
 | `--headless` | Run without a visible browser window |
 | `--clickbait` | Scan feed videos for clickbait titles and click "Not interested" (video-level; no channel-level effect). Requires `pip install yt-dont-recommend[clickbait]`. Config: `~/.yt-dont-recommend/clickbait-config.yaml`. |
