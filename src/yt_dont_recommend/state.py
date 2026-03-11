@@ -127,7 +127,12 @@ def load_state() -> AppState:
             )
         s.setdefault("state_version", STATE_VERSION)
         # v2 migration: drop redundant "processed" list (blocked_by.keys() is authoritative)
-        s.pop("processed", None)
+        if "processed" in s:
+            log.info(
+                f"State migrated to v2: removed legacy 'processed' list "
+                f"({len(s['processed'])} entries); blocked_by is now authoritative."
+            )
+            del s["processed"]
         return s
     return {
         "blocked_by": {},

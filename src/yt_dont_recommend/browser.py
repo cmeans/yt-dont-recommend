@@ -715,6 +715,11 @@ def process_channels(channel_sources: dict[str, str],
                         ATTENTION_FILE.unlink()
                         log.info("Selector working — previous attention alert cleared.")
 
+            log.debug(
+                f"Pass: {len(cards)} cards, {pass_parseable} with channel links"
+                + (f", {evaluated_clickbait_this_pass} evaluated for clickbait" if _run_clickbait else "")
+            )
+
             if found_match_this_pass or evaluated_clickbait_this_pass:
                 no_progress_scrolls = 0
             else:
