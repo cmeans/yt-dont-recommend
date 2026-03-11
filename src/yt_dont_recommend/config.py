@@ -66,8 +66,12 @@ ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 # Optional user config file — timing overrides live here
 CONFIG_FILE = Path.home() / ".yt-dont-recommend" / "config.yaml"
 
-# Version
-__version__ = "0.2.8"
+# Version — single source of truth is pyproject.toml; read at import time.
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__: str = _pkg_version("yt-dont-recommend")
+except Exception:
+    __version__ = "0.0.0"  # fallback for editable installs without metadata
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.

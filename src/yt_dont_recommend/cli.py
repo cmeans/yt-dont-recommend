@@ -281,6 +281,9 @@ def _first_run_welcome() -> None:
     print()
     print("Run yt-dont-recommend --help for all options.")
     print()
+    print("Note: automating YouTube UI interactions may violate YouTube's Terms of Service.")
+    print("This tool is for personal use on your own account — same risk category as ad blockers.")
+    print()
 
 
 def do_uninstall() -> None:

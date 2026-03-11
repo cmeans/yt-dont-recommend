@@ -7,7 +7,6 @@ schedule_cmd calls _schedule_linux/_schedule_macos via _pkg() so that
 monkeypatch.setattr(ydr, "_schedule_linux", ...) works correctly in tests.
 """
 
-import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -85,6 +84,7 @@ def _find_installed_binary() -> str:
 
 
 def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
+    import plistlib
     plist_path = _LAUNCHD_PLIST
 
     if action == "status":
