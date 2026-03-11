@@ -10,11 +10,54 @@ monkeypatch.setattr(ydr, "STATE_FILE", ...) works correctly in tests.
 import json
 import logging
 import subprocess
-
-log = logging.getLogger(__name__)
 import sys
 from datetime import datetime
+from typing import TypedDict
 from urllib.request import urlopen, Request
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# State schema types
+# ---------------------------------------------------------------------------
+
+class StatsDict(TypedDict):
+    total_blocked: int
+    total_skipped: int
+    total_failed: int
+
+
+class BlockedByEntry(TypedDict, total=False):
+    sources: list[str]
+    blocked_at: str
+    display_name: str | None
+
+
+class AppState(TypedDict, total=False):
+    """Typed representation of the on-disk state file.
+
+    All fields are optional (total=False) for Python 3.10 compatibility.
+    Use load_state() to obtain a fully-populated instance with all keys
+    guaranteed present. Never rename or remove existing keys — only add new
+    ones, with a matching setdefault() in load_state() and a STATE_VERSION bump.
+    """
+    processed: list[str]
+    blocked_by: dict[str, BlockedByEntry]
+    would_have_blocked: dict[str, dict]
+    last_run: str | None
+    stats: StatsDict
+    notify_topic: str | None
+    last_version_check: str | None
+    latest_known_version: str | None
+    notified_version: str | None
+    auto_upgrade: bool
+    previous_version: str | None
+    current_version: str | None
+    source_sizes: dict[str, int]
+    state_version: int
+    ucxxx_to_handle: dict[str, str | None]
+    pending_unblock: dict[str, dict]
 
 from .config import (
     STATE_FILE as _CONFIG_STATE_FILE,
@@ -43,7 +86,7 @@ def _state_file():
 
 # --- State Management ---
 
-def load_state() -> dict:
+def load_state() -> AppState:
     STATE_FILE = _state_file()
     if STATE_FILE.exists():
         with open(STATE_FILE) as f:
@@ -103,7 +146,7 @@ def load_state() -> dict:
     }
 
 
-def save_state(state: dict):
+def save_state(state: AppState) -> None:
     STATE_FILE = _state_file()
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     state["last_run"] = datetime.now().isoformat()
