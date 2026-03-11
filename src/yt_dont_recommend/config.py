@@ -67,7 +67,7 @@ ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 CONFIG_FILE = Path.home() / ".yt-dont-recommend" / "config.yaml"
 
 # Version
-__version__ = "0.2.7"
+__version__ = "0.2.8"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.
