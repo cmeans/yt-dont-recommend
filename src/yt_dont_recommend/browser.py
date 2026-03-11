@@ -160,47 +160,75 @@ def _find_system_chrome() -> str | None:
     return None
 
 
-def _launch_context(p: Any, profile_dir: Path, **kwargs: Any) -> Any:
-    """Launch a persistent browser context, preferring system Chrome over bundled Chromium.
+def _get_system_chrome_version(exe: str) -> str | None:
+    """Return the version string (e.g. '145.0.7632.159') from a Chrome/Chromium binary.
 
-    Tries channel="chrome" (Playwright's built-in detection) first, then falls back
-    to a manual path search across common Chrome/Chromium install locations (handles
-    RPM/deb/Flatpak variants on Linux). Falls back to Playwright's bundled Chromium
-    if nothing is found, or if use_system_chrome is set to false in config.yaml.
+    For Flatpak binaries, the raw binary cannot run outside the Flatpak sandbox,
+    so we invoke via 'flatpak run' instead.
+    """
+    import re
+    import subprocess
+
+    cmds: list[list[str]] = []
+    if "/flatpak/app/com.google.Chrome" in exe:
+        cmds.append(["flatpak", "run", "com.google.Chrome", "--version"])
+    elif "/flatpak/app/com.google.ChromeBeta" in exe:
+        cmds.append(["flatpak", "run", "com.google.ChromeBeta", "--version"])
+    elif "/flatpak/app/org.chromium.Chromium" in exe:
+        cmds.append(["flatpak", "run", "org.chromium.Chromium", "--version"])
+    cmds.append([exe, "--version"])  # direct invocation as fallback
+
+    for cmd in cmds:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                match = re.search(r"(\d+\.\d+\.\d+\.\d+)", result.stdout)
+                if match:
+                    return match.group(1)
+        except Exception:
+            pass
+    return None
+
+
+def _build_chrome_ua(version: str) -> str:
+    """Build a standard Linux Chrome User-Agent string for the given version."""
+    return (
+        f"Mozilla/5.0 (X11; Linux x86_64) "
+        f"AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{version} Safari/537.36"
+    )
+
+
+def _launch_context(p: Any, profile_dir: Path, **kwargs: Any) -> Any:
+    """Launch a persistent browser context using Playwright's bundled Chromium.
+
+    If a system Chrome or Chromium installation is found and use_system_chrome is
+    enabled (default), its real version is read and injected as the User-Agent on
+    the bundled Chromium context. This gives an authentic UA without requiring
+    --no-sandbox (which Flatpak and some other installs need when run directly).
     """
     from .config import load_browser_config
     use_system_chrome = load_browser_config().get("use_system_chrome", True)
-    if not use_system_chrome:
-        log.info("Browser: bundled Chromium (use_system_chrome disabled)")
-        return p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
 
-    # Try Playwright's built-in channel detection first
-    try:
-        ctx = p.chromium.launch_persistent_context(str(profile_dir), channel="chrome", **kwargs)
-        ua = ctx.pages[0].evaluate("navigator.userAgent") if ctx.pages else "unknown"
-        log.info("Browser: system Chrome (channel=chrome) — UA: %s", ua)
-        return ctx
-    except Exception as e:
-        log.debug("Browser: channel=chrome failed (%s) — trying manual path search", e)
-
-    # Fall back to manual path search for non-standard install locations (Flatpak, Snap, etc.)
-    exe = _find_system_chrome()
-    if exe:
-        log.debug("Browser: found system Chrome/Chromium at %s", exe)
-        try:
-            ctx = p.chromium.launch_persistent_context(str(profile_dir), executable_path=exe, **kwargs)
-            ua = ctx.pages[0].evaluate("navigator.userAgent") if ctx.pages else "unknown"
-            log.info("Browser: system Chrome/Chromium (%s) — UA: %s", exe, ua)
-            return ctx
-        except Exception as e:
-            log.warning("Browser: failed to launch %s (%s) — falling back to bundled Chromium", exe, e)
+    if use_system_chrome:
+        exe = _find_system_chrome()
+        if exe:
+            log.debug("Browser: found system Chrome/Chromium at %s", exe)
+            version = _get_system_chrome_version(exe)
+            if version:
+                ua = _build_chrome_ua(version)
+                log.info("Browser: bundled Chromium with Chrome/%s UA (sourced from %s)", version, exe)
+                kwargs["user_agent"] = ua
+            else:
+                log.debug("Browser: could not read version from %s — using bundled Chromium UA", exe)
+        else:
+            log.debug("Browser: no system Chrome/Chromium found — using bundled Chromium UA")
     else:
-        log.debug("Browser: no system Chrome/Chromium found on this machine")
+        log.info("Browser: use_system_chrome disabled — using bundled Chromium UA")
 
-    log.info("Browser: bundled Chromium (Playwright built-in)")
     ctx = p.chromium.launch_persistent_context(str(profile_dir), **kwargs)
-    ua = ctx.pages[0].evaluate("navigator.userAgent") if ctx.pages else "unknown"
-    log.info("Browser: UA: %s", ua)
+    ua_actual = ctx.pages[0].evaluate("navigator.userAgent") if ctx.pages else "unknown"
+    log.info("Browser: UA: %s", ua_actual)
     return ctx
 
 
