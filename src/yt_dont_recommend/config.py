@@ -112,7 +112,7 @@ def _n(count: int, word: str) -> str:
 
 # --- Logging Setup ---
 
-def setup_logging(verbose: bool = False):
+def setup_logging(verbose: bool = False) -> None:
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     level = logging.DEBUG if verbose else logging.INFO
     file_handler = logging.handlers.RotatingFileHandler(

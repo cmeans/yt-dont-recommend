@@ -15,6 +15,7 @@ import re
 import time
 from datetime import datetime, date
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 # Channels whose unblock was attempted in the current Python process run.
@@ -50,7 +51,7 @@ def _pkg():
     return _p
 
 
-def do_login():
+def do_login() -> None:
     """Open a browser window for the user to log into YouTube."""
     from playwright.sync_api import sync_playwright
 
@@ -91,7 +92,7 @@ def do_login():
     log.info("Login session saved. You can now run without --login.")
 
 
-def _find_menu_btn(card):
+def _find_menu_btn(card: Any) -> Any:
     """Find the 'More actions' menu button within a feed card. Returns element or None."""
     for sel in MENU_BTN_SELECTORS:
         btn = card.query_selector(sel)
@@ -113,7 +114,7 @@ _NOT_INTERESTED_ITEM_SELECTOR = (
 )
 
 
-def _click_not_interested(page, card) -> bool:
+def _click_not_interested(page: Any, card: Any) -> bool:
     """
     Click 'Not interested' on a home feed video card.
 
@@ -159,7 +160,7 @@ def _click_not_interested(page, card) -> bool:
     return True
 
 
-def _click_dont_recommend(page, card) -> bool:
+def _click_dont_recommend(page: Any, card: Any) -> bool:
     """
     Click 'Don't recommend channel' on a home feed card.
 
@@ -197,7 +198,7 @@ def _click_dont_recommend(page, card) -> bool:
     return True
 
 
-def fetch_subscriptions(page) -> set[str]:
+def fetch_subscriptions(page: Any) -> set[str]:
     """
     Scrape the YouTube subscriptions management page and return a set of
     lowercased canonical channel IDs (@handle or UCxxx).
@@ -247,7 +248,7 @@ def fetch_subscriptions(page) -> set[str]:
     return subscriptions
 
 
-def _resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[str]:
+def _resolve_ucxxx_to_handles(page: Any, channels: list[str], state: dict) -> list[str]:
     """For any UCxxx entries in channels, resolve to @handle via YouTube's redirect.
 
     Modern YouTube feed cards expose only @handle links — UCxxx entries in a
@@ -321,7 +322,7 @@ def _resolve_ucxxx_to_handles(page, channels: list[str], state: dict) -> list[st
     return result
 
 
-def open_browser(headless: bool = False):
+def open_browser(headless: bool = False) -> tuple | None:
     """Open a persistent Chromium browser and verify the YouTube login session.
 
     Returns (playwright_cm, context, page) on success, or None if not logged in
@@ -737,7 +738,7 @@ def process_channels(channel_sources: dict[str, str],
         log.info(f"Done. {', '.join(parts)} this run. Stats: {state['stats']}")
 
 
-def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[str]:
+def _perform_browser_unblocks(page: Any, channels: list[str], state: dict) -> list[str]:
     """
     Navigate to myactivity.google.com/page?page=youtube_user_feedback and remove
     the 'Don't recommend channel' feedback entry for each channel.
@@ -949,7 +950,7 @@ def _perform_browser_unblocks(page, channels: list[str], state: dict) -> list[st
     return unblocked_channels
 
 
-def _screenshot(page, path: Path, pr):
+def _screenshot(page: Any, path: Path, pr: Any) -> None:
     """Take a screenshot, logging a warning if it fails (e.g. window minimized)."""
     try:
         page.mouse.move(0, 0)  # reset hover state before capturing
