@@ -591,6 +591,14 @@ def main() -> None:
                 size = state.get("source_sizes", {}).get(src)
                 size_str = f"  (list size: {size})" if size is not None else ""
                 print(f"  {src:<16s} {count:>5d}{size_str}")
+        # Blocklist coverage: blocked / total across all known source sizes
+        source_sizes = state.get("source_sizes", {})
+        if source_sizes:
+            total_on_lists = sum(source_sizes.values())
+            total_blocked = len(state.get("blocked_by", {}))
+            pct = total_blocked / total_on_lists * 100 if total_on_lists else 0
+            print(f"\nFeed coverage      : {total_blocked} of ~{total_on_lists} channels blocked ({pct:.1f}%)")
+            print(f"                     (channels appear in coverage only after showing in the home feed)")
         if whb:
             print(f"\nSubscribed channels in blocklist (skipped, notified once):")
             for ch, info in whb.items():
