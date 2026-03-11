@@ -173,7 +173,6 @@ video:
 
 ```json
 {
-  "processed": ["@channel1"],
   "blocked_by": {
     "@channel1": {"sources": ["deslop"], "blocked_at": "2026-03-05T...", "display_name": "Channel Name"}
   },
@@ -194,11 +193,13 @@ video:
   "auto_upgrade": false,
   "previous_version": "0.1.12",
   "current_version": "0.1.13",
-  "state_version": 1
+  "state_version": 2
 }
 ```
 
 `load_state()` is backward-compatible: missing keys are populated via `setdefault`. If `state_version` in the file exceeds the binary's `STATE_VERSION` constant, a warning is logged (state was written by a newer binary — occurs after `--revert`).
+
+**v2 migration**: `load_state()` drops the legacy `"processed"` key via `s.pop("processed", None)` when loading old state files. `blocked_by.keys()` is now the sole authoritative record of blocked channels.
 
 `pending_unblock` entries carry an internal `_retry_count` sub-key (prefixed `_` to indicate it is not part of the public schema). It tracks consecutive display-name lookup failures for that channel. After `_MAX_DISPLAY_NAME_RETRIES` (3) failures the channel is removed from `pending_unblock` automatically. This key does not require a `STATE_VERSION` bump — old binaries ignore it.
 

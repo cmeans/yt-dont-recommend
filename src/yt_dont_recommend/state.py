@@ -42,7 +42,6 @@ class AppState(TypedDict, total=False):
     guaranteed present. Never rename or remove existing keys — only add new
     ones, with a matching setdefault() in load_state() and a STATE_VERSION bump.
     """
-    processed: list[str]
     blocked_by: dict[str, BlockedByEntry]
     would_have_blocked: dict[str, dict]
     last_run: str | None
@@ -127,9 +126,10 @@ def load_state() -> AppState:
                 "Some state fields may be ignored. Upgrade to restore full functionality."
             )
         s.setdefault("state_version", STATE_VERSION)
+        # v2 migration: drop redundant "processed" list (blocked_by.keys() is authoritative)
+        s.pop("processed", None)
         return s
     return {
-        "processed": [],
         "blocked_by": {},
         "would_have_blocked": {},
         "last_run": None,
@@ -150,15 +150,6 @@ def save_state(state: AppState) -> None:
     STATE_FILE = _state_file()
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     state["last_run"] = datetime.now().isoformat()
-    # Deduplicate processed list while preserving order.
-    # Note: processed tracks all attempted channels (including failures);
-    # blocked_by.keys() is the authoritative record of successfully blocked
-    # channels. processed is retained for backward compatibility.
-    seen: set[str] = set()
-    state["processed"] = [
-        ch for ch in state.get("processed", [])
-        if ch not in seen and not seen.add(ch)  # type: ignore[func-returns-value]
-    ]
     # Don't leave empty pending_unblock in the state file
     if "pending_unblock" in state and not state["pending_unblock"]:
         del state["pending_unblock"]

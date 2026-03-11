@@ -222,10 +222,6 @@ def check_removals(state: dict, current_channels: list[str],
             # unblock can be retried on the next run without losing the channel.
             state.setdefault("pending_unblock", {})[channel] = info.copy()
             del blocked_by[channel]
-            try:
-                state["processed"].remove(channel)
-            except ValueError:
-                pass
             to_unblock.append(channel)
             if other_sources:
                 log.warning(

@@ -77,7 +77,7 @@ VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 # State schema version — bump this whenever the state file structure changes.
 # Policy: only ADD new keys (never rename/remove/reinterpret existing ones).
 # load_state() warns when it reads a state file written by a newer version.
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 # Set to True by write_attention() so main() can exit with code 1 when
 # something serious enough to alert the user occurred during the run.

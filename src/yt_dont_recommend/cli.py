@@ -577,7 +577,7 @@ def main() -> None:
     if args.stats:
         state = load_state()
         whb = state.get("would_have_blocked", {})
-        print(f"\nBlocked channels   : {len(state['processed'])}")
+        print(f"\nBlocked channels   : {len(state['blocked_by'])}")
         print(f"Last run           : {state.get('last_run', 'never')}")
         s = state.get("stats", {})
         print(f"Total blocked      : {s.get('total_blocked', 0)}")
@@ -672,7 +672,7 @@ def main() -> None:
     # fast and needs no browser. A single browser session is opened afterward
     # for one combined feed scan across all sources.
     state = load_state()
-    processed_set = set(state["processed"])
+    processed_set = set(state["blocked_by"].keys())
     channel_sources: dict[str, str] = {}  # {canonical: source} — unprocessed channels
     all_unblocks: list[str] = []
 

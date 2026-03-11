@@ -282,16 +282,14 @@ class TestResolveSource:
 class TestCheckRemovals:
     def _state(self, blocked: dict) -> dict:
         """Build a minimal state dict with the given blocked_by entries."""
-        processed = list(blocked.keys())
         return {
-            "processed": processed,
             "blocked_by": {
                 ch: {"sources": list(sources), "blocked_at": "2026-01-01T00:00:00"}
                 for ch, sources in blocked.items()
             },
             "would_have_blocked": {},
             "last_run": None,
-            "stats": {"total_blocked": len(processed), "total_skipped": 0, "total_failed": 0},
+            "stats": {"total_blocked": len(blocked), "total_skipped": 0, "total_failed": 0},
         }
 
     def test_unblocks_channel_removed_from_sole_source(self, tmp_path, monkeypatch):
@@ -299,7 +297,6 @@ class TestCheckRemovals:
         state = self._state({"@gone": ["deslop"]})
         result = ydr.check_removals(state, [], "deslop", "all")
         assert result == ["@gone"]
-        assert "@gone" not in state["processed"]
         assert "@gone" not in state["blocked_by"]
 
     def test_all_policy_keeps_block_when_other_source_still_present(self, tmp_path, monkeypatch):
@@ -307,7 +304,7 @@ class TestCheckRemovals:
         state = self._state({"@channel": ["deslop", "aislist"]})
         result = ydr.check_removals(state, [], "deslop", "all")
         assert result == []
-        assert "@channel" in state["processed"]
+        assert "@channel" in state["blocked_by"]
         # deslop removed from sources list, aislist still there
         assert state["blocked_by"]["@channel"]["sources"] == ["aislist"]
 
@@ -316,7 +313,6 @@ class TestCheckRemovals:
         state = self._state({"@channel": ["deslop", "aislist"]})
         result = ydr.check_removals(state, [], "deslop", "any")
         assert result == ["@channel"]
-        assert "@channel" not in state["processed"]
         assert "@channel" not in state["blocked_by"]
 
     def test_channel_still_in_list_is_not_touched(self, tmp_path, monkeypatch):
@@ -324,7 +320,7 @@ class TestCheckRemovals:
         state = self._state({"@still-there": ["deslop"]})
         result = ydr.check_removals(state, ["@still-there"], "deslop", "all")
         assert result == []
-        assert "@still-there" in state["processed"]
+        assert "@still-there" in state["blocked_by"]
 
     def test_channel_from_different_source_not_affected(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
@@ -332,7 +328,7 @@ class TestCheckRemovals:
         # Running deslop — aislist channel not in deslop, but deslop didn't block it
         result = ydr.check_removals(state, [], "deslop", "all")
         assert result == []
-        assert "@channel" in state["processed"]
+        assert "@channel" in state["blocked_by"]
 
     def test_check_removals_is_case_insensitive(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")

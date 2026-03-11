@@ -381,7 +381,7 @@ def process_channels(channel_sources: dict[str, str],
     every channel in channel_sources.
 
     channel_sources: {canonical_handle: source_name} — channels not yet in
-        state["processed"], collected from all sources by the caller.
+        state["blocked_by"], collected from all sources by the caller.
     to_unblock: channels whose myactivity feedback entry should be deleted
         first (from check_removals() results and pending_unblock retries).
     state: already-loaded state dict (mutated in place). Loaded fresh if None.
@@ -406,7 +406,7 @@ def process_channels(channel_sources: dict[str, str],
     if limit is None:
         limit = int(timing.get("session_cap", DEFAULT_SESSION_CAP))
 
-    processed_set = set(state["processed"])
+    processed_set = set(state["blocked_by"].keys())
 
     # Filter to_unblock against channels already attempted in this process run.
     to_unblock = [ch for ch in to_unblock if ch not in _pending_attempted_this_run]
@@ -662,7 +662,6 @@ def process_channels(channel_sources: dict[str, str],
                     continue
 
                 if success:
-                    state["processed"].append(canonical)
                     processed_set.add(canonical)
                     processed_set_lower.add(canonical.lower())
                     state["stats"]["total_blocked"] += 1

@@ -120,7 +120,6 @@ def _base_state(channels: list[str], display_names: dict | None = None) -> dict:
         blocked_by[ch] = info
         pending_unblock[ch] = info.copy()
     return {
-        "processed": [],
         "blocked_by": blocked_by,
         "pending_unblock": pending_unblock,
         "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
@@ -408,7 +407,7 @@ class TestProcessChannels:
         """Nothing to do → returns immediately, no browser opened."""
         with patch("yt_dont_recommend.browser.open_browser") as mock_open:
             process_channels({}, to_unblock=[], state={
-                "processed": [], "blocked_by": {}, "would_have_blocked": {},
+                "blocked_by": {}, "would_have_blocked": {},
                 "pending_unblock": {}, "ucxxx_to_handle": {},
                 "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
             })
@@ -420,7 +419,7 @@ class TestProcessChannels:
         unblock_mod._pending_attempted_this_run.add("@alpha")
         with patch("yt_dont_recommend.browser.open_browser") as mock_open:
             process_channels({}, to_unblock=["@alpha"], state={
-                "processed": [], "blocked_by": {}, "would_have_blocked": {},
+                "blocked_by": {}, "would_have_blocked": {},
                 "pending_unblock": {}, "ucxxx_to_handle": {},
                 "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
             })
