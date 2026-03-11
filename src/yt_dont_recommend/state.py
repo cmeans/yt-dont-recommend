@@ -107,6 +107,15 @@ def save_state(state: dict):
     STATE_FILE = _state_file()
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     state["last_run"] = datetime.now().isoformat()
+    # Deduplicate processed list while preserving order.
+    # Note: processed tracks all attempted channels (including failures);
+    # blocked_by.keys() is the authoritative record of successfully blocked
+    # channels. processed is retained for backward compatibility.
+    seen: set[str] = set()
+    state["processed"] = [
+        ch for ch in state.get("processed", [])
+        if ch not in seen and not seen.add(ch)  # type: ignore[func-returns-value]
+    ]
     # Don't leave empty pending_unblock in the state file
     if "pending_unblock" in state and not state["pending_unblock"]:
         del state["pending_unblock"]
