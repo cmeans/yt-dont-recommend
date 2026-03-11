@@ -19,7 +19,7 @@ import re
 import time
 import urllib.request
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -806,5 +806,5 @@ def classify_video(video_id: str, title: str, cfg: "dict | None" = None) -> dict
         "title_result":      title_result,
         "thumbnail_result":  thumb_result,
         "transcript_result": tx_result,
-        "classified_at":     datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "classified_at":     datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }

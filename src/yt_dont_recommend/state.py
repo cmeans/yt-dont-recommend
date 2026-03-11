@@ -155,8 +155,6 @@ def _ntfy_notify(topic: str, message: str) -> None:
 
 
 def write_attention(message: str) -> None:
-    global _had_attention
-    _had_attention = True
     """Record an alert that requires user action.
 
     Appends a timestamped entry to the attention flag file, attempts a
@@ -165,6 +163,8 @@ def write_attention(message: str) -> None:
     --clear-alerts, so unattended (cron/launchd) failures are visible
     the next time the user runs any command.
     """
+    global _had_attention
+    _had_attention = True
     ATTENTION_FILE.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().isoformat(timespec="seconds")
     with open(ATTENTION_FILE, "a", encoding="utf-8") as f:
