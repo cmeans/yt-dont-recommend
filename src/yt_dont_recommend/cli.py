@@ -817,7 +817,7 @@ def main() -> None:
                 to_unblock=all_unblocks,
                 state=state,
                 dry_run=args.dry_run,
-                limit=None if args.no_limit else args.limit,
+                limit=sys.maxsize if args.no_limit else args.limit,
                 headless=args.headless,
                 clickbait_cfg=clickbait_cfg,
                 exclude_set=clickbait_exclude_set or None,

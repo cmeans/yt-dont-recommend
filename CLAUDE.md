@@ -229,7 +229,7 @@ def process_channels(channel_sources: dict[str, str],
                      to_unblock: list[str] | None = None,
                      state: dict | None = None,
                      dry_run: bool = False,
-                     limit: int | None = None,
+                     limit: int | None = None,  # None → apply DEFAULT_SESSION_CAP; sys.maxsize → no cap (--no-limit)
                      headless: bool = False,
                      _browser: tuple | None = None) -> None:
     # channel_sources: {canonical_handle: source_name} — all unprocessed channels

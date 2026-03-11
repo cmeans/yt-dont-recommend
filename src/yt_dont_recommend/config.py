@@ -144,6 +144,11 @@ def load_timing_config() -> dict:
     try:
         import yaml  # type: ignore[import-untyped]
     except ImportError:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            f"{CONFIG_FILE} exists but pyyaml is not installed — timing overrides ignored. "
+            "Install with: pip install pyyaml"
+        )
         return {}
     try:
         data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}

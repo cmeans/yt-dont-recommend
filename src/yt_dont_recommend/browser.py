@@ -37,7 +37,7 @@ from .config import (
     DEFAULT_SESSION_CAP,
     load_timing_config,
 )
-from .unblock import _perform_browser_unblocks, _pending_attempted_this_run  # noqa: F401
+from .unblock import _perform_browser_unblocks, _pending_attempted_this_run
 
 log = logging.getLogger(__name__)
 
@@ -230,7 +230,7 @@ def fetch_subscriptions(page: Any) -> set[str]:
             break  # no new channels loaded after scroll
         prev_count = len(subscriptions)
 
-        page.evaluate("window.scrollBy(0, window.innerHeight * 3)")
+        page.evaluate(f"window.scrollBy(0, window.innerHeight * {random.uniform(2.5, 4.0):.2f})")
         time.sleep(random.uniform(1.0, 2.5))
 
     if subscriptions:
@@ -688,7 +688,7 @@ def process_channels(channel_sources: dict[str, str],
 
                     if blocked_count % _long_pause_every == 0:
                         log.info(f"Taking a {_long_pause_seconds:.0f}s break...")
-                        time.sleep(random.uniform(_long_pause_seconds * 0.8, _long_pause_seconds * 1.3))
+                        time.sleep(random.uniform(_long_pause_seconds * 0.8, _long_pause_seconds * 1.2))
                     else:
                         time.sleep(random.uniform(_min_delay, _max_delay))
 
@@ -719,7 +719,7 @@ def process_channels(channel_sources: dict[str, str],
             if found_match_this_pass or evaluated_clickbait_this_pass:
                 no_progress_scrolls = 0
             else:
-                page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
+                page.evaluate(f"window.scrollBy(0, window.innerHeight * {random.uniform(1.5, 3.0):.2f})")
                 time.sleep(random.uniform(1.5, 3.0))
                 no_progress_scrolls += 1
 

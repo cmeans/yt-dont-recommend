@@ -94,6 +94,8 @@ pipx install 'yt-dont-recommend[clickbait]'
 
 For configuration (model selection, thresholds, thumbnail and transcript stages), see the [clickbait configuration file](clickbait-config.example.yaml) — copy it to `~/.yt-dont-recommend/clickbait-config.yaml` and edit to taste.
 
+**Timing configuration** (optional): copy [`config.example.yaml`](config.example.yaml) to `~/.yt-dont-recommend/config.yaml` to override delays, the long-pause frequency, page load wait, and the per-session action cap. Requires `pyyaml` (`pip install pyyaml`); ignored silently if the file is absent.
+
 ---
 
 ## Upgrading
@@ -183,6 +185,8 @@ python yt_dont_recommend.py --login
 ---
 
 A browser window opens — sign into your Google account, then close it. Your session is saved to `~/.yt-dont-recommend/browser-profile/` and reused on every subsequent run.
+
+The [`experiments/`](experiments/) directory contains ad-hoc probe scripts and benchmark results from clickbait detection development (thumbnail classification, transcript analysis, title scoring). Not needed for normal use.
 
 > **Debian/Ubuntu:** after installing Chromium, you may also need system dependencies:
 > - uv tool: `uvx playwright install-deps chromium`
@@ -369,6 +373,7 @@ All data lives in `~/.yt-dont-recommend/`:
 - **Home feed matching:** The tool can only block channels that appear in your home feed during a run. Channels on the blocklist that never surface in the feed during that session will not be processed. Resume runs until the list is exhausted.
 - **Handle vs. channel ID:** YouTube feed cards expose `@handle` links only — `UCxxx` IDs in a blocklist are automatically resolved to `@handles` before scanning. Results are cached in state so re-resolution is skipped on subsequent runs. Both built-in sources already use `@handle` format; this only applies to custom blocklists.
 - **Start small:** Use `--limit 10` for your first real run to confirm everything is working before processing a full list.
+- **Session cap:** By default, each run caps at 75 actions (blocks + clickbait marks combined) to keep sessions human-length. Use `--no-limit` to remove the cap for a single run, or set `session_cap` in `~/.yt-dont-recommend/config.yaml`.
 
 ## Running Periodically
 

@@ -12,7 +12,7 @@ timing:
 
   # After this many blocks, take a longer break (reduces rate-limit risk).
   long_pause_every: 25  # default: 25
-  long_pause_seconds: 30 # default: 30  (actual pause is ±20% of this value)
+  long_pause_seconds: 30 # default: 30  (actual pause is ±20% of this value; range: 24–36s)
 
   # Extra wait after navigating to a new page (seconds).
   page_load_wait: 3.0   # default: 3.0
