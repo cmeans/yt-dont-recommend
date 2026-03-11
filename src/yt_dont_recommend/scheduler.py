@@ -1,19 +1,67 @@
 """
-Schedule management: _parse_schedule_hours, schedule_cmd, and related helpers.
+Schedule management: install/remove/status for the every-minute heartbeat,
+daily window computation, and the heartbeat() shim itself.
 
-Imports only from config.py for constants.
+The scheduler installs a minimal every-minute cron (Linux) or launchd
+(macOS) entry that runs:
+    yt-dont-recommend --heartbeat
 
-schedule_cmd calls _schedule_linux/_schedule_macos via _pkg() so that
-monkeypatch.setattr(ydr, "_schedule_linux", ...) works correctly in tests.
+The heartbeat shim is intentionally fast: reads schedule.json (pure
+stdlib, no Playwright, no heavy imports), checks whether any mode is
+due, spawns the full process if so, and exits immediately.
+
+All timestamps are UTC (Zulu). String comparison on zero-padded "HH:MM"
+is lexicographically correct and avoids datetime parsing overhead in the
+hot path.
+
+schedule.json schema
+--------------------
+See CLAUDE.md § Schedule JSON Schema for the canonical definition.
+
+    {
+        "modes": {
+            "blocklist": {"runs_per_day": 2},
+            "clickbait": {"runs_per_day": 4}
+        },
+        "headless": true,
+        "installed_at": "2026-03-11T14:00:00+00:00",
+        "today": {
+            "date": "2026-03-11",          // UTC date string
+            "blocklist": {
+                "planned_utc": ["03:17", "15:44"],   // HH:MM, sorted
+                "executed_utc": ["03:17"]             // times already fired
+            },
+            "clickbait": {
+                "planned_utc": ["01:12", "07:33", "13:44", "20:01"],
+                "executed_utc": ["01:12", "07:33"]
+            }
+        }
+    }
+
+Key behaviours
+--------------
+- planned_utc is recomputed fresh each UTC day, giving different run
+  times every day (jitter by design).
+- A mode is "due" when any planned time <= now_hhmm and that time is
+  not yet in executed_utc.
+- Modes that are simultaneously due are combined into one subprocess
+  invocation (one browser session, not two).
+- executed_utc is written before the subprocess is spawned. If the
+  spawn fails, that slot is silently skipped — it will not retry on
+  the next heartbeat tick for the same slot.
+- schedule.json is written atomically (write to .tmp, rename).
 """
 
+import json
+import random
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import (
     LOG_FILE,
-    _SCHEDULE_HOURS,
+    SCHEDULE_FILE,
     _LAUNCHD_LABEL,
     _LAUNCHD_PLIST,
     _CRON_MARKER,
@@ -26,64 +74,199 @@ def _pkg():
     return _p
 
 
-def _format_hours(hours: list[int]) -> str:
-    """Convert a list of 24h integers to a readable string, e.g. '3:00 AM and 3:00 PM'."""
-    def _fmt(h: int) -> str:
-        if h == 0:   return "12:00 AM"
-        if h < 12:   return f"{h}:00 AM"
-        if h == 12:  return "12:00 PM"
-        return f"{h - 12}:00 PM"
-    parts = [_fmt(h) for h in sorted(hours)]
-    if len(parts) <= 2:
-        return " and ".join(parts)
-    return ", ".join(parts[:-1]) + ", and " + parts[-1]
+# ---------------------------------------------------------------------------
+# schedule.json I/O
+# ---------------------------------------------------------------------------
+
+def load_schedule() -> dict:
+    """Load schedule.json. Returns {} if the file doesn't exist or is corrupt."""
+    if not SCHEDULE_FILE.exists():
+        return {}
+    try:
+        return json.loads(SCHEDULE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
-def _parse_schedule_hours(raw: str) -> list[int]:
-    """Parse --schedule-hours input into a sorted list of 24h integers.
+def save_schedule(data: dict) -> None:
+    """Write schedule.json atomically (write to .tmp, then rename)."""
+    SCHEDULE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SCHEDULE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(SCHEDULE_FILE)
 
-    Accepted formats:
-      6,18      specific hours (0–23, comma-separated)
-      */4       every 4 hours (step 1–23)
-      hourly    every hour (alias for */1)
 
-    Raises ValueError with a human-readable message on bad input.
+# ---------------------------------------------------------------------------
+# Daily window computation
+# ---------------------------------------------------------------------------
+
+def _compute_daily_plan(runs_per_day: int) -> list:
+    """Divide 24 hours into *runs_per_day* equal windows and pick a random
+    UTC minute within each window.
+
+    Returns a sorted list of zero-padded "HH:MM" strings. The values differ
+    on every call — this is the jitter mechanism. Storing the result in
+    schedule.json commits to those times for the rest of the day.
+
+    Example (runs_per_day=2):
+        Window 0: [00:00, 12:00)  →  e.g. "03:17"
+        Window 1: [12:00, 24:00)  →  e.g. "15:44"
+        Returns: ["03:17", "15:44"]
     """
-    raw = raw.strip()
-    if raw == "hourly":
-        return list(range(24))
-    if raw.startswith("*/"):
-        step = int(raw[2:])
-        if step < 1 or step > 23:
-            raise ValueError(f"*/N step must be 1–23, got {step!r}")
-        return list(range(0, 24, step))
-    parsed = sorted(set(int(h.strip()) for h in raw.split(",")))
-    if not parsed or not all(0 <= h <= 23 for h in parsed):
-        raise ValueError(f"hours must be 0–23, got {raw!r}")
-    return parsed
+    if runs_per_day <= 0:
+        return []
+    window_minutes = (24 * 60) // runs_per_day
+    result = []
+    for i in range(runs_per_day):
+        offset = random.randint(0, window_minutes - 1)
+        total = i * window_minutes + offset
+        result.append(f"{total // 60:02d}:{total % 60:02d}")
+    return result
 
+
+# ---------------------------------------------------------------------------
+# Heartbeat shim
+# ---------------------------------------------------------------------------
+
+def heartbeat() -> None:
+    """Fast-exit scheduler shim invoked every minute by cron/launchd.
+
+    Steps:
+      1. Read schedule.json. Exit immediately if absent (nothing installed).
+      2. If the stored ``today.date`` differs from the current UTC date,
+         recompute planned_utc for every mode and reset executed_utc lists.
+      3. Find modes whose next unexecuted planned time <= current UTC HH:MM.
+      4. Mark those times as executed and persist schedule.json.
+      5. Spawn one subprocess combining all due modes into a single
+         yt-dont-recommend invocation (one browser session).
+
+    No Playwright, no package-level imports. All I/O is schedule.json only.
+    """
+    schedule = load_schedule()
+    if not schedule:
+        return
+
+    now       = datetime.now(timezone.utc)
+    today_str = now.strftime("%Y-%m-%d")
+    now_hhmm  = now.strftime("%H:%M")
+
+    # Recompute daily plan at UTC day boundary
+    today_plan = schedule.get("today", {})
+    if today_plan.get("date") != today_str:
+        modes_cfg  = schedule.get("modes", {})
+        new_today: dict = {"date": today_str}
+        for mode, cfg in modes_cfg.items():
+            rpd = cfg.get("runs_per_day", 0)
+            new_today[mode] = {
+                "planned_utc":  _compute_daily_plan(rpd),
+                "executed_utc": [],
+            }
+        schedule["today"] = new_today
+        today_plan = new_today
+        save_schedule(schedule)
+
+    # Find which modes are due (first unexecuted planned time <= now)
+    due_modes: list = []
+    for mode in schedule.get("modes", {}):
+        mode_plan = today_plan.get(mode, {})
+        planned   = mode_plan.get("planned_utc", [])
+        executed  = set(mode_plan.get("executed_utc", []))
+        for t in planned:
+            if t <= now_hhmm and t not in executed:
+                due_modes.append(mode)
+                break
+
+    if not due_modes:
+        return
+
+    # Mark as executed before spawning (prevents double-fire on slow spawn)
+    for mode in due_modes:
+        mode_plan = today_plan.setdefault(mode, {})
+        planned   = mode_plan.get("planned_utc", [])
+        executed  = mode_plan.setdefault("executed_utc", [])
+        for t in planned:
+            if t <= now_hhmm and t not in executed:
+                executed.append(t)
+                break
+    save_schedule(schedule)
+
+    # Build and spawn — due modes combined into one invocation
+    bin_path = str(Path(sys.argv[0]).resolve())
+    cmd = [bin_path]
+    if "blocklist" in due_modes:
+        cmd.append("--blocklist")
+    if "clickbait" in due_modes:
+        cmd.append("--clickbait")
+    if schedule.get("headless", True):
+        cmd.append("--headless")
+    try:
+        subprocess.Popen(cmd)
+    except Exception:
+        pass  # best-effort; slot already marked executed, won't retry
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _find_installed_binary() -> str:
     """Return the absolute path to use for the schedule entry.
 
-    When running as an installed binary (uv tool / pipx), sys.argv[0] is already
-    the right answer — just resolve it to an absolute path. Falls back to PATH
-    lookup when running in dev mode as 'python yt_dont_recommend.py'.
+    When running as an installed binary (uv tool / pipx), sys.argv[0] is
+    already the right answer. Falls back to PATH lookup for dev mode.
     """
     import shutil
     argv0 = Path(sys.argv[0]).resolve()
-    # Installed binary: no .py extension, file exists
     if argv0.suffix != ".py" and argv0.exists():
         return str(argv0)
-    # Dev mode: look for the installed command on PATH
     found = shutil.which("yt-dont-recommend")
     if found:
         return found
-    # Last resort: invoke via the current Python interpreter
     return f"{sys.executable} {argv0}"
 
 
-def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
+def _modes_summary(schedule: dict) -> str:
+    """One-line summary of configured modes for status display.
+
+    Example: "blocklist: 2x/day, clickbait: 4x/day"
+    """
+    modes = schedule.get("modes", {})
+    if not modes:
+        return "none configured"
+    parts = []
+    for mode, cfg in modes.items():
+        rpd = cfg.get("runs_per_day", 0)
+        parts.append(f"{mode}: {rpd}x/day")
+    return ", ".join(parts)
+
+
+def _print_today_plan(schedule: dict) -> None:
+    """Print today's planned and executed run times per mode."""
+    today = schedule.get("today", {})
+    if not today.get("date"):
+        return
+    print(f"  Today ({today['date']} UTC):")
+    for mode in schedule.get("modes", {}):
+        mode_plan = today.get(mode, {})
+        planned   = mode_plan.get("planned_utc", [])
+        executed  = set(mode_plan.get("executed_utc", []))
+        if not planned:
+            print(f"    {mode}: no runs scheduled today")
+            continue
+        marks = [f"{t} \u2713" if t in executed else f"{t} pending" for t in planned]
+        print(f"    {mode}: {', '.join(marks)}")
+
+
+# ---------------------------------------------------------------------------
+# Platform: macOS (launchd)
+# ---------------------------------------------------------------------------
+
+def _schedule_macos(action: str, bin_path: str, schedule: dict) -> None:
+    """Install, remove, or show status of the launchd heartbeat agent.
+
+    *schedule* is only used for the install action (written to schedule.json
+    and embedded in the plist). For status/remove it is ignored.
+    """
     import plistlib
     plist_path = _LAUNCHD_PLIST
 
@@ -91,28 +274,23 @@ def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
         if not plist_path.exists():
             print("No schedule installed.")
             return
-        print(f"Installed:  {plist_path}")
-        prog_args = []
-        try:
-            with open(plist_path, "rb") as f:
-                data = plistlib.load(f)
-            actual_hours = sorted(e["Hour"] for e in data.get("StartCalendarInterval", []))
-            time_str = _format_hours(actual_hours)
-            prog_args = data.get("ProgramArguments", [])
-        except Exception:
-            time_str = "unknown"
+        sched = load_schedule()
         result = subprocess.run(
             ["launchctl", "list", _LAUNCHD_LABEL],
             capture_output=True, text=True,
         )
-        status = "loaded" if result.returncode == 0 else "plist present but not loaded — try re-running --schedule install"
+        status = (
+            "loaded"
+            if result.returncode == 0
+            else "plist present but not loaded — re-run --schedule install"
+        )
+        print(f"Installed:  {plist_path}")
         print(f"Status:     {status}")
-        print(f"Runs at:    {time_str} daily")
-        if prog_args:
-            print(f"Command:    {' '.join(prog_args)}")
-        if prog_args and "--blocklist" not in prog_args and "--clickbait" not in prog_args:
-            print(f"WARNING:    command has no --blocklist or --clickbait — it will print help "
-                  f"and do nothing. Run: yt-dont-recommend --schedule install")
+        print(f"Heartbeat:  every minute")
+        if sched:
+            print(f"Modes:      {_modes_summary(sched)}")
+            print(f"Headless:   {'yes' if sched.get('headless', True) else 'no'}")
+            _print_today_plan(sched)
         return
 
     if action == "remove":
@@ -122,102 +300,132 @@ def _schedule_macos(action: str, bin_path: str, hours: list[int]) -> None:
         subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
         plist_path.unlink()
         print("Schedule removed.")
+        print(f"(schedule.json kept at {SCHEDULE_FILE} — delete manually if desired)")
         return
 
-    # install — idempotent: replace any existing schedule
+    # install — replace any existing schedule
     if plist_path.exists():
         subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
         plist_path.unlink()
         print("Replacing existing schedule...")
 
     plist = {
-        "Label": _LAUNCHD_LABEL,
-        "ProgramArguments": [bin_path, "--blocklist", "--headless"],
-        "StartCalendarInterval": [
-            {"Hour": h, "Minute": 0} for h in hours
-        ],
-        "StandardOutPath": "/dev/null",
+        "Label":            _LAUNCHD_LABEL,
+        "ProgramArguments": [bin_path, "--heartbeat"],
+        "StartInterval":    60,
+        "StandardOutPath":  "/dev/null",
         "StandardErrorPath": "/dev/null",
-        "RunAtLoad": False,
+        "RunAtLoad":        False,
     }
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     with open(plist_path, "wb") as f:
         plistlib.dump(plist, f)
     subprocess.run(["launchctl", "load", str(plist_path)], check=True)
-    print(f"Scheduled to run at {_format_hours(hours)} daily.")
-    print(f"Plist: {plist_path}")
-    print(f"\nRun logs: {LOG_FILE}")
-    print("Note: scheduled runs use --blocklist only. To include --clickbait, edit the plist manually.")
+    save_schedule(schedule)
+    print(f"Schedule installed. Heartbeat: every minute.")
+    print(f"Modes:      {_modes_summary(schedule)}")
+    print(f"Plist:      {plist_path}")
+    print(f"Logs:       {LOG_FILE}")
 
 
-def _schedule_linux(action: str, bin_path: str, hours: list[int]) -> None:
+# ---------------------------------------------------------------------------
+# Platform: Linux (cron)
+# ---------------------------------------------------------------------------
+
+def _schedule_linux(action: str, bin_path: str, schedule: dict) -> None:
+    """Install, remove, or show status of the cron heartbeat entry.
+
+    *schedule* is only used for the install action (written to schedule.json).
+    For status/remove it is ignored — current config is read from schedule.json.
+    """
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-    existing_lines = result.stdout.splitlines() if result.returncode == 0 else []
-    managed = [l for l in existing_lines if _CRON_MARKER in l]
-    other = [l for l in existing_lines if _CRON_MARKER not in l]
+    existing = result.stdout.splitlines() if result.returncode == 0 else []
+    managed  = [l for l in existing if _CRON_MARKER in l]
+    other    = [l for l in existing if _CRON_MARKER not in l]
 
     if action == "status":
         if not managed:
             print("No schedule installed.")
             return
-        for line in managed:
-            try:
-                parts = line.split()
-                actual_hours = sorted(int(h) for h in parts[1].split(","))
-                # Extract command: fields after the 5 cron fields, before >>
-                cmd_parts = []
-                for p in parts[5:]:
-                    if p == ">>":
-                        break
-                    cmd_parts.append(p)
-                cmd = " ".join(cmd_parts)
-                print(f"Runs at:  {_format_hours(actual_hours)} daily")
-                print(f"Command:  {cmd}")
-                if "--blocklist" not in cmd and "--clickbait" not in cmd:
-                    print(f"WARNING:  command has no --blocklist or --clickbait — it will print "
-                          f"help and do nothing. Run: yt-dont-recommend --schedule install")
-            except (IndexError, ValueError):
-                print(f"  {line}")
+        sched = load_schedule()
+        print(f"Installed:  crontab entry present")
+        print(f"Heartbeat:  every minute")
+        if sched:
+            print(f"Modes:      {_modes_summary(sched)}")
+            print(f"Headless:   {'yes' if sched.get('headless', True) else 'no'}")
+            _print_today_plan(sched)
         return
 
     if action == "remove":
         if not managed:
             print("No schedule to remove.")
             return
-        new_crontab = "\n".join(other)
+        new_crontab = "\n".join(l for l in other if l.strip())
         if new_crontab and not new_crontab.endswith("\n"):
             new_crontab += "\n"
         subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
         print("Schedule removed.")
+        print(f"(schedule.json kept at {SCHEDULE_FILE} — delete manually if desired)")
         return
 
-    # install — idempotent: managed lines are already excluded from `other`,
-    # so writing the new entry naturally replaces any previous one.
+    # install — managed lines already excluded from `other`, naturally replaces
     if managed:
         print("Replacing existing schedule...")
-
-    hours_str = ",".join(str(h) for h in hours)
-    cron_line = f"0 {hours_str} * * * {bin_path} --blocklist --headless >> /dev/null 2>&1  {_CRON_MARKER}"
-    new_lines = [l for l in other if l.strip()] + [cron_line]
+    cron_line = (
+        f"* * * * * {bin_path} --heartbeat >> /dev/null 2>&1  {_CRON_MARKER}"
+    )
+    new_lines   = [l for l in other if l.strip()] + [cron_line]
     new_crontab = "\n".join(new_lines) + "\n"
     subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
-    print(f"Scheduled to run at {_format_hours(hours)} daily.")
-    print(f"Entry: {cron_line}")
-    print(f"\nRun logs: {LOG_FILE}")
-    print("To verify: crontab -l")
-    print("Note: scheduled runs use --blocklist only. To include --clickbait, edit crontab -e manually.")
+    save_schedule(schedule)
+    print(f"Schedule installed. Heartbeat: every minute.")
+    print(f"Modes:      {_modes_summary(schedule)}")
+    print(f"Entry:      {cron_line}")
+    print(f"Logs:       {LOG_FILE}")
+    print("To verify:  crontab -l")
 
 
-def schedule_cmd(action: str, hours: list[int] | None = None) -> None:
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+def schedule_cmd(action: str,
+                 blocklist_runs: int = 0,
+                 clickbait_runs: int = 0) -> None:
     """Install, remove, or show status of the automatic run schedule.
 
-    Calls _schedule_linux/_schedule_macos via _pkg() so that
-    monkeypatch.setattr(ydr, "_schedule_linux", ...) is intercepted correctly.
+    For ``install``: *blocklist_runs* and *clickbait_runs* must already be
+    validated by the caller (at least one > 0). The headless flag is read
+    from ``load_schedule_config()`` (config.yaml ``schedule.headless``).
+
+    Delegates to ``_schedule_macos`` or ``_schedule_linux`` via ``_pkg()``
+    so that ``monkeypatch.setattr(ydr, "_schedule_linux", ...)`` is
+    intercepted correctly in tests.
     """
-    pkg = _pkg()
+    from .config import load_schedule_config
+    pkg      = _pkg()
     bin_path = pkg._find_installed_binary()
-    effective_hours = hours if hours is not None else list(_SCHEDULE_HOURS)
-    if sys.platform == "darwin":
-        pkg._schedule_macos(action, bin_path, effective_hours)
+
+    if action == "install":
+        cfg      = load_schedule_config()
+        headless = cfg.get("headless", True)
+        schedule: dict = {
+            "modes":        {},
+            "headless":     headless,
+            "installed_at": datetime.now(timezone.utc).isoformat(),
+            "today":        {},
+        }
+        if blocklist_runs > 0:
+            schedule["modes"]["blocklist"] = {"runs_per_day": blocklist_runs}
+        if clickbait_runs > 0:
+            schedule["modes"]["clickbait"] = {"runs_per_day": clickbait_runs}
+        if sys.platform == "darwin":
+            pkg._schedule_macos(action, bin_path, schedule)
+        else:
+            pkg._schedule_linux(action, bin_path, schedule)
     else:
-        pkg._schedule_linux(action, bin_path, effective_hours)
+        # status / remove — schedule param unused by platform functions
+        if sys.platform == "darwin":
+            pkg._schedule_macos(action, bin_path, {})
+        else:
+            pkg._schedule_linux(action, bin_path, {})

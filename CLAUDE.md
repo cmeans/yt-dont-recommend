@@ -114,10 +114,10 @@ The `aislist` source is plain text with `!` comments, ~8400+ channels. Format co
 
 - `__init__.py` — re-exports all public names; thin browser wrappers
 - `cli.py` — `main()` entry point, argument parsing, all CLI command handlers
-- `config.py` — constants, file paths, selectors, `pick_viewport()`, `load_timing_config()`, `load_browser_config()`, logging setup (no package imports)
+- `config.py` — constants, file paths, selectors, `pick_viewport()`, `load_timing_config()`, `load_browser_config()`, `load_schedule_config()`, logging setup (no package imports)
 - `state.py` — `load_state`, `save_state`, `write_attention`, `_had_attention`
 - `blocklist.py` — `resolve_source`, `parse_*_blocklist`, `normalize_handle`, `check_removals`
-- `scheduler.py` — `_parse_schedule_hours`, `schedule_cmd`, platform helpers
+- `scheduler.py` — `load_schedule`, `save_schedule`, `_compute_daily_plan`, `heartbeat`, `schedule_cmd`, platform helpers (`_schedule_linux`, `_schedule_macos`)
 - `browser.py` — core Playwright automation: `process_channels`, `fetch_subscriptions`, `do_login`, `open_browser`
 - `unblock.py` — `_perform_browser_unblocks`, `_pending_attempted_this_run`, `_MAX_DISPLAY_NAME_RETRIES`
 - `diagnostics.py` — `check_selectors`, `_screenshot` (viewport hardcoded 1280×800 for reproducible reports)
@@ -182,6 +182,41 @@ video:
 - `gemma3:4b` thumbnail two-step: 100% accuracy on 6-video set, ~65s/video
 
 **`_pkg()` pattern**: sub-modules use late import of `yt_dont_recommend` for names that tests patch. `__init__.py` re-exports all public names so `patch("yt_dont_recommend.X")` still works for external callers. Functions that live in `cli.py` must be patched as `yt_dont_recommend.cli.X` in tests.
+
+### Schedule JSON Schema
+
+`~/.yt-dont-recommend/schedule.json` — written by `--schedule install`, read/updated by `--heartbeat` every minute. Separate from state.json (scheduling concerns only).
+
+```json
+{
+    "modes": {
+        "blocklist": {"runs_per_day": 2},
+        "clickbait": {"runs_per_day": 4}
+    },
+    "headless": true,
+    "installed_at": "2026-03-11T14:00:00+00:00",
+    "today": {
+        "date": "2026-03-11",
+        "blocklist": {
+            "planned_utc": ["03:17", "15:44"],
+            "executed_utc": ["03:17"]
+        },
+        "clickbait": {
+            "planned_utc": ["01:12", "07:33", "13:44", "20:01"],
+            "executed_utc": ["01:12", "07:33"]
+        }
+    }
+}
+```
+
+Key behaviours:
+- `planned_utc` recomputed fresh each UTC day via `_compute_daily_plan(runs_per_day)` — divides 24h into N equal windows, picks a random minute in each. Different times every day (jitter by design).
+- A mode is "due" when any planned HH:MM <= now HH:MM (UTC) and that time is not in `executed_utc`.
+- Simultaneously due modes are combined into one subprocess invocation (one browser session).
+- `executed_utc` is written **before** the subprocess is spawned. Failed spawns are silently dropped — the slot is not retried.
+- All timestamps are UTC (Zulu). String comparison on zero-padded "HH:MM" is lexicographically correct for same-day comparisons.
+- Written atomically (write to `.tmp`, then rename).
+- Config defaults (`blocklist_runs`, `clickbait_runs`, `headless`) live in `config.yaml` under `schedule:` section, loaded by `load_schedule_config()` in config.py.
 
 ### State Schema
 
@@ -284,8 +319,10 @@ def fetch_subscriptions(page) -> set[str]:
 | `--setup-notify` | Generate a private ntfy.sh topic and show subscribe instructions |
 | `--remove-notify` | Remove the configured ntfy.sh topic |
 | `--test-notify` | Send a test push notification |
-| `--schedule install\|remove\|status` | Manage scheduled runs via launchd (macOS) or cron (Linux); install is idempotent |
-| `--schedule-hours EXPR` | Override run hours for `--schedule install`. Formats: `6,18` (comma-separated 24h integers), `*/4` (every N hours, step 1–23), `hourly`. Default: 3,15. |
+| `--schedule install\|remove\|status` | Manage scheduled runs via launchd (macOS) or cron (Linux). Installs an every-minute heartbeat that fires at randomised UTC times each day. |
+| `--blocklist-runs N` | Times per day to run blocklist mode (used with `--schedule install`). Omitting = 0 (not scheduled). |
+| `--clickbait-runs N` | Times per day to run clickbait mode (used with `--schedule install`). Omitting = 0 (not scheduled). |
+| `--heartbeat` | Internal: fast shim called every minute by cron/launchd. Checks schedule.json, spawns full run if due. |
 | `--uninstall` | Remove schedule, offer to delete data dir, print package manager uninstall command |
 | `--version` | Print installed version and exit |
 | `--verbose` | Extra logging |

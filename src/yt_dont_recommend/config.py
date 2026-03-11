@@ -84,7 +84,7 @@ STATE_VERSION = 2
 _had_attention = False
 
 # Schedule management
-_SCHEDULE_HOURS = (3, 15)  # 3:00 AM and 3:00 PM
+SCHEDULE_FILE = Path.home() / ".yt-dont-recommend" / "schedule.json"
 _LAUNCHD_LABEL = "com.user.yt-dont-recommend"
 _LAUNCHD_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
 _CRON_MARKER = "# managed by yt-dont-recommend"
@@ -189,6 +189,39 @@ def load_browser_config() -> dict:
             return {}
         allowed = {"use_system_chrome"}
         return {k: v for k, v in browser.items() if k in allowed}
+    except Exception:
+        return {}
+
+
+def load_schedule_config() -> dict:
+    """Load schedule defaults from the ``schedule:`` section of config.yaml.
+
+    Returns a dict with whichever of these keys are present in the file:
+        blocklist_runs (int)  — how many times/day to run blocklist mode
+        clickbait_runs (int)  — how many times/day to run clickbait mode
+        headless       (bool) — whether scheduled runs use --headless (default True)
+
+    Returns an empty dict if config.yaml is absent, unparseable, pyyaml is not
+    installed, or the ``schedule:`` section is missing.
+    """
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        sched = data.get("schedule", {})
+        if not isinstance(sched, dict):
+            return {}
+        result: dict = {}
+        for key in ("blocklist_runs", "clickbait_runs"):
+            if key in sched:
+                result[key] = int(sched[key])
+        if "headless" in sched:
+            result["headless"] = bool(sched["headless"])
+        return result
     except Exception:
         return {}
 

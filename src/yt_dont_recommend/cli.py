@@ -39,7 +39,7 @@ from .state import (
     check_attention_flag,
 )
 from .blocklist import resolve_source, check_removals
-from .scheduler import schedule_cmd, _parse_schedule_hours, _find_installed_binary
+from .scheduler import schedule_cmd, _find_installed_binary
 
 log = logging.getLogger(__name__)
 
@@ -454,21 +454,38 @@ def main() -> None:
         choices=["install", "remove", "status"],
         metavar="ACTION",
         help=(
-            "Manage the automatic run schedule (no cron knowledge required). "
-            "Actions: install, remove, status. "
+            "Manage the automatic run schedule. Actions: install, remove, status. "
             "Uses launchd on macOS, cron on Linux. "
-            "Default schedule: 3:00 AM and 3:00 PM daily."
+            "Installs a per-minute heartbeat that fires at randomised UTC times "
+            "each day — use --blocklist-runs and --clickbait-runs to set frequency."
         ),
     )
     parser.add_argument(
-        "--schedule-hours",
+        "--blocklist-runs",
+        type=int,
         default=None,
-        metavar="HH,HH",
+        metavar="N",
         help=(
-            "Override the hours for --schedule install (24h, comma-separated). "
-            "Example: --schedule-hours 6,18 runs at 6:00 AM and 6:00 PM. "
-            "Default: 3,15"
+            "Times per day to run blocklist mode when scheduling. "
+            "Not including this flag means 0 (not scheduled). "
+            "Used with --schedule install."
         ),
+    )
+    parser.add_argument(
+        "--clickbait-runs",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Times per day to run clickbait mode when scheduling. "
+            "Not including this flag means 0 (not scheduled). "
+            "Used with --schedule install."
+        ),
+    )
+    parser.add_argument(
+        "--heartbeat",
+        action="store_true",
+        help="Internal: check schedule and spawn a run if due. Called by cron/launchd every minute.",
     )
     parser.add_argument("--uninstall", action="store_true",
                         help=(
@@ -477,6 +494,14 @@ def main() -> None:
                         ))
 
     args = parser.parse_args()
+
+    # --heartbeat is handled before setup_logging and load_state to keep the
+    # shim fast. No Playwright, no state file access, no version tracking.
+    if args.heartbeat:
+        from .scheduler import heartbeat
+        heartbeat()
+        return
+
     setup_logging(args.verbose)
 
     # Detect first run before load_state() creates the state file.
@@ -550,19 +575,29 @@ def main() -> None:
         return
 
     if args.schedule:
-        schedule_hours = None
-        if args.schedule_hours:
-            try:
-                schedule_hours = _parse_schedule_hours(args.schedule_hours)
-            except ValueError:
+        if args.schedule == "install":
+            from .config import load_schedule_config
+            blocklist_runs = args.blocklist_runs or 0
+            clickbait_runs = args.clickbait_runs or 0
+            if not blocklist_runs and not clickbait_runs:
+                # Fall back to config.yaml defaults
+                cfg = load_schedule_config()
+                blocklist_runs = cfg.get("blocklist_runs", 0)
+                clickbait_runs = cfg.get("clickbait_runs", 0)
+            if not blocklist_runs and not clickbait_runs:
                 print(
-                    "--schedule-hours: accepted formats:\n"
-                    "  6,18        specific hours (0-23, comma-separated)\n"
-                    "  */4         every 4 hours (step of 1-23)\n"
-                    "  hourly      every hour"
+                    "Nothing to schedule. Specify at least one of:\n"
+                    "  --blocklist-runs N    run blocklist N times per day\n"
+                    "  --clickbait-runs N    run clickbait N times per day\n"
+                    "\nOr set schedule.blocklist_runs / schedule.clickbait_runs "
+                    "in ~/.yt-dont-recommend/config.yaml"
                 )
                 sys.exit(1)
-        schedule_cmd(args.schedule, schedule_hours)
+            schedule_cmd("install",
+                         blocklist_runs=blocklist_runs,
+                         clickbait_runs=clickbait_runs)
+        else:
+            schedule_cmd(args.schedule)
         return
 
     if args.list_sources:

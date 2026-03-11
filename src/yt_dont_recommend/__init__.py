@@ -60,6 +60,7 @@ from .config import (
     PROFILE_DIR,
     STATE_FILE,
     LOG_FILE,
+    SCHEDULE_FILE,
     DEFAULT_BLOCKLIST_EXCLUDE_FILE,
     DEFAULT_CLICKBAIT_EXCLUDE_FILE,
     _LEGACY_EXCLUDE_FILE,
@@ -78,11 +79,11 @@ from .config import (
     MENU_BTN_SELECTORS,
     MENU_ITEM_SELECTOR,
     TARGET_PHRASES,
-    _SCHEDULE_HOURS,
     _LAUNCHD_LABEL,
     _LAUNCHD_PLIST,
     _CRON_MARKER,
     setup_logging,
+    load_schedule_config,
     _n,
 )
 
@@ -109,8 +110,10 @@ from .blocklist import (
 
 # --- Re-exports from scheduler ---
 from .scheduler import (
-    _parse_schedule_hours,
-    _format_hours,
+    load_schedule,
+    save_schedule,
+    _compute_daily_plan,
+    heartbeat,
     _find_installed_binary,
     _schedule_macos,
     _schedule_linux,

@@ -27,3 +27,14 @@ browser:
   # anti-detection. Falls back to bundled Chromium automatically if Chrome is not found.
   # Set to false if you need reproducible behaviour or don't have Chrome installed.
   use_system_chrome: true  # default: true
+
+schedule:
+  # Default frequency for --schedule install when no --blocklist-runs /
+  # --clickbait-runs flags are provided on the command line.
+  # Values of 0 mean that mode is not scheduled.
+  blocklist_runs: 2   # times per day to run blocklist mode (default: 0)
+  clickbait_runs: 0   # times per day to run clickbait mode (default: 0)
+
+  # Whether scheduled (heartbeat-spawned) runs use --headless.
+  # Set to false only if you need to see the browser window during scheduled runs.
+  headless: true      # default: true
