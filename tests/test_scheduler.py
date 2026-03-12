@@ -242,6 +242,38 @@ class TestHeartbeat:
                        side_effect=FileNotFoundError("not found")):
                 heartbeat()  # must not raise
 
+    def test_attention_flag_blocks_spawn(self, tmp_path, monkeypatch):
+        sf = tmp_path / "schedule.json"
+        attention_file = tmp_path / "needs-attention.txt"
+        attention_file.write_text("[2026-03-12T10:00:00] Shadow-limiting suspected\n")
+        monkeypatch.setattr("yt_dont_recommend.scheduler.SCHEDULE_FILE", sf)
+        monkeypatch.setattr("yt_dont_recommend.scheduler.ATTENTION_FILE", attention_file)
+        save_schedule(self._make_schedule("2026-03-11", ["03:17"]))
+
+        spawned = []
+        with patch("yt_dont_recommend.scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value = self._mock_now("2026-03-11", "03:18")
+            with patch("yt_dont_recommend.scheduler.subprocess.Popen",
+                       side_effect=lambda cmd: spawned.append(cmd)):
+                heartbeat()
+        assert spawned == [], "heartbeat must not spawn when attention flag is set"
+
+    def test_no_attention_flag_spawns_normally(self, tmp_path, monkeypatch):
+        sf = tmp_path / "schedule.json"
+        attention_file = tmp_path / "needs-attention.txt"
+        # File does NOT exist — no attention flag
+        monkeypatch.setattr("yt_dont_recommend.scheduler.SCHEDULE_FILE", sf)
+        monkeypatch.setattr("yt_dont_recommend.scheduler.ATTENTION_FILE", attention_file)
+        save_schedule(self._make_schedule("2026-03-11", ["03:17"]))
+
+        spawned = []
+        with patch("yt_dont_recommend.scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value = self._mock_now("2026-03-11", "03:18")
+            with patch("yt_dont_recommend.scheduler.subprocess.Popen",
+                       side_effect=lambda cmd: spawned.append(cmd)):
+                heartbeat()
+        assert len(spawned) == 1, "heartbeat must spawn when no attention flag"
+
 
 # ---------------------------------------------------------------------------
 # _schedule_linux

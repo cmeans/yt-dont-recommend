@@ -380,6 +380,33 @@ All data lives in `~/.yt-dont-recommend/`:
 - **Handle vs. channel ID:** YouTube feed cards expose `@handle` links only — `UCxxx` IDs in a blocklist are automatically resolved to `@handles` before scanning. Results are cached in state so re-resolution is skipped on subsequent runs. Both built-in sources already use `@handle` format; this only applies to custom blocklists.
 - **Session cap:** By default, each run caps at 75 actions (blocks + clickbait marks combined) to keep sessions human-length. Use `--no-limit` to remove the cap for a single run, or set `session_cap` in `~/.yt-dont-recommend/config.yaml`.
 
+## Automatic Safeguards
+
+### Shadow-limiting detection (clickbait mode)
+
+YouTube may practice *shadow-limiting*: silently accepting "Not interested" signals without acting on them, so the same videos keep appearing in your feed. If this happens, continued automation is both wasteful and potentially risky to your account.
+
+The tool detects shadow-limiting by tracking every video it successfully marks "Not interested" (`clickbait_acted` in state). On each subsequent run, if a previously-acted video reappears in the feed **more than 48 hours after** the original action (allowing time for normal algorithm propagation), it counts as a suspicious re-encounter. After **2 such re-encounters in a single run**, the tool:
+
+1. Stops the run immediately.
+2. Writes a timestamped alert to `needs-attention.txt`.
+3. Fires a desktop notification (and ntfy.sh push if configured).
+4. **Pauses all future scheduled runs** until you explicitly clear the flag.
+
+To resume after reviewing:
+
+```bash
+yt-dont-recommend --clear-alerts
+```
+
+This clears the flag and re-enables the scheduler on the next heartbeat.
+
+> **Note:** A single re-encounter within 48 hours of acting is logged as a warning but does not stop the run — this is normal algorithm latency. Only time-gated re-encounters count toward the detection threshold.
+
+### Scheduler pause on any attention flag
+
+Any alert written by `write_attention()` — shadow-limiting, broken selectors, expired login — also pauses the scheduler. The heartbeat checks for `needs-attention.txt` before spawning any run. This prevents repeated failed or risky automated runs when something needs human attention. `--clear-alerts` resumes scheduling in all cases.
+
 ## Running Periodically
 
 YouTube's home feed refreshes throughout the day, so twice-daily runs are recommended. After the initial processing pass, runs that find nothing new are fast.

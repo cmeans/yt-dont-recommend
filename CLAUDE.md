@@ -242,13 +242,23 @@ Key behaviours:
   "auto_upgrade": false,
   "previous_version": "0.1.12",
   "current_version": "0.1.13",
-  "state_version": 2
+  "clickbait_cache": {
+    "<video_id>": {"is_clickbait": false, "confidence": 0.62, "flagged": false, "title": "...", "channel": "@handle", "cached_at": "2026-03-12T..."}
+  },
+  "clickbait_acted": {
+    "<video_id>": {"acted_at": "2026-03-12T...", "title": "...", "channel": "@handle"}
+  },
+  "state_version": 3
 }
 ```
 
 `load_state()` is backward-compatible: missing keys are populated via `setdefault`. If `state_version` in the file exceeds the binary's `STATE_VERSION` constant, a warning is logged (state was written by a newer binary — occurs after `--revert`).
 
 **v2 migration**: `load_state()` drops the legacy `"processed"` key via `s.pop("processed", None)` when loading old state files. `blocked_by.keys()` is now the sole authoritative record of blocked channels.
+
+**v3 additions**: `clickbait_cache` and `clickbait_acted` (both default to `{}`).
+- `clickbait_cache`: cross-run classification cache keyed by video_id. Entries expire after `CLICKBAIT_CACHE_TTL_DAYS` (14 days). Loaded into `_title_cache` at the start of each run to skip re-evaluation of recently seen videos.
+- `clickbait_acted`: videos successfully marked "Not interested", keyed by video_id. Used for shadow-limiting detection — if a previously-acted video reappears more than `SHADOW_LIMIT_GRACE_HOURS` (48h) later, it counts as a suspicious re-encounter. After `SHADOW_LIMIT_WARN_AFTER` (2) such hits in a run, the tool stops and calls `write_attention()`. Entries older than `CLICKBAIT_ACTED_PRUNE_DAYS` (90 days) are pruned on load.
 
 `pending_unblock` entries carry an internal `_retry_count` sub-key (prefixed `_` to indicate it is not part of the public schema). It tracks consecutive display-name lookup failures for that channel. After `_MAX_DISPLAY_NAME_RETRIES` (3) failures the channel is removed from `pending_unblock` automatically. This key does not require a `STATE_VERSION` bump — old binaries ignore it.
 

@@ -59,13 +59,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import logging
+
 from .config import (
     LOG_FILE,
     SCHEDULE_FILE,
+    ATTENTION_FILE,
     _LAUNCHD_LABEL,
     _LAUNCHD_PLIST,
     _CRON_MARKER,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _pkg():
@@ -142,6 +147,16 @@ def heartbeat() -> None:
 
     No Playwright, no package-level imports. All I/O is schedule.json only.
     """
+    # Refuse to spawn if an attention flag is set — protects the account
+    # from continued automation after a shadow-limiting detection or other
+    # critical alert. Clear with --clear-alerts to re-enable scheduling.
+    if ATTENTION_FILE.exists():
+        log.warning(
+            "Scheduled run skipped — attention flag is set. "
+            "Run --clear-alerts once the issue is resolved to resume scheduling."
+        )
+        return
+
     schedule = load_schedule()
     if not schedule:
         return

@@ -11,7 +11,7 @@ import json
 import logging
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import TypedDict
 from urllib.request import urlopen, Request
 
@@ -57,11 +57,14 @@ class AppState(TypedDict, total=False):
     state_version: int
     ucxxx_to_handle: dict[str, str | None]
     pending_unblock: dict[str, dict]
+    clickbait_cache: dict[str, dict]
+    clickbait_acted: dict[str, dict]
 
 from .config import (
     STATE_FILE as _CONFIG_STATE_FILE,
     ATTENTION_FILE,
     STATE_VERSION,
+    CLICKBAIT_ACTED_PRUNE_DAYS,
 )
 
 # Set to True by write_attention() so main() can exit with code 1 when
@@ -117,6 +120,14 @@ def load_state() -> AppState:
         s.setdefault("previous_version", None)
         s.setdefault("current_version", None)
         s.setdefault("source_sizes", {})
+        s.setdefault("clickbait_cache", {})
+        s.setdefault("clickbait_acted", {})
+        # Prune clickbait_acted entries older than CLICKBAIT_ACTED_PRUNE_DAYS
+        _prune_cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=CLICKBAIT_ACTED_PRUNE_DAYS)).isoformat()
+        s["clickbait_acted"] = {
+            vid: entry for vid, entry in s["clickbait_acted"].items()
+            if entry.get("acted_at", "") >= _prune_cutoff
+        }
         # Schema version guard — warn if state was written by a newer binary
         file_sv = s.get("state_version", 0)
         if file_sv > STATE_VERSION:
@@ -153,6 +164,8 @@ def load_state() -> AppState:
         "previous_version": None,
         "current_version": None,
         "source_sizes": {},
+        "clickbait_cache": {},
+        "clickbait_acted": {},
         "state_version": STATE_VERSION,
     }
 
