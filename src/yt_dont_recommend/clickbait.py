@@ -911,6 +911,12 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
 
     Falls back to ``classify_title()`` for any item that cannot be parsed
     from the batch response.
+
+    Known issue (observed 2026-03-11): batch models occasionally return correct
+    indices but cross-contaminated reasoning — item N's reasoning describes item
+    N±1's title. The per-item DEBUG log below (title → reasoning) is the primary
+    tool for spotting this. Detection and automatic fallback are not yet
+    implemented; retest after any prompt or model change.
     """
     title_cfg = cfg["video"]["title"]
     model     = title_cfg["model"]["name"]
@@ -922,20 +928,34 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     prompt_tmpl = title_cfg.get("prompt_batch") or _BATCH_TITLE_PROMPT
     prompt = _apply_prompt(prompt_tmpl, titles=titles_block)
 
+    log.debug(
+        "Batch title: sending %d titles to %s:\n%s",
+        len(batch), model, titles_block,
+    )
+
     t0 = time.monotonic()
     try:
         raw = _ollama_chat(model, prompt, params=params)
     except Exception as exc:
-        log.warning("Batch title classification failed (%d items): %s", len(batch), exc)
+        titles_summary = "; ".join(
+            f'[{i}] {item["title"]!r}' for i, item in enumerate(batch)
+        )
+        log.warning(
+            "Batch title classification failed (%d items, model=%s): %s\nTitles: %s",
+            len(batch), model, exc, titles_summary,
+        )
         return [classify_title(item["video_id"], item["title"], cfg) for item in batch]
 
-    parsed = _parse_batch_response(raw, len(batch))
     elapsed = round(time.monotonic() - t0, 2)
+    log.debug("Batch title: raw response (%d chars): %.500s", len(raw), raw)
+
+    parsed = _parse_batch_response(raw, len(batch))
 
     if parsed is None:
         log.warning(
-            "Batch title parse failed (%d items, %.1fs) — falling back to individual calls",
-            len(batch), elapsed,
+            "Batch title parse failed (%d items, %.1fs, model=%s) — "
+            "raw response (first 500 chars): %r — falling back to individual calls",
+            len(batch), elapsed, model, raw[:500],
         )
         return [classify_title(item["video_id"], item["title"], cfg) for item in batch]
 
@@ -952,6 +972,14 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
                 "elapsed":  elapsed,
                 "_batch":   True,
             })
+            # Per-item log: title + reasoning lets you spot cross-contamination
+            # (model returns index N's score but N±1's reasoning).
+            log.debug(
+                "Batch title [%d]: %r → is_clickbait=%s score=%.2f — %s",
+                i, item["title"],
+                entry.get("is_clickbait"), entry.get("confidence", 0.0),
+                entry.get("reasoning", ""),
+            )
             results.append(entry)
 
     log.debug(
@@ -1034,20 +1062,37 @@ def _classify_transcript_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     prompt_tmpl = tx_cfg.get("prompt_batch") or _BATCH_TRANSCRIPT_PROMPT
     prompt = _apply_prompt(prompt_tmpl, items=items_block)
 
+    log.debug(
+        "Batch transcript: sending %d items to %s:\n%s",
+        len(pending_indices), model, items_block,
+    )
+
     t0 = time.monotonic()
     try:
         raw = _ollama_chat(model, prompt, params=params)
     except Exception as exc:
-        log.warning("Batch transcript classification failed: %s", exc)
+        titles_summary = "; ".join(
+            f'[{seq}] {batch[i]["title"]!r}' for seq, i in enumerate(pending_indices)
+        )
+        log.warning(
+            "Batch transcript classification failed (%d items, model=%s): %s\nTitles: %s",
+            len(pending_indices), model, exc, titles_summary,
+        )
         for i in pending_indices:
             pre_results[i] = classify_transcript(batch[i]["video_id"], batch[i]["title"], cfg)
         return [pre_results[i] for i in range(len(batch))]
 
-    parsed = _parse_batch_response(raw, len(pending_indices))
     elapsed = round(time.monotonic() - t0, 2)
+    log.debug("Batch transcript: raw response (%d chars): %.500s", len(raw), raw)
+
+    parsed = _parse_batch_response(raw, len(pending_indices))
 
     if parsed is None:
-        log.warning("Batch transcript parse failed — falling back to individual calls")
+        log.warning(
+            "Batch transcript parse failed (%d items, %.1fs, model=%s) — "
+            "raw response (first 500 chars): %r — falling back to individual calls",
+            len(pending_indices), elapsed, model, raw[:500],
+        )
         for i in pending_indices:
             pre_results[i] = classify_transcript(batch[i]["video_id"], batch[i]["title"], cfg)
     else:
@@ -1062,6 +1107,12 @@ def _classify_transcript_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
                     "elapsed": elapsed, "_batch": True,
                     "tx_status": "ok", "tx_chars": len(fetched[i][0] or ""),
                 })
+                log.debug(
+                    "Batch transcript [%d]: %r → is_clickbait=%s score=%.2f — %s",
+                    seq, batch[i]["title"],
+                    entry.get("is_clickbait"), entry.get("confidence", 0.0),
+                    entry.get("reasoning", ""),
+                )
                 pre_results[i] = entry
 
     return [pre_results[i] for i in range(len(batch))]
