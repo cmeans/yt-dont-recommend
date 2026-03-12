@@ -774,6 +774,300 @@ def classify_transcript(video_id: str, title: str, cfg: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Batch classifiers
+# ---------------------------------------------------------------------------
+
+_BATCH_TITLE_PROMPT = """\
+Classify each video title below as clickbait or not.
+
+CLICKBAIT signals — title manipulates rather than informs:
+- Withholds key information to force a click ("You won't believe...", "Here's what happened")
+- Vague subject or mystery framing with no informational content ("Something MASSIVE...", "This Changes Everything")
+- Manufactured urgency or outrage with no specific informational payload
+- Misleading framing that misrepresents what the video delivers
+- ALL-CAPS used for emotional manipulation about vague or exaggerated content
+
+NOT clickbait — default to false for all of these:
+- News headlines and breaking news alerts ("Iran launches attack", "Tornado devastates county")
+- News titles with ALL-CAPS emphasizing a specific fact ("Iran and Hezbollah LAUNCH JOINT ATTACK")
+- Titles quoting or paraphrasing a named person or source ("Senator says X", "Expert warns of Y")
+- Opinion and political commentary that states its argument directly
+- Tutorial and how-to titles ("How To Learn To Code In 2026")
+- Factual or educational questions ("How Black Holes Die", "Firing Guns in Space")
+- Named technical subjects, proper nouns, or specific things described directly
+- Comparison or "vs" titles that directly state their subject
+- Titles with "Official Trailer", "Official Teaser", "Music Video"
+- Named TV show segments or recurring episode titles ("Amber Says What: ...", "Show Name Ep. 6")
+- Titles with specific names, numbers, dates, or verifiable facts
+
+Confidence guide:
+- 0.95: Unmistakable pure bait ("they got caught", "You NEED to see this")
+- 0.85: Clear clickbait ("Something MASSIVE Entered...", "STUNS Everyone SILENT")
+- 0.75: Probably clickbait
+- 0.30: Mild sensational wording but probably honest
+- 0.10: Clearly not clickbait
+
+When in doubt, default to NOT clickbait.
+
+Titles:
+{titles}
+
+Reply with a JSON array ONLY — no prose, no code fences.
+One object per title, in the same order, with consecutive index values starting at 0.
+The array must contain exactly as many objects as there are titles above.
+[
+  {{"index": 0, "is_clickbait": true|false, "confidence": 0.0-1.0, "reasoning": "one sentence"}},
+  ... (one entry per title)
+]
+"""
+
+_BATCH_TRANSCRIPT_PROMPT = """\
+Each title below was ambiguous for clickbait. Use the transcript excerpt to determine
+whether the title's framing is honest. Reply with a JSON array in the same order.
+
+Decision rules:
+- If the transcript covers the topic the title claims → title is HONEST → is_clickbait: false
+- If transcript clearly mismatches the title's promise → title is MISLEADING → is_clickbait: true
+- Substantive on-topic transcript is strong evidence AGAINST clickbait
+
+Items:
+{items}
+
+Reply with a JSON array ONLY — no prose, no code fences.
+One object per item, in the same order, with consecutive index values starting at 0.
+The array must contain exactly as many objects as there are items above.
+[
+  {{"index": 0, "is_clickbait": true|false, "confidence": 0.0-1.0, "reasoning": "one sentence"}},
+  ... (one entry per item)
+]
+"""
+
+
+def _parse_batch_response(raw: str, expected: int) -> "list[dict] | None":
+    """Parse a batch LLM response into a list of per-item result dicts.
+
+    Returns None if the response cannot be parsed or is missing entries.
+    On partial parse, missing indices are filled with a sentinel so the caller
+    can fall back to individual classification for those slots.
+    """
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    raw = raw.strip()
+
+    # Find outermost JSON array
+    start = raw.find("[")
+    end   = raw.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    try:
+        items = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(items, list):
+        return None
+
+    # Map by index field; fall back to positional if index missing
+    by_index: dict[int, dict] = {}
+    for pos, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("index", pos)
+        by_index[idx] = item
+
+    # Build ordered result; mark missing slots as None
+    result = []
+    for i in range(expected):
+        entry = by_index.get(i)
+        result.append(entry)  # None = needs individual fallback
+
+    return result
+
+
+def classify_titles_batch(
+    items: "list[dict]",
+    cfg: dict,
+    batch_size: int = 10,
+) -> "list[dict]":
+    """Classify a list of ``{video_id, title}`` dicts in batches.
+
+    Returns a list of title result dicts in the same order as *items*.
+    Each result has the same shape as ``classify_title()`` output.
+    Falls back to ``classify_title()`` for any item whose batch result
+    cannot be parsed.
+    """
+    results: list[dict] = []
+    for batch_start in range(0, len(items), batch_size):
+        batch = items[batch_start:batch_start + batch_size]
+        batch_results = _classify_title_batch(batch, cfg)
+        results.extend(batch_results)
+    return results
+
+
+def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
+    """Send one batch of titles to the LLM and return per-item results.
+
+    Falls back to ``classify_title()`` for any item that cannot be parsed
+    from the batch response.
+    """
+    title_cfg = cfg["video"]["title"]
+    model     = title_cfg["model"]["name"]
+    params    = title_cfg["model"].get("params") or {}
+
+    titles_block = "\n".join(
+        f'{i}: {item["title"]!r}' for i, item in enumerate(batch)
+    )
+    prompt_tmpl = title_cfg.get("prompt_batch") or _BATCH_TITLE_PROMPT
+    prompt = _apply_prompt(prompt_tmpl, titles=titles_block)
+
+    t0 = time.monotonic()
+    try:
+        raw = _ollama_chat(model, prompt, params=params)
+    except Exception as exc:
+        log.warning("Batch title classification failed (%d items): %s", len(batch), exc)
+        return [classify_title(item["video_id"], item["title"], cfg) for item in batch]
+
+    parsed = _parse_batch_response(raw, len(batch))
+    elapsed = round(time.monotonic() - t0, 2)
+
+    if parsed is None:
+        log.warning(
+            "Batch title parse failed (%d items, %.1fs) — falling back to individual calls",
+            len(batch), elapsed,
+        )
+        return [classify_title(item["video_id"], item["title"], cfg) for item in batch]
+
+    results = []
+    for i, (item, entry) in enumerate(zip(batch, parsed)):
+        if entry is None:
+            log.debug("Batch title: index %d missing from response — individual fallback", i)
+            results.append(classify_title(item["video_id"], item["title"], cfg))
+        else:
+            entry.update({
+                "stage":    "title",
+                "model":    model,
+                "video_id": item["video_id"],
+                "elapsed":  elapsed,
+                "_batch":   True,
+            })
+            results.append(entry)
+
+    log.debug(
+        "Batch title: %d items in %.1fs (%.1fs/item)",
+        len(batch), elapsed, elapsed / len(batch),
+    )
+    return results
+
+
+def classify_transcripts_batch(
+    items: "list[dict]",
+    cfg: dict,
+    batch_size: int = 5,
+) -> "list[dict]":
+    """Classify a list of ``{video_id, title}`` dicts by transcript in batches.
+
+    Returns a list of transcript result dicts in the same order as *items*.
+    Each result has the same shape as ``classify_transcript()`` output.
+    Falls back to ``classify_transcript()`` per item on parse failure.
+    """
+    results: list[dict] = []
+    for batch_start in range(0, len(items), batch_size):
+        batch = items[batch_start:batch_start + batch_size]
+        results.extend(_classify_transcript_batch(batch, cfg))
+    return results
+
+
+def _classify_transcript_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
+    """Send one batch of (title, transcript) pairs to the LLM."""
+    tx_cfg = cfg["video"]["transcript"]
+    model  = tx_cfg["model"]["name"]
+    params = tx_cfg["model"].get("params") or {}
+    no_tx  = tx_cfg.get("no_transcript", "pass")
+
+    # Fetch transcripts for all items first
+    fetched: list[tuple["str | None", str]] = [
+        _fetch_transcript(item["video_id"]) for item in batch
+    ]
+
+    # Items with no transcript handled per no_tx policy (same as individual)
+    pending_indices: list[int] = []
+    pre_results: dict[int, dict] = {}
+    for i, ((transcript, status), item) in enumerate(zip(fetched, batch)):
+        if transcript is None:
+            if no_tx == "flag":
+                pre_results[i] = {
+                    "is_clickbait": True, "confidence": 0.75,
+                    "reasoning": f"transcript unavailable ({status}); flagged per config",
+                    "stage": "transcript", "model": model, "tx_status": status,
+                }
+            elif no_tx == "title-only":
+                pre_results[i] = {
+                    "is_clickbait": False, "confidence": 0.0,
+                    "reasoning": f"transcript unavailable ({status}); deferred to title",
+                    "stage": "transcript", "model": model, "tx_status": status,
+                    "_defer_to_title": True,
+                }
+            else:  # "pass"
+                pre_results[i] = {
+                    "is_clickbait": False, "confidence": 0.0,
+                    "reasoning": f"transcript unavailable ({status}); treated as not clickbait",
+                    "stage": "transcript", "model": model, "tx_status": status,
+                }
+        else:
+            pending_indices.append(i)
+
+    if not pending_indices:
+        return [pre_results[i] for i in range(len(batch))]
+
+    # Build batch prompt for items with transcripts
+    items_block_parts = []
+    for seq, i in enumerate(pending_indices):
+        item = batch[i]
+        tx, _ = fetched[i]
+        items_block_parts.append(
+            f'index {seq}:\n  title: {item["title"]!r}\n  transcript: {repr(tx[:500])}'
+        )
+    items_block = "\n\n".join(items_block_parts)
+
+    prompt_tmpl = tx_cfg.get("prompt_batch") or _BATCH_TRANSCRIPT_PROMPT
+    prompt = _apply_prompt(prompt_tmpl, items=items_block)
+
+    t0 = time.monotonic()
+    try:
+        raw = _ollama_chat(model, prompt, params=params)
+    except Exception as exc:
+        log.warning("Batch transcript classification failed: %s", exc)
+        for i in pending_indices:
+            pre_results[i] = classify_transcript(batch[i]["video_id"], batch[i]["title"], cfg)
+        return [pre_results[i] for i in range(len(batch))]
+
+    parsed = _parse_batch_response(raw, len(pending_indices))
+    elapsed = round(time.monotonic() - t0, 2)
+
+    if parsed is None:
+        log.warning("Batch transcript parse failed — falling back to individual calls")
+        for i in pending_indices:
+            pre_results[i] = classify_transcript(batch[i]["video_id"], batch[i]["title"], cfg)
+    else:
+        for seq, i in enumerate(pending_indices):
+            entry = parsed[seq]
+            if entry is None:
+                pre_results[i] = classify_transcript(batch[i]["video_id"], batch[i]["title"], cfg)
+            else:
+                entry.update({
+                    "stage": "transcript", "model": model,
+                    "video_id": batch[i]["video_id"],
+                    "elapsed": elapsed, "_batch": True,
+                    "tx_status": "ok", "tx_chars": len(fetched[i][0] or ""),
+                })
+                pre_results[i] = entry
+
+    return [pre_results[i] for i in range(len(batch))]
+
+
+# ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
