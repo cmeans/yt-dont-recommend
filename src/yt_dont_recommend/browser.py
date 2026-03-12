@@ -748,11 +748,17 @@ def process_channels(channel_sources: dict[str, str],
         page.goto("https://www.youtube.com", wait_until="domcontentloaded", timeout=60000)
         time.sleep(random.uniform(_page_load_wait, _page_load_wait + 1.5))
 
-        # Set up clickbait classifier if requested
-        _classify_video = None
+        # Set up clickbait batch classifier if requested
+        _classify_titles_batch = None
+        _classify_thumbnail = None
+        _classify_transcript = None
         if clickbait_cfg is not None:
             try:
-                from .clickbait import classify_video as _classify_video  # type: ignore[assignment]
+                from .clickbait import (  # type: ignore[assignment]
+                    classify_titles_batch as _classify_titles_batch,
+                    classify_thumbnail as _classify_thumbnail,
+                    classify_transcript as _classify_transcript,
+                )
             except ImportError:
                 from . import _clickbait_install_cmd
                 log.warning(
@@ -762,6 +768,7 @@ def process_channels(channel_sources: dict[str, str],
                 clickbait_cfg = None
 
         _clickbait_evaluated: set[str] = set()  # channels evaluated this run (avoid re-classifying)
+        _title_cache: dict[str, dict] = {}      # video_id → title-stage result (persists across passes)
         processed_set_lower = {c.lower() for c in processed_set}
 
         _prefix = "DRY RUN — " if dry_run else ""
@@ -834,8 +841,12 @@ def process_channels(channel_sources: dict[str, str],
 
             cards = page.query_selector_all("ytd-rich-item-renderer")
             found_match_this_pass = False
-            evaluated_clickbait_this_pass = 0
             pass_parseable = 0
+
+            # ---- Phase 1: walk cards — collect blocklist match + clickbait candidates ----
+            _blocklist_match: tuple | None = None  # (card, canonical, source, display_name)
+            _cb_candidates: list[tuple] = []       # (card, path, video_id, title) — unclassified
+            _cb_flagged: list[tuple] = []          # (card, path, video_id) — cached flagged results
 
             for card in cards:
                 if limit and (blocked_count + clickbait_count) >= limit:
@@ -877,14 +888,38 @@ def process_channels(channel_sources: dict[str, str],
                 if canonical and canonical in processed_set:
                     continue
 
-                if not canonical:
-                    # Not on blocklist — check for clickbait if enabled
+                if canonical:
+                    # Blocklist match — subscription check first
+                    source = resolved_sources.get(canonical, "unknown")
+                    if canonical.lower() in subscriptions:
+                        whb = state["would_have_blocked"]
+                        if canonical not in whb or not whb[canonical].get("notified"):
+                            log.warning(
+                                f"SUBSCRIBED CHANNEL IN BLOCKLIST: {canonical} appears in "
+                                f"'{source}' but you're subscribed to it — skipping block. "
+                                f"Worth checking if the channel's content has changed recently. "
+                                f"(This notice will not repeat. See would_have_blocked in state file.)"
+                            )
+                            entry = whb.get(canonical, {})
+                            entry.setdefault("sources", [])
+                            if source not in entry["sources"]:
+                                entry["sources"].append(source)
+                            entry.setdefault("first_seen", datetime.now().isoformat())
+                            entry["notified"] = True
+                            whb[canonical] = entry
+                            pkg.save_state(state)
+                        continue
+                    if _blocklist_match is None:
+                        display_name = (channel_link.inner_text() or "").strip() or None if channel_link else None
+                        _blocklist_match = (card, canonical, source, display_name)
+                else:
+                    # Not on blocklist — collect as clickbait candidate if enabled
                     if clickbait_cfg is None or path.lower() in _clickbait_evaluated:
                         continue
                     if exclude_set and path.lower() in exclude_set:
                         log.debug(f"clickbait: {path} — in exclude list, skipping")
                         continue
-                    # Get video title text. Try stable text-element selectors first,
+                    # Get video title. Try stable text-element selectors first,
                     # then fall back to the link element directly.
                     # Note: a[href*='/watch?v='] matches a#thumbnail first whose
                     # inner_text() is the duration overlay — avoid that path.
@@ -910,11 +945,8 @@ def process_channels(channel_sources: dict[str, str],
                         log.debug(f"clickbait: {path}/{video_id} — title from ytInitialData JSON")
                     else:
                         if _json_videos:
-                            # JSON was populated but this video_id wasn't in it (scrolled card)
                             log.debug(f"clickbait: {path}/{video_id} — not in ytInitialData, falling back to DOM")
                         video_title = None
-                        # DOM fallback: title attribute (clean), then text span, then
-                        # aria-label with duration suffix stripped.
                         video_title = _title_el.get_attribute("title") or None
                         if not video_title:
                             _text_el = card.query_selector("yt-formatted-string#video-title, #video-title")
@@ -929,120 +961,146 @@ def process_channels(channel_sources: dict[str, str],
                     if not video_title:
                         log.debug(f"clickbait: {path} — could not extract title, skipping")
                         continue
-
-                    _clickbait_evaluated.add(path.lower())
-                    evaluated_clickbait_this_pass += 1
-                    result = _classify_video(video_id, video_title, clickbait_cfg)
-                    conf = result.get("confidence", 0.0)
-                    if not result.get("flagged"):
-                        _is_cb = result.get("is_clickbait", False)
-                        _rsn   = result.get("title_result", {}).get("reasoning", "")
-                        log.debug(
-                            f"clickbait: {path} — {video_title!r} "
-                            f"is_clickbait={_is_cb} score={conf:.2f} not flagged"
-                            + (f" — {_rsn}" if _rsn else "")
-                        )
-                        continue
-                    _stages_str = "+".join(result.get("stages", ["title"]))
-                    log.info(
-                        f"CLICKBAIT: {path} — {video_title!r} "
-                        f"(confidence {conf:.2f}, via {_stages_str}) — marking Not interested..."
-                    )
-                    if dry_run:
-                        log.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
-                        clickbait_count += 1
-                        found_match_this_pass = True
-                        continue
-                    try:
-                        success = _click_not_interested(page, card)
-                    except Exception as e:
-                        log.error(f"FAIL clickbait {path}: {e}")
-                        continue
-                    if success:
-                        log.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
-                        clickbait_count += 1
-                        found_match_this_pass = True
-                        time.sleep(random.uniform(_min_delay, _max_delay))
-                        break  # rescan after DOM change
+                    if video_id in _title_cache:
+                        # Already classified — use cached result
+                        if _title_cache[video_id].get("flagged"):
+                            _cb_flagged.append((card, path, video_id))
+                        else:
+                            _clickbait_evaluated.add(path.lower())
                     else:
-                        log.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
-                    continue
-                else:
-                    source = resolved_sources.get(canonical, "unknown")
+                        _cb_candidates.append((card, path, video_id, video_title))
 
-                # Check subscription protection before blocking
-                if canonical.lower() in subscriptions:
-                    whb = state["would_have_blocked"]
-                    if canonical not in whb or not whb[canonical].get("notified"):
-                        log.warning(
-                            f"SUBSCRIBED CHANNEL IN BLOCKLIST: {canonical} appears in "
-                            f"'{source}' but you're subscribed to it — skipping block. "
-                            f"Worth checking if the channel's content has changed recently. "
-                            f"(This notice will not repeat. See would_have_blocked in state file.)"
-                        )
-                        entry = whb.get(canonical, {})
-                        entry.setdefault("sources", [])
-                        if source not in entry["sources"]:
-                            entry["sources"].append(source)
-                        entry.setdefault("first_seen", datetime.now().isoformat())
-                        entry["notified"] = True
-                        whb[canonical] = entry
-                        pkg.save_state(state)
-                    continue
-
+            # ---- Phase 2: handle blocklist match (highest priority) ----
+            if _blocklist_match is not None:
+                card, canonical, source, display_name = _blocklist_match
                 if dry_run:
                     log.info(f"WOULD BLOCK: {canonical} (source: {source})")
                     blocked_count += 1
                     found_match_this_pass = True
-                    continue
-
-                # Capture display name from card for later unblocking.
-                display_name = (channel_link.inner_text() or "").strip() or None
-
-                log.info(f"Found in feed: {canonical} — blocking...")
-                try:
-                    success = _click_dont_recommend(page, card)
-                except Exception as e:
-                    log.error(f"FAIL {canonical}: {e}")
-                    state["stats"]["total_failed"] += 1
-                    pkg.save_state(state)
-                    continue
-
-                if success:
-                    processed_set.add(canonical)
-                    processed_set_lower.add(canonical.lower())
-                    state["stats"]["total_blocked"] += 1
-                    blocked_count += 1
-                    found_match_this_pass = True
-
-                    # Record which source is responsible for this block
-                    blocked_by = state["blocked_by"]
-                    if canonical not in blocked_by:
-                        blocked_by[canonical] = {
-                            "sources": [source],
-                            "blocked_at": datetime.now().isoformat(),
-                            "display_name": display_name,
-                        }
-                    else:
-                        if source not in blocked_by[canonical].get("sources", []):
-                            blocked_by[canonical]["sources"].append(source)
-                        if display_name and not blocked_by[canonical].get("display_name"):
-                            blocked_by[canonical]["display_name"] = display_name
-
-                    log.info(f"[{blocked_count}] OK {canonical}")
-                    pkg.save_state(state)
-
-                    if blocked_count % _long_pause_every == 0:
-                        log.info(f"Taking a {_long_pause_seconds:.0f}s break...")
-                        time.sleep(random.uniform(_long_pause_seconds * 0.8, _long_pause_seconds * 1.2))
-                    else:
-                        time.sleep(random.uniform(_min_delay, _max_delay))
-
-                    break  # rescan after DOM changes
                 else:
-                    state["stats"]["total_skipped"] += 1
-                    log.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
-                    pkg.save_state(state)
+                    log.info(f"Found in feed: {canonical} — blocking...")
+                    try:
+                        success = _click_dont_recommend(page, card)
+                    except Exception as e:
+                        log.error(f"FAIL {canonical}: {e}")
+                        state["stats"]["total_failed"] += 1
+                        pkg.save_state(state)
+                        success = False
+
+                    if success:
+                        processed_set.add(canonical)
+                        processed_set_lower.add(canonical.lower())
+                        state["stats"]["total_blocked"] += 1
+                        blocked_count += 1
+                        found_match_this_pass = True
+
+                        blocked_by = state["blocked_by"]
+                        if canonical not in blocked_by:
+                            blocked_by[canonical] = {
+                                "sources": [source],
+                                "blocked_at": datetime.now().isoformat(),
+                                "display_name": display_name,
+                            }
+                        else:
+                            if source not in blocked_by[canonical].get("sources", []):
+                                blocked_by[canonical]["sources"].append(source)
+                            if display_name and not blocked_by[canonical].get("display_name"):
+                                blocked_by[canonical]["display_name"] = display_name
+
+                        log.info(f"[{blocked_count}] OK {canonical}")
+                        pkg.save_state(state)
+
+                        if blocked_count % _long_pause_every == 0:
+                            log.info(f"Taking a {_long_pause_seconds:.0f}s break...")
+                            time.sleep(random.uniform(_long_pause_seconds * 0.8, _long_pause_seconds * 1.2))
+                        else:
+                            time.sleep(random.uniform(_min_delay, _max_delay))
+                    else:
+                        state["stats"]["total_skipped"] += 1
+                        log.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
+                        pkg.save_state(state)
+
+            # ---- Phase 3: batch-classify clickbait candidates ----
+            evaluated_clickbait_this_pass = 0
+            if _cb_candidates and _run_clickbait and not found_match_this_pass:
+                title_cfg = clickbait_cfg["video"]["title"]  # type: ignore[index]
+                thumb_cfg = clickbait_cfg["video"]["thumbnail"]
+                tx_cfg    = clickbait_cfg["video"]["transcript"]
+                threshold = title_cfg.get("threshold", 0.75)
+                amb_lo    = title_cfg.get("ambiguous_low", 0.4)
+
+                evaluated_clickbait_this_pass = len(_cb_candidates)
+                title_items = [{"video_id": vid, "title": ttl} for _, _, vid, ttl in _cb_candidates]
+                title_results = _classify_titles_batch(title_items, clickbait_cfg)  # type: ignore[misc]
+
+                for (card, path, vid, ttl), title_r in zip(_cb_candidates, title_results):
+                    conf  = title_r.get("confidence", 0.0)
+                    is_cb = title_r.get("is_clickbait", False)
+                    stages: list[str] = ["title"]
+
+                    # Stage 2: thumbnail (ambiguous band only; opt-in)
+                    if _classify_thumbnail and thumb_cfg.get("enabled", False) and amb_lo <= conf < threshold:
+                        thumb_r = _classify_thumbnail(vid, ttl, clickbait_cfg)
+                        stages.append("thumbnail")
+                        if (thumb_r.get("confidence") or 0.0) > conf:
+                            conf  = thumb_r["confidence"]
+                            is_cb = thumb_r.get("is_clickbait", False)
+
+                    # Stage 3: transcript (still ambiguous; opt-in)
+                    if _classify_transcript and tx_cfg.get("enabled", False) and amb_lo <= conf < threshold:
+                        tx_r = _classify_transcript(vid, ttl, clickbait_cfg)
+                        stages.append("transcript")
+                        if not tx_r.get("_defer_to_title"):
+                            conf  = tx_r.get("confidence", 0.0)
+                            is_cb = tx_r.get("is_clickbait", False)
+
+                    flagged = conf >= threshold and is_cb
+                    title_r.update({"_video_title": ttl, "flagged": flagged, "stages": stages})
+                    _title_cache[vid] = title_r
+
+                    if flagged:
+                        _cb_flagged.append((card, path, vid))
+                    else:
+                        _rsn = title_r.get("reasoning", "")
+                        log.debug(
+                            f"clickbait: {path} — {ttl!r} "
+                            f"is_clickbait={is_cb} score={conf:.2f} not flagged"
+                            + (f" — {_rsn}" if _rsn else "")
+                        )
+                        _clickbait_evaluated.add(path.lower())
+
+            # ---- Phase 4: act on first flagged clickbait card ----
+            if not found_match_this_pass and _cb_flagged:
+                card, path, video_id = _cb_flagged[0]
+                cached = _title_cache[video_id]
+                video_title = cached.get("_video_title", "(unknown)")
+                conf = cached.get("confidence", 0.0)
+                _stages_str = "+".join(cached.get("stages", ["title"]))
+                log.info(
+                    f"CLICKBAIT: {path} — {video_title!r} "
+                    f"(confidence {conf:.2f}, via {_stages_str}) — marking Not interested..."
+                )
+                if dry_run:
+                    log.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
+                    clickbait_count += 1
+                    found_match_this_pass = True
+                    _clickbait_evaluated.add(path.lower())
+                else:
+                    try:
+                        success = _click_not_interested(page, card)
+                    except Exception as e:
+                        log.error(f"FAIL clickbait {path}: {e}")
+                        _clickbait_evaluated.add(path.lower())
+                    else:
+                        if success:
+                            log.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
+                            clickbait_count += 1
+                            found_match_this_pass = True
+                            _clickbait_evaluated.add(path.lower())
+                            time.sleep(random.uniform(_min_delay, _max_delay))
+                        else:
+                            log.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
+                            _clickbait_evaluated.add(path.lower())
 
             # Selector health check
             if len(cards) >= MIN_CARDS_FOR_SELECTOR_CHECK and pass_parseable == 0:

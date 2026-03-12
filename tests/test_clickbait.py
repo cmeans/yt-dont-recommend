@@ -10,9 +10,12 @@ import pytest
 from yt_dont_recommend.clickbait import (
     _deep_merge,
     _DEFAULT_CONFIG,
+    _parse_batch_response,
     classify_thumbnail,
     classify_title,
+    classify_titles_batch,
     classify_transcript,
+    classify_transcripts_batch,
     classify_video,
     extract_json,
     load_config,
@@ -571,3 +574,242 @@ class TestMissingDependencies:
             "warning should mention that customizations are lost"
         assert any("pip install pyyaml" in m for m in msgs), \
             "warning should include the install command"
+
+
+# ---------------------------------------------------------------------------
+# _parse_batch_response
+# ---------------------------------------------------------------------------
+
+
+class TestParseBatchResponse:
+    def test_valid_array_in_order(self):
+        raw = '[{"index": 0, "is_clickbait": true, "confidence": 0.9, "reasoning": "bait"}, {"index": 1, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}]'
+        result = _parse_batch_response(raw, 2)
+        assert result is not None
+        assert len(result) == 2
+        assert result[0]["is_clickbait"] is True
+        assert result[1]["is_clickbait"] is False
+
+    def test_strips_fences(self):
+        raw = '```json\n[{"index": 0, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}]\n```'
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["is_clickbait"] is False
+
+    def test_out_of_order_indices_remapped(self):
+        raw = '[{"index": 1, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}, {"index": 0, "is_clickbait": true, "confidence": 0.9, "reasoning": "bait"}]'
+        result = _parse_batch_response(raw, 2)
+        assert result is not None
+        assert result[0]["is_clickbait"] is True   # index 0 → first slot
+        assert result[1]["is_clickbait"] is False  # index 1 → second slot
+
+    def test_missing_index_returns_none_for_slot(self):
+        # Only returns index 0; index 1 is missing
+        raw = '[{"index": 0, "is_clickbait": true, "confidence": 0.9, "reasoning": "bait"}]'
+        result = _parse_batch_response(raw, 2)
+        assert result is not None
+        assert result[0] is not None
+        assert result[1] is None  # missing → None → individual fallback
+
+    def test_no_index_field_falls_back_to_positional(self):
+        raw = '[{"is_clickbait": true, "confidence": 0.9, "reasoning": "bait"}, {"is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}]'
+        result = _parse_batch_response(raw, 2)
+        assert result is not None
+        assert result[0]["is_clickbait"] is True
+        assert result[1]["is_clickbait"] is False
+
+    def test_invalid_json_returns_none(self):
+        assert _parse_batch_response("not json at all", 2) is None
+
+    def test_no_array_found_returns_none(self):
+        assert _parse_batch_response('{"index": 0}', 2) is None
+
+    def test_empty_array_returns_all_none_slots(self):
+        result = _parse_batch_response("[]", 2)
+        assert result == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# classify_titles_batch
+# ---------------------------------------------------------------------------
+
+_CLICKBAIT_BATCH_RESPONSE = json.dumps([
+    {"index": 0, "is_clickbait": True,  "confidence": 0.9,  "reasoning": "bait"},
+    {"index": 1, "is_clickbait": False, "confidence": 0.1,  "reasoning": "ok"},
+])
+
+_SAFE_TITLE_RESPONSE = '{"is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}'
+
+
+class TestClassifyTitlesBatch:
+    def _items(self, n=2):
+        return [{"video_id": f"vid{i}", "title": f"Title {i}"} for i in range(n)]
+
+    def test_returns_one_result_per_item(self):
+        with patch("yt_dont_recommend.clickbait._ollama_chat", return_value=_CLICKBAIT_BATCH_RESPONSE):
+            results = classify_titles_batch(self._items(2), _cfg())
+        assert len(results) == 2
+
+    def test_results_carry_batch_flag(self):
+        with patch("yt_dont_recommend.clickbait._ollama_chat", return_value=_CLICKBAIT_BATCH_RESPONSE):
+            results = classify_titles_batch(self._items(2), _cfg())
+        assert all(r.get("_batch") is True for r in results)
+
+    def test_results_have_required_keys(self):
+        with patch("yt_dont_recommend.clickbait._ollama_chat", return_value=_CLICKBAIT_BATCH_RESPONSE):
+            results = classify_titles_batch(self._items(2), _cfg())
+        for r in results:
+            assert "is_clickbait" in r
+            assert "confidence" in r
+            assert "stage" in r
+            assert r["stage"] == "title"
+
+    def test_falls_back_to_individual_on_ollama_error(self):
+        called_individual = []
+
+        def mock_chat(model, prompt, **kw):
+            if "index" in prompt:
+                raise RuntimeError("timeout")
+            called_individual.append(True)
+            return _SAFE_TITLE_RESPONSE
+
+        with patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat):
+            results = classify_titles_batch(self._items(2), _cfg())
+        assert len(results) == 2
+        assert len(called_individual) == 2  # each item fell back individually
+
+    def test_falls_back_to_individual_on_parse_failure(self):
+        individual_calls = []
+
+        def mock_chat(model, prompt, **kw):
+            if len(individual_calls) > 0 or "index" not in prompt:
+                individual_calls.append(True)
+                return _SAFE_TITLE_RESPONSE
+            return "not a json array"
+
+        with patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat):
+            results = classify_titles_batch(self._items(2), _cfg())
+        assert len(results) == 2
+
+    def test_splits_into_batches(self):
+        """With batch_size=2 and 5 items, expect 3 ollama calls (batches of 2, 2, 1)."""
+        call_count = [0]
+
+        def mock_chat(model, prompt, **kw):
+            call_count[0] += 1
+            # Return a valid batch response — size inferred from how many "index N:" appear
+            import re
+            indices = re.findall(r"^(\d+):", prompt, re.MULTILINE)
+            return json.dumps([
+                {"index": int(i), "is_clickbait": False, "confidence": 0.1, "reasoning": "ok"}
+                for i in indices
+            ])
+
+        items = [{"video_id": f"vid{i}", "title": f"Title {i}"} for i in range(5)]
+        with patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat):
+            results = classify_titles_batch(items, _cfg(), batch_size=2)
+        assert len(results) == 5
+        assert call_count[0] == 3  # ceil(5/2)
+
+    def test_missing_slot_falls_back_to_individual(self):
+        """When batch response omits an index, that item gets individual fallback."""
+        fallback_calls = []
+
+        def mock_chat(model, prompt, **kw):
+            if "_batch" in prompt or "0:" in prompt and "1:" in prompt:
+                # Batch call — only return index 0
+                return '[{"index": 0, "is_clickbait": true, "confidence": 0.9, "reasoning": "bait"}]'
+            fallback_calls.append(True)
+            return _SAFE_TITLE_RESPONSE
+
+        with patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat):
+            results = classify_titles_batch(self._items(2), _cfg())
+        assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# classify_transcripts_batch
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyTranscriptsBatch:
+    def _items(self, n=2):
+        return [{"video_id": f"vid{i}", "title": f"Title {i}"} for i in range(n)]
+
+    def test_no_transcripts_all_pass(self):
+        """When no transcripts are available (policy=pass), all return not-clickbait."""
+        with patch("yt_dont_recommend.clickbait._fetch_transcript", return_value=(None, "disabled")):
+            results = classify_transcripts_batch(self._items(3), _cfg())
+        assert len(results) == 3
+        assert all(r["is_clickbait"] is False for r in results)
+
+    def test_no_transcripts_all_flag(self):
+        cfg = _cfg({"video": {"transcript": {"no_transcript": "flag"}}})
+        with patch("yt_dont_recommend.clickbait._fetch_transcript", return_value=(None, "disabled")):
+            results = classify_transcripts_batch(self._items(2), cfg)
+        assert all(r["is_clickbait"] is True for r in results)
+
+    def test_with_transcripts_makes_one_llm_call(self):
+        """All items with transcripts go in a single LLM call."""
+        batch_response = json.dumps([
+            {"index": 0, "is_clickbait": False, "confidence": 0.1, "reasoning": "on-topic"},
+            {"index": 1, "is_clickbait": False, "confidence": 0.1, "reasoning": "on-topic"},
+        ])
+        llm_calls = []
+
+        def mock_chat(model, prompt, **kw):
+            llm_calls.append(True)
+            return batch_response
+
+        with (
+            patch("yt_dont_recommend.clickbait._fetch_transcript", return_value=("transcript text", "ok")),
+            patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat),
+        ):
+            results = classify_transcripts_batch(self._items(2), _cfg())
+
+        assert len(llm_calls) == 1
+        assert len(results) == 2
+
+    def test_mixed_transcripts_and_no_transcripts(self):
+        """Items without transcripts use policy default; only items with transcripts go to LLM."""
+        items = [
+            {"video_id": "vid0", "title": "Title 0"},
+            {"video_id": "vid1", "title": "Title 1"},
+        ]
+        fetch_returns = [(None, "disabled"), ("some transcript", "ok")]
+        llm_calls = []
+
+        def mock_fetch(video_id):
+            return fetch_returns[int(video_id[-1])]
+
+        def mock_chat(model, prompt, **kw):
+            llm_calls.append(True)
+            return '[{"index": 0, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}]'
+
+        with (
+            patch("yt_dont_recommend.clickbait._fetch_transcript", side_effect=mock_fetch),
+            patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat),
+        ):
+            results = classify_transcripts_batch(items, _cfg())
+
+        assert len(results) == 2
+        assert len(llm_calls) == 1  # only vid1 had a transcript
+        assert results[0]["is_clickbait"] is False   # pass policy for vid0
+        assert results[1]["is_clickbait"] is False   # LLM result for vid1
+
+    def test_falls_back_to_individual_on_parse_failure(self):
+        individual_calls = []
+
+        def mock_chat(model, prompt, **kw):
+            individual_calls.append(True)
+            if len(individual_calls) == 1:
+                return "not a json array"
+            return '{"is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}'
+
+        with (
+            patch("yt_dont_recommend.clickbait._fetch_transcript", return_value=("tx text", "ok")),
+            patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat),
+        ):
+            results = classify_transcripts_batch(self._items(2), _cfg())
+        assert len(results) == 2
