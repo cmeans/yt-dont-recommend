@@ -776,13 +776,14 @@ def process_channels(channel_sources: dict[str, str],
 
         _run_blocklist = bool(channel_lookup)
         _run_clickbait = clickbait_cfg is not None
-        # Extract video metadata from ytInitialData (initial page load only).
-        # Used as a reliable title source for clickbait classification; cards
-        # loaded by subsequent scrolls fall back to DOM extraction.
-        _json_videos: dict = _extract_feed_videos_from_json(page) if _run_clickbait else {}
+        # Extract video metadata from ytInitialData and continuation responses.
+        # Used as title source for clickbait and channel-handle fallback for
+        # blocklist when the DOM channel link selector returns nothing.
+        _json_videos: dict = _extract_feed_videos_from_json(page)
 
         # Listen for /youtubei/v1/browse continuation responses and merge video
-        # metadata into _json_videos so scrolled cards get JSON titles too.
+        # metadata into _json_videos so scrolled cards get JSON titles and
+        # channel handles too.
         def _on_browse_response(response):
             if "/youtubei/v1/browse" not in response.url or response.status != 200:
                 return
@@ -803,8 +804,7 @@ def process_channels(channel_sources: dict[str, str],
                             )
             except Exception as exc:
                 log.debug("ytInitialData continuation parse error: %s", exc)
-        if _run_clickbait:
-            page.on("response", _on_browse_response)
+        page.on("response", _on_browse_response)
         blocked_count = 0
         clickbait_count = 0
         no_progress_scrolls = 0
@@ -842,23 +842,37 @@ def process_channels(channel_sources: dict[str, str],
                     break
 
                 channel_link = card.query_selector("a[href^='/@'], a[href^='/channel/UC']")
-                if not channel_link:
+                path: str | None = None
+
+                if channel_link:
+                    href = channel_link.get_attribute("href") or ""
+                    raw_path = href.split("?")[0].rstrip("/")
+                    # Normalize to canonical form: @handle or UCxxx
+                    if raw_path.startswith("/@"):
+                        path = raw_path[1:]  # /@handle → @handle
+                    elif raw_path.startswith("/channel/"):
+                        path = raw_path[len("/channel/"):]  # /channel/UCxxx → UCxxx
+
+                # Fallback: derive channel handle from JSON using the video ID
+                if not path:
+                    watch_link = card.query_selector("a[href*='/watch?v=']")
+                    if watch_link:
+                        watch_href = watch_link.get_attribute("href") or ""
+                        m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", watch_href)
+                        if m:
+                            json_meta = _json_videos.get(m.group(1))
+                            if json_meta and json_meta.get("channel_handle"):
+                                path = json_meta["channel_handle"]
+                                log.debug(f"Feed card channel: {path} (from JSON fallback)")
+
+                if not path:
                     continue
                 pass_parseable += 1
-
-                href = channel_link.get_attribute("href") or ""
-                raw_path = href.split("?")[0].rstrip("/")
-                # Normalize to canonical form: @handle or UCxxx
-                if raw_path.startswith("/@"):
-                    path = raw_path[1:]  # /@handle → @handle
-                elif raw_path.startswith("/channel/"):
-                    path = raw_path[len("/channel/"):]  # /channel/UCxxx → UCxxx
-                else:
-                    continue
                 if path.lower() in seen_paths:
                     continue
                 seen_paths.add(path.lower())
-                log.debug(f"Feed card channel: {path}")
+                if channel_link:
+                    log.debug(f"Feed card channel: {path}")
                 canonical = channel_lookup.get(path.lower())
                 if canonical and canonical in processed_set:
                     continue
