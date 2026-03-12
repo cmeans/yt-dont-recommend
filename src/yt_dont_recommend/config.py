@@ -77,7 +77,23 @@ VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 # State schema version — bump this whenever the state file structure changes.
 # Policy: only ADD new keys (never rename/remove/reinterpret existing ones).
 # load_state() warns when it reads a state file written by a newer version.
-STATE_VERSION = 2
+STATE_VERSION = 3
+
+# Clickbait cross-run cache TTL: cached classification results expire after
+# this many days and are re-evaluated on the next encounter.
+CLICKBAIT_CACHE_TTL_DAYS = 14
+
+# Clickbait acted pruning: entries older than this many days are removed from
+# clickbait_acted on load (keeps the set from growing indefinitely).
+CLICKBAIT_ACTED_PRUNE_DAYS = 90
+
+# Shadow-limiting detection: stop the run after this many re-encounters of
+# videos previously acted on with "Not interested" (time-gated; see below).
+SHADOW_LIMIT_WARN_AFTER = 2
+
+# Grace period for shadow-limiting detection. A re-encounter within this many
+# hours of the original act is treated as normal algorithm latency, not a signal.
+SHADOW_LIMIT_GRACE_HOURS = 48
 
 # Set to True by write_attention() so main() can exit with code 1 when
 # something serious enough to alert the user occurred during the run.

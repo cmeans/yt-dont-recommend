@@ -250,3 +250,63 @@ class TestVersionChecking:
         ydr.do_revert("0.1.10")
         captured = capsys.readouterr()
         assert "nothing to do" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Clickbait cache + acted (v3 state keys)
+# ---------------------------------------------------------------------------
+
+class TestClickbaitStateKeys:
+    def test_fresh_state_has_clickbait_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["clickbait_cache"] == {}
+
+    def test_fresh_state_has_clickbait_acted(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["clickbait_acted"] == {}
+
+    def test_old_state_gets_clickbait_keys_on_load(self, tmp_path, monkeypatch):
+        state_file = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
+        state_file.write_text(json.dumps({"blocked_by": {}, "state_version": 2}))
+        state = ydr.load_state()
+        assert "clickbait_cache" in state
+        assert "clickbait_acted" in state
+
+    def test_clickbait_acted_old_entries_pruned_on_load(self, tmp_path, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        state_file = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
+        old_ts = (datetime.now(tz=timezone.utc) - timedelta(days=100)).isoformat()
+        recent_ts = (datetime.now(tz=timezone.utc) - timedelta(days=10)).isoformat()
+        state_file.write_text(json.dumps({
+            "clickbait_acted": {
+                "old_video": {"acted_at": old_ts, "title": "old", "channel": "@x"},
+                "recent_video": {"acted_at": recent_ts, "title": "new", "channel": "@y"},
+            },
+            "state_version": 3,
+        }))
+        state = ydr.load_state()
+        assert "old_video" not in state["clickbait_acted"], "entry older than prune threshold must be removed"
+        assert "recent_video" in state["clickbait_acted"], "recent entry must be kept"
+
+    def test_clickbait_acted_fresh_entries_kept_on_load(self, tmp_path, monkeypatch):
+        from datetime import datetime, timezone
+        state_file = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", state_file)
+        now_ts = datetime.now(tz=timezone.utc).isoformat()
+        state_file.write_text(json.dumps({
+            "clickbait_acted": {
+                "vid1": {"acted_at": now_ts, "title": "t", "channel": "@c"},
+            },
+            "state_version": 3,
+        }))
+        state = ydr.load_state()
+        assert "vid1" in state["clickbait_acted"]
+
+    def test_state_version_is_3(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["state_version"] == 3
