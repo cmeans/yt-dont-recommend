@@ -232,15 +232,76 @@ def _launch_context(p: Any, profile_dir: Path, **kwargs: Any) -> Any:
     return ctx
 
 
+def _extract_videos_from_lockup_items(items: list) -> dict:
+    """Extract video metadata from a list of richItemRenderer continuation items.
+
+    Handles both lockupViewModel (2026+ schema) and videoRenderer (legacy/A-B test).
+    Returns {video_id: {"title": str, "channel_handle": str | None}}.
+    """
+    result = {}
+    for item in items:
+        content = (item.get("richItemRenderer") or {}).get("content") or {}
+
+        video_id = title = channel_handle = None
+
+        # New schema (2026+): lockupViewModel
+        lvm = content.get("lockupViewModel")
+        if lvm:
+            video_id = lvm.get("contentId")
+            title = (
+                (lvm.get("metadata") or {})
+                .get("lockupMetadataViewModel", {})
+                .get("title", {})
+                .get("content")
+            )
+            canonical = (
+                (lvm.get("metadata") or {})
+                .get("lockupMetadataViewModel", {})
+                .get("image", {})
+                .get("decoratedAvatarViewModel", {})
+                .get("rendererContext", {})
+                .get("commandContext", {})
+                .get("onTap", {})
+                .get("innertubeCommand", {})
+                .get("browseEndpoint", {})
+                .get("canonicalBaseUrl")
+            )
+            if canonical:
+                channel_handle = canonical.lstrip("/")
+
+        # Legacy schema: videoRenderer
+        if not video_id:
+            vr = content.get("videoRenderer")
+            if vr:
+                video_id = vr.get("videoId")
+                runs = (vr.get("title") or {}).get("runs") or []
+                title = runs[0].get("text") if runs else None
+                for key in ("shortBylineText", "ownerText"):
+                    ep_runs = (vr.get(key) or {}).get("runs") or []
+                    if ep_runs:
+                        canonical = (
+                            ep_runs[0]
+                            .get("navigationEndpoint", {})
+                            .get("browseEndpoint", {})
+                            .get("canonicalBaseUrl")
+                        )
+                        if canonical:
+                            channel_handle = canonical.lstrip("/")
+                            break
+
+        if video_id and title:
+            result[video_id] = {"title": title, "channel_handle": channel_handle}
+    return result
+
+
 def _extract_feed_videos_from_json(page: Any) -> dict:
     """Extract video metadata from the ytInitialData JSON blob embedded in the page.
 
     Returns {video_id: {"title": str, "channel_handle": str | None}} for all
-    videoRenderer entries found in the home feed richGridRenderer on initial load.
+    video entries found in the home feed richGridRenderer on initial load.
 
-    Only covers the first page of cards (loaded at page.goto time). Scrolled
-    continuation content is not captured here — callers must fall back to DOM
-    extraction for videos not in the returned dict.
+    Continuation content loaded by subsequent scrolls is captured separately via
+    the response listener set up in process_channels().
 
     Returns an empty dict on any failure (missing ytInitialData, JS error, etc.)
     so callers can safely treat it as a best-effort supplement.
@@ -262,17 +323,36 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
 
                 const videos = [];
                 for (const item of contents) {
-                    const vr = item?.richItemRenderer?.content?.videoRenderer;
-                    if (!vr) continue;
-                    const videoId = vr.videoId;
-                    const title = vr?.title?.runs?.[0]?.text ?? null;
-                    // YouTube A/B tests shortBylineText vs ownerText — try both
-                    const ep = vr?.shortBylineText?.runs?.[0]?.navigationEndpoint
-                             ?? vr?.ownerText?.runs?.[0]?.navigationEndpoint
-                             ?? null;
-                    const canonicalUrl = ep?.browseEndpoint?.canonicalBaseUrl ?? null;
-                    // canonicalBaseUrl is "/@handle" — strip the leading slash
-                    const channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                    const content = item?.richItemRenderer?.content;
+                    if (!content) continue;
+
+                    let videoId = null, title = null, channelHandle = null;
+
+                    // New schema (2026+): lockupViewModel
+                    const lvm = content?.lockupViewModel;
+                    if (lvm) {
+                        videoId = lvm.contentId ?? null;
+                        title   = lvm.metadata?.lockupMetadataViewModel?.title?.content ?? null;
+                        const canonicalUrl = lvm.metadata?.lockupMetadataViewModel?.image
+                            ?.decoratedAvatarViewModel?.rendererContext?.commandContext
+                            ?.onTap?.innertubeCommand?.browseEndpoint?.canonicalBaseUrl ?? null;
+                        channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                    }
+
+                    // Legacy schema: videoRenderer (kept as fallback for A/B tested pages)
+                    if (!videoId) {
+                        const vr = content?.videoRenderer;
+                        if (vr) {
+                            videoId = vr.videoId ?? null;
+                            title   = vr?.title?.runs?.[0]?.text ?? null;
+                            const ep = vr?.shortBylineText?.runs?.[0]?.navigationEndpoint
+                                     ?? vr?.ownerText?.runs?.[0]?.navigationEndpoint
+                                     ?? null;
+                            const canonicalUrl = ep?.browseEndpoint?.canonicalBaseUrl ?? null;
+                            channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                        }
+                    }
+
                     if (videoId && title) {
                         videos.push({video_id: videoId, title, channel_handle: channelHandle});
                     }
@@ -281,12 +361,13 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
             }
         """)
         if not data:
+            log.info("ytInitialData: no video entries found (page structure may have changed)")
             return {}
         result = {item["video_id"]: item for item in data}
-        log.debug("ytInitialData: %d video entries on initial page load", len(result))
+        log.info("ytInitialData: %d video entries on initial page load", len(result))
         return result
     except Exception as exc:
-        log.debug("ytInitialData extraction failed: %s", exc)
+        log.warning("ytInitialData extraction failed: %s", exc)
         return {}
 
 
@@ -695,10 +776,35 @@ def process_channels(channel_sources: dict[str, str],
 
         _run_blocklist = bool(channel_lookup)
         _run_clickbait = clickbait_cfg is not None
-        # Extract video metadata from ytInitialData (initial page load only).
-        # Used as a reliable title source for clickbait classification; cards
-        # loaded by subsequent scrolls fall back to DOM extraction.
-        _json_videos: dict = _extract_feed_videos_from_json(page) if _run_clickbait else {}
+        # Extract video metadata from ytInitialData and continuation responses.
+        # Used as title source for clickbait and channel-handle fallback for
+        # blocklist when the DOM channel link selector returns nothing.
+        _json_videos: dict = _extract_feed_videos_from_json(page)
+
+        # Listen for /youtubei/v1/browse continuation responses and merge video
+        # metadata into _json_videos so scrolled cards get JSON titles and
+        # channel handles too.
+        def _on_browse_response(response):
+            if "/youtubei/v1/browse" not in response.url or response.status != 200:
+                return
+            try:
+                body = response.json()
+                for action in body.get("onResponseReceivedActions") or []:
+                    items = (
+                        action.get("appendContinuationItemsAction", {})
+                        .get("continuationItems") or []
+                    )
+                    if items:
+                        new_entries = _extract_videos_from_lockup_items(items)
+                        _json_videos.update(new_entries)
+                        if new_entries:
+                            log.debug(
+                                "ytInitialData: +%d entries from continuation (total %d)",
+                                len(new_entries), len(_json_videos),
+                            )
+            except Exception as exc:
+                log.debug("ytInitialData continuation parse error: %s", exc)
+        page.on("response", _on_browse_response)
         blocked_count = 0
         clickbait_count = 0
         no_progress_scrolls = 0
@@ -736,23 +842,37 @@ def process_channels(channel_sources: dict[str, str],
                     break
 
                 channel_link = card.query_selector("a[href^='/@'], a[href^='/channel/UC']")
-                if not channel_link:
+                path: str | None = None
+
+                if channel_link:
+                    href = channel_link.get_attribute("href") or ""
+                    raw_path = href.split("?")[0].rstrip("/")
+                    # Normalize to canonical form: @handle or UCxxx
+                    if raw_path.startswith("/@"):
+                        path = raw_path[1:]  # /@handle → @handle
+                    elif raw_path.startswith("/channel/"):
+                        path = raw_path[len("/channel/"):]  # /channel/UCxxx → UCxxx
+
+                # Fallback: derive channel handle from JSON using the video ID
+                if not path:
+                    watch_link = card.query_selector("a[href*='/watch?v=']")
+                    if watch_link:
+                        watch_href = watch_link.get_attribute("href") or ""
+                        m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", watch_href)
+                        if m:
+                            json_meta = _json_videos.get(m.group(1))
+                            if json_meta and json_meta.get("channel_handle"):
+                                path = json_meta["channel_handle"]
+                                log.debug(f"Feed card channel: {path} (from JSON fallback)")
+
+                if not path:
                     continue
                 pass_parseable += 1
-
-                href = channel_link.get_attribute("href") or ""
-                raw_path = href.split("?")[0].rstrip("/")
-                # Normalize to canonical form: @handle or UCxxx
-                if raw_path.startswith("/@"):
-                    path = raw_path[1:]  # /@handle → @handle
-                elif raw_path.startswith("/channel/"):
-                    path = raw_path[len("/channel/"):]  # /channel/UCxxx → UCxxx
-                else:
-                    continue
                 if path.lower() in seen_paths:
                     continue
                 seen_paths.add(path.lower())
-                log.debug(f"Feed card channel: {path}")
+                if channel_link:
+                    log.debug(f"Feed card channel: {path}")
                 canonical = channel_lookup.get(path.lower())
                 if canonical and canonical in processed_set:
                     continue
