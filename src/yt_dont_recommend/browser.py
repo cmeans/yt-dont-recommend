@@ -892,6 +892,13 @@ def process_channels(channel_sources: dict[str, str],
                         path = json_meta["channel_handle"]
                         log.debug(f"Feed card channel: {path} (from feed JSON cache)")
 
+                # Still a UCxxx after JSON upgrade? The JSON canonical URL was also
+                # /channel/UCxxx. Try the state cache populated by blocklist runs.
+                if path and re.match(r'^UC[A-Za-z0-9_-]{22}$', path):
+                    _h = state.get("ucxxx_to_handle", {}).get(path)
+                    if _h:
+                        path = _h
+
                 if not path:
                     continue
                 pass_parseable += 1
@@ -987,9 +994,14 @@ def process_channels(channel_sources: dict[str, str],
                         continue
                     if video_id in _title_cache:
                         # Already classified — use cached result
-                        if _title_cache[video_id].get("flagged"):
+                        cached = _title_cache[video_id]
+                        if cached.get("flagged"):
                             _cb_flagged.append((card, path, video_id))
                         else:
+                            log.debug(
+                                f"clickbait: {path}/{video_id} — "
+                                f"cache hit not flagged (score={cached.get('confidence', 0.0):.2f})"
+                            )
                             _clickbait_evaluated.add(path.lower())
                     else:
                         _cb_candidates.append((card, path, video_id, video_title))
