@@ -1164,7 +1164,7 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
         return results  # type: ignore[return-value]
 
     elapsed = round(time.monotonic() - t0, 2)
-    log.debug("Batch title: raw response (%d chars): %.500s", len(raw), raw)
+    log.debug("Batch title: raw response (%d chars): %s", len(raw), raw)
 
     parsed = _parse_batch_response(raw, len(llm_batch))
 
@@ -1304,7 +1304,7 @@ def _classify_transcript_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
         return [pre_results[i] for i in range(len(batch))]
 
     elapsed = round(time.monotonic() - t0, 2)
-    log.debug("Batch transcript: raw response (%d chars): %.500s", len(raw), raw)
+    log.debug("Batch transcript: raw response (%d chars): %s", len(raw), raw)
 
     parsed = _parse_batch_response(raw, len(pending_indices))
 
