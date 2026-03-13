@@ -1171,8 +1171,8 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     if parsed is None:
         log.warning(
             "Batch title parse failed (%s, %.1fs, model=%s) — "
-            "raw response (first 500 chars): %r — falling back to individual calls",
-            _n(len(llm_batch), "item"), elapsed, model, raw[:500],
+            "raw response: %r — falling back to individual calls",
+            _n(len(llm_batch), "item"), elapsed, model, raw,
         )
         for orig_i, item in zip(llm_positions, llm_batch):
             results[orig_i] = classify_title(item["video_id"], item["title"], cfg)
@@ -1311,8 +1311,8 @@ def _classify_transcript_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     if parsed is None:
         log.warning(
             "Batch transcript parse failed (%d items, %.1fs, model=%s) — "
-            "raw response (first 500 chars): %r — falling back to individual calls",
-            len(pending_indices), elapsed, model, raw[:500],
+            "raw response: %r — falling back to individual calls",
+            len(pending_indices), elapsed, model, raw,
         )
         for i in pending_indices:
             pre_results[i] = classify_transcript(batch[i]["video_id"], batch[i]["title"], cfg)
