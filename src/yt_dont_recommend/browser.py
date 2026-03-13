@@ -268,6 +268,8 @@ def _extract_videos_from_lockup_items(items: list) -> dict:
             )
             if canonical:
                 channel_handle = canonical.lstrip("/")
+                if channel_handle.startswith("channel/"):
+                    channel_handle = channel_handle[len("channel/"):]
 
         # Legacy schema: videoRenderer
         if not video_id:
@@ -287,6 +289,8 @@ def _extract_videos_from_lockup_items(items: list) -> dict:
                         )
                         if canonical:
                             channel_handle = canonical.lstrip("/")
+                            if channel_handle.startswith("channel/"):
+                                channel_handle = channel_handle[len("channel/"):]
                             break
 
         if video_id and title:
@@ -336,7 +340,7 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
                         const canonicalUrl = lvm.metadata?.lockupMetadataViewModel?.image
                             ?.decoratedAvatarViewModel?.rendererContext?.commandContext
                             ?.onTap?.innertubeCommand?.browseEndpoint?.canonicalBaseUrl ?? null;
-                        channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                        channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '').replace(/^channel\\//, '') : null;
                     }
 
                     // Legacy schema: videoRenderer (kept as fallback for A/B tested pages)
@@ -349,7 +353,7 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
                                      ?? vr?.ownerText?.runs?.[0]?.navigationEndpoint
                                      ?? null;
                             const canonicalUrl = ep?.browseEndpoint?.canonicalBaseUrl ?? null;
-                            channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                            channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '').replace(/^channel\\//, '') : null;
                         }
                     }
 
