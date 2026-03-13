@@ -1099,7 +1099,7 @@ def process_channels(channel_sources: dict[str, str],
             # pass it is immediately picked up from _cb_flagged again.
             if not found_match_this_pass and _cb_flagged:
                 card, path, video_id = _cb_flagged[0]
-                if not card.is_connected():
+                if not card.evaluate("el => el.isConnected"):
                     log.debug(
                         f"clickbait: {path}/{video_id} — flagged card scrolled off, "
                         f"will retry if it reappears"
