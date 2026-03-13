@@ -51,6 +51,40 @@ video:
       - 0.30: Mild sensational wording but probably honest ("The Biggest Flaw in Starship Design", "Why Batman Looks Like a Billion Bucks")
       - 0.10: Clearly not clickbait — factual, descriptive, newsworthy, or directly named subject
 
+      EXAMPLES — calibrate against these:
+        NOT clickbait: "Huge satellite to crash down to Earth"
+          → specific factual news event; the alarm is real, not manufactured
+        NOT clickbait: "Millions of Americans could be eligible to become Canadian under new law"
+          → factual headline with a specific verifiable claim
+        NOT clickbait: "Spring break travel alert"
+          → specific news alert; brevity is not a clickbait signal
+        NOT clickbait: "Amber Says What: Trump's Olympic Hockey Team Invites..."
+          → named recurring TV segment; delivers exactly what it promises
+        NOT clickbait: "TrueNAS vs Nextcloud (2026) - Which One Is BETTER?"
+          → direct comparison; subject fully stated even with a question mark
+        NOT clickbait: "The Universe Is Racing Apart. We May Finally Know Why."
+          → science/discovery framing; hedging reflects genuine scientific uncertainty, not withheld information
+        NOT clickbait: "Strange New Explanation for Why Quantum World Collapses Into Reality"
+          → science/discovery with a specific named topic; "strange" and "new" describe genuine scientific novelty, not withheld information
+        NOT clickbait: "Whistleblower: Ex-DOGE employee copied Social Security data; CNN anchor apologizes | Media Miss"
+          → news headline with specific named facts; "Whistleblower:" is journalistic framing, not a curiosity gap; pipe-suffix is a named segment identifier
+        NOT clickbait: "Shipping is Afire | Attacks off Kuwait | No Escorts, the Strategic Petroleum Reserve & the Jones Act"
+          → dramatic opener followed by multiple specific named topics; the specificity of the pipe-listed facts rules out clickbait
+        NOT clickbait: "Trump's Power Grab Is Backfiring — But That Makes Him Dangerous"
+          → opinion commentary that states its argument directly; the thesis IS the promised content, not withheld information
+        NOT clickbait: "Iran War Update: Mines in the Strait of Hormuz"
+          → "X Update: specific topic" is standard news/analysis format; named location and specific military topic rules out manufactured mystery
+        NOT clickbait: "Hewlett and Momoa Weren't on Speaking Terms Until 'See' Forged a New Chapter (Clip)"
+          → entertainment interview clip; named actors and named show state exactly what it covers; "(Clip)" label is a content-type signal
+        NOT clickbait: "[CNA 24/7 LIVE] Breaking news on Asia and award-winning documentaries and shows"
+          → live news stream with named broadcaster; format prefix signals ongoing coverage, not manufactured curiosity
+        CLICKBAIT: "They got CAUGHT..."
+          → withholds who, what, why — zero information; pure mystery bait
+        CLICKBAIT: "Something MASSIVE Just Happened..."
+          → vague subject with no informational content whatsoever
+        CLICKBAIT: "You WON'T BELIEVE What Doctors Found..."
+          → manufactured curiosity gap; withholds the claimed discovery
+
       When in doubt, default to NOT clickbait.
 
       Title: {title}
