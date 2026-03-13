@@ -8,9 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from yt_dont_recommend.clickbait import (
+    _clamp_confidence,
     _deep_merge,
     _DEFAULT_CONFIG,
     _parse_batch_response,
+    _prefilter_title,
     classify_thumbnail,
     classify_title,
     classify_titles_batch,
@@ -813,3 +815,123 @@ class TestClassifyTranscriptsBatch:
         ):
             results = classify_transcripts_batch(self._items(2), _cfg())
         assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# _prefilter_title
+# ---------------------------------------------------------------------------
+
+class TestPrefilterTitle:
+    def test_official_trailer_filtered(self):
+        assert _prefilter_title("Disclosure Day | Official Trailer") is not None
+
+    def test_official_trailer_case_insensitive(self):
+        assert _prefilter_title("MOVIE - OFFICIAL TRAILER 2") is not None
+
+    def test_official_teaser_filtered(self):
+        assert _prefilter_title("Something | Official Teaser") is not None
+
+    def test_mv_suffix_filtered(self):
+        assert _prefilter_title("f(x) Hot Summer MV") is not None
+
+    def test_mv_suffix_case_insensitive(self):
+        assert _prefilter_title("Artist - Song mv") is not None
+
+    def test_breaking_news_prefix(self):
+        assert _prefilter_title("BREAKING NEWS: something happened") is not None
+
+    def test_watch_live_prefix(self):
+        assert _prefilter_title("WATCH LIVE: Senate vote") is not None
+
+    def test_weather_prefix(self):
+        assert _prefilter_title("WEATHER: Wild winds expected Thursday") is not None
+
+    def test_weather_alert_prefix(self):
+        assert _prefilter_title("Weather Alert: Tornado warning") is not None
+
+    def test_normal_title_not_filtered(self):
+        assert _prefilter_title("How Black Holes Die") is None
+
+    def test_science_title_not_filtered(self):
+        assert _prefilter_title("The Universe Is Racing Apart. We May Finally Know Why.") is None
+
+    def test_clickbait_title_not_filtered(self):
+        assert _prefilter_title("They got CAUGHT...") is None
+
+    def test_classify_title_skips_llm_for_prefiltered(self):
+        """classify_title should return without calling ollama for pre-filtered titles."""
+        with patch("yt_dont_recommend.clickbait._ollama_chat") as mock_llm:
+            result = classify_title("vid1", "Disclosure Day | Official Trailer", _cfg())
+        mock_llm.assert_not_called()
+        assert result["is_clickbait"] is False
+        assert result["model"] == "prefilter"
+
+    def test_batch_skips_llm_for_all_prefiltered(self):
+        """classify_titles_batch with only pre-filtered items should not call ollama."""
+        items = [
+            {"video_id": "v1", "title": "Movie | Official Trailer"},
+            {"video_id": "v2", "title": "BREAKING NEWS: Something"},
+        ]
+        with patch("yt_dont_recommend.clickbait._ollama_chat") as mock_llm:
+            results = classify_titles_batch(items, _cfg())
+        mock_llm.assert_not_called()
+        assert all(r["is_clickbait"] is False for r in results)
+        assert all(r["model"] == "prefilter" for r in results)
+
+    def test_batch_mixed_prefiltered_and_llm(self):
+        """Pre-filtered items bypass LLM; remaining items are sent as a batch."""
+        items = [
+            {"video_id": "v1", "title": "Movie | Official Trailer"},   # pre-filter
+            {"video_id": "v2", "title": "They got CAUGHT..."},          # LLM
+        ]
+        llm_response = '[{"index": 0, "is_clickbait": true, "confidence": 0.95, "reasoning": "bait"}]'
+        with patch("yt_dont_recommend.clickbait._ollama_chat", return_value=llm_response):
+            results = classify_titles_batch(items, _cfg())
+        assert results[0]["is_clickbait"] is False   # pre-filtered
+        assert results[0]["model"] == "prefilter"
+        assert results[1]["is_clickbait"] is True    # LLM result
+
+
+# ---------------------------------------------------------------------------
+# _clamp_confidence
+# ---------------------------------------------------------------------------
+
+class TestClampConfidence:
+    def test_clamp_above_max(self):
+        assert _clamp_confidence(1.0) == 0.95
+
+    def test_clamp_below_min(self):
+        assert _clamp_confidence(0.0) == 0.05
+
+    def test_clamp_within_range(self):
+        assert _clamp_confidence(0.5) == 0.5
+
+    def test_clamp_none_passthrough(self):
+        assert _clamp_confidence(None) is None
+
+    def test_extract_json_clamps_confidence(self):
+        raw = '{"is_clickbait": true, "confidence": 1.0, "reasoning": "test"}'
+        result = extract_json(raw)
+        assert result["confidence"] == 0.95
+
+    def test_parse_batch_response_confidence_unclamped(self):
+        """_parse_batch_response does not clamp — clamping is done by the caller."""
+        raw = '[{"index": 0, "is_clickbait": true, "confidence": 1.0, "reasoning": "x"}]'
+        result = _parse_batch_response(raw, 1)
+        # Raw parse returns the value as-is; batch caller applies clamping
+        assert result is not None
+        assert result[0]["confidence"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# _parse_batch_response — single-quote fallback
+# ---------------------------------------------------------------------------
+
+class TestParseBatchResponseSingleQuote:
+    def test_single_quoted_json_parsed(self):
+        """Models sometimes return Python-style single-quoted strings."""
+        raw = "[{'index': 0, 'is_clickbait': False, 'confidence': 0.1, 'reasoning': 'ok'}]"
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+        assert result[0]["confidence"] == 0.1

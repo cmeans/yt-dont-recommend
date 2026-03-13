@@ -11,6 +11,7 @@ Install all at once:
 
 from __future__ import annotations
 
+import ast
 import base64
 import json
 import logging
@@ -22,7 +23,66 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .config import _n
+
 log = logging.getLogger(__name__)
+
+
+def _clamp_confidence(conf: "float | None") -> "float | None":
+    """Clamp model confidence to the calibrated range [0.05, 0.95]."""
+    if conf is None:
+        return conf
+    return max(0.05, min(0.95, float(conf)))
+
+
+# ---------------------------------------------------------------------------
+# Title pre-filters — trivially not clickbait without LLM evaluation
+# ---------------------------------------------------------------------------
+
+# Substrings that, when present (case-insensitive), mean NOT clickbait.
+# These patterns reliably identify promotional/news content that the model
+# sometimes flags incorrectly despite explicit prompt instructions.
+_PREFILTER_CONTAINS = (
+    "official trailer",
+    "official teaser",
+    "official music video",
+)
+
+# Case-insensitive suffixes that mark a title as NOT clickbait.
+_PREFILTER_ENDS_WITH = (
+    " mv",
+    " (mv)",
+    " [mv]",
+)
+
+# Case-insensitive prefixes that mark a title as NOT clickbait.
+_PREFILTER_STARTS_WITH = (
+    "breaking news:",
+    "watch live:",
+    "weather:",
+    "weather alert:",
+    "live stream:",
+)
+
+
+def _prefilter_title(title: str) -> "str | None":
+    """Return a skip reason if *title* is trivially not clickbait, else None.
+
+    Called before LLM evaluation. Matches promotional titles, news alerts,
+    and live-stream prefixes that the model sometimes misclassifies.
+    """
+    t = title.lower().strip()
+    for sub in _PREFILTER_CONTAINS:
+        if sub in t:
+            return f"pre-filter: contains '{sub}'"
+    for sfx in _PREFILTER_ENDS_WITH:
+        if t.endswith(sfx):
+            return f"pre-filter: suffix '{sfx.strip()}'"
+    for pfx in _PREFILTER_STARTS_WITH:
+        if t.startswith(pfx):
+            return f"pre-filter: prefix '{pfx}'"
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Default configuration
@@ -140,6 +200,26 @@ video:
       - 0.75: Probably clickbait — sensational framing but some real information present
       - 0.30: Mild sensational wording but probably honest ("The Biggest Flaw in Starship Design", "Why Batman Looks Like a Billion Bucks")
       - 0.10: Clearly not clickbait — factual, newsworthy, opinion stating its argument, tutorial, or directly named subject
+
+      EXAMPLES — calibrate against these:
+        NOT clickbait: "Huge satellite to crash down to Earth"
+          → specific factual news event; the alarm is real, not manufactured
+        NOT clickbait: "Millions of Americans could be eligible to become Canadian under new law"
+          → factual headline with a specific verifiable claim
+        NOT clickbait: "Spring break travel alert"
+          → specific news alert; brevity is not a clickbait signal
+        NOT clickbait: "Amber Says What: Trump's Olympic Hockey Team Invites..."
+          → named recurring TV segment; delivers exactly what it promises
+        NOT clickbait: "TrueNAS vs Nextcloud (2026) - Which One Is BETTER?"
+          → direct comparison; subject fully stated even with a question mark
+        NOT clickbait: "The Universe Is Racing Apart. We May Finally Know Why."
+          → science/discovery framing; hedging reflects genuine scientific uncertainty, not withheld information
+        CLICKBAIT: "They got CAUGHT..."
+          → withholds who, what, why — zero information; pure mystery bait
+        CLICKBAIT: "Something MASSIVE Just Happened..."
+          → vague subject with no informational content whatsoever
+        CLICKBAIT: "You WON'T BELIEVE What Doctors Found..."
+          → manufactured curiosity gap; withholds the claimed discovery
 
       When in doubt, default to NOT clickbait.
 
@@ -332,9 +412,14 @@ def extract_json(raw: str) -> dict:
     raw = re.sub(r"\s*```$", "", raw)
     raw = raw.strip()
 
+    def _clamp(result: dict) -> dict:
+        if isinstance(result.get("confidence"), (int, float)):
+            result["confidence"] = _clamp_confidence(result["confidence"])
+        return result
+
     # Direct parse
     try:
-        return json.loads(raw)
+        return _clamp(json.loads(raw))
     except json.JSONDecodeError:
         pass
 
@@ -342,7 +427,7 @@ def extract_json(raw: str) -> dict:
     m = re.search(r"\{[^{}]+\}", raw, re.DOTALL)
     if m:
         try:
-            return json.loads(m.group())
+            return _clamp(json.loads(m.group()))
         except json.JSONDecodeError:
             pass
 
@@ -352,12 +437,12 @@ def extract_json(raw: str) -> dict:
     rsn   = re.search(r'"reasoning"\s*:\s*"([^"]+)"', raw)
 
     if is_cb:
-        return {
+        return _clamp({
             "is_clickbait": is_cb.group(1) == "true",
             "confidence":   float(conf.group(1)) if conf else None,
             "reasoning":    rsn.group(1) if rsn else "(extracted)",
             "_parse":       "regex-fallback",
-        }
+        })
 
     return {
         "is_clickbait": False,
@@ -400,6 +485,26 @@ Confidence guide — use the full scale, not just 0.10 and 0.80:
 - 0.75: Probably clickbait — sensational framing but some real information present
 - 0.30: Mild sensational wording but probably honest ("The Biggest Flaw in Starship Design")
 - 0.10: Clearly not clickbait — factual, newsworthy, opinion stating its argument, tutorial, or directly named subject
+
+EXAMPLES — calibrate against these:
+  NOT clickbait: "Huge satellite to crash down to Earth"
+    → specific factual news event; the alarm is real, not manufactured
+  NOT clickbait: "Millions of Americans could be eligible to become Canadian under new law"
+    → factual news headline with a specific verifiable claim
+  NOT clickbait: "Spring break travel alert"
+    → short but specific news alert; brevity is not a clickbait signal
+  NOT clickbait: "Amber Says What: Trump's Olympic Hockey Team Invites..."
+    → named recurring TV segment; delivers exactly what it promises
+  NOT clickbait: "TrueNAS vs Nextcloud (2026) - Which One Is BETTER?"
+    → direct comparison; subject fully stated even with a question mark
+  NOT clickbait: "The Universe Is Racing Apart. We May Finally Know Why."
+    → science/discovery framing; hedging reflects genuine scientific uncertainty, not withheld information
+  CLICKBAIT: "They got CAUGHT..."
+    → withholds who, what, why — zero information; pure mystery bait
+  CLICKBAIT: "Something MASSIVE Just Happened..."
+    → vague subject with no informational content whatsoever
+  CLICKBAIT: "You WON'T BELIEVE What Doctors Found..."
+    → manufactured curiosity gap; withholds the claimed discovery
 
 When in doubt, default to NOT clickbait.
 
@@ -603,6 +708,17 @@ def _fetch_transcript(video_id: str) -> "tuple[str | None, str]":
 
 def classify_title(video_id: str, title: str, cfg: dict) -> dict:
     """Classify *title* as clickbait or not. Returns a result dict."""
+    skip_reason = _prefilter_title(title)
+    if skip_reason:
+        return {
+            "is_clickbait": False,
+            "confidence":   0.05,
+            "reasoning":    skip_reason,
+            "stage":        "title",
+            "model":        "prefilter",
+            "video_id":     video_id,
+        }
+
     title_cfg = cfg["video"]["title"]
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
@@ -807,6 +923,26 @@ Confidence guide:
 - 0.30: Mild sensational wording but probably honest
 - 0.10: Clearly not clickbait
 
+EXAMPLES — calibrate against these:
+  NOT clickbait: "Huge satellite to crash down to Earth"
+    → specific factual news event; alarm is real, not manufactured
+  NOT clickbait: "Millions of Americans could be eligible to become Canadian under new law"
+    → factual headline with a specific verifiable claim
+  NOT clickbait: "Spring break travel alert"
+    → specific news alert; brevity is not a clickbait signal
+  NOT clickbait: "Amber Says What: Trump's Olympic Hockey Team Invites..."
+    → named recurring TV segment; delivers exactly what it promises
+  NOT clickbait: "TrueNAS vs Nextcloud (2026) - Which One Is BETTER?"
+    → direct comparison; subject fully stated even with a question mark
+  NOT clickbait: "The Universe Is Racing Apart. We May Finally Know Why."
+    → science/discovery framing; hedging reflects genuine scientific uncertainty, not withheld information
+  CLICKBAIT: "They got CAUGHT..."
+    → withholds who, what, why — zero information; pure mystery bait
+  CLICKBAIT: "Something MASSIVE Just Happened..."
+    → vague subject with no informational content whatsoever
+  CLICKBAIT: "You WON'T BELIEVE What Doctors Found..."
+    → manufactured curiosity gap; withholds the claimed discovery
+
 When in doubt, default to NOT clickbait.
 
 Titles:
@@ -861,10 +997,16 @@ def _parse_batch_response(raw: str, expected: int) -> "list[dict] | None":
     if start == -1 or end == -1 or end <= start:
         return None
 
+    candidate = raw[start:end + 1]
     try:
-        items = json.loads(raw[start:end + 1])
+        items = json.loads(candidate)
     except json.JSONDecodeError:
-        return None
+        # Some models return Python-style single-quoted strings (invalid JSON).
+        # ast.literal_eval handles those safely.
+        try:
+            items = ast.literal_eval(candidate)
+        except Exception:
+            return None
 
     if not isinstance(items, list):
         return None
@@ -909,6 +1051,9 @@ def classify_titles_batch(
 def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     """Send one batch of titles to the LLM and return per-item results.
 
+    Pre-filtered titles (e.g. "Official Trailer", "BREAKING NEWS:") are
+    returned immediately as not clickbait without an LLM call.
+
     Falls back to ``classify_title()`` for any item that cannot be parsed
     from the batch response.
 
@@ -922,15 +1067,42 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
 
+    # --- Pre-filter: separate trivially-safe titles from LLM-bound ones ---
+    results: list["dict | None"] = [None] * len(batch)
+    llm_positions: list[int] = []  # indices into batch that need LLM
+
+    for i, item in enumerate(batch):
+        reason = _prefilter_title(item["title"])
+        if reason:
+            log.debug("Batch title [%d]: %r → pre-filter: %s", i, item["title"], reason)
+            results[i] = {
+                "is_clickbait": False,
+                "confidence":   0.05,
+                "reasoning":    reason,
+                "stage":        "title",
+                "model":        "prefilter",
+                "video_id":     item["video_id"],
+                "_batch":       True,
+            }
+        else:
+            llm_positions.append(i)
+
+    if not llm_positions:
+        return results  # type: ignore[return-value]
+
+    llm_batch = [batch[i] for i in llm_positions]
+
+    # Use json.dumps() for consistent double-quoting regardless of title content
     titles_block = "\n".join(
-        f'{i}: {item["title"]!r}' for i, item in enumerate(batch)
+        f'{seq}: {json.dumps(item["title"], ensure_ascii=False)}'
+        for seq, item in enumerate(llm_batch)
     )
     prompt_tmpl = title_cfg.get("prompt_batch") or _BATCH_TITLE_PROMPT
     prompt = _apply_prompt(prompt_tmpl, titles=titles_block)
 
     log.debug(
-        "Batch title: sending %d titles to %s:\n%s",
-        len(batch), model, titles_block,
+        "Batch title: sending %s to %s:\n%s",
+        _n(len(llm_batch), "title"), model, titles_block,
     )
 
     t0 = time.monotonic()
@@ -938,33 +1110,39 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
         raw = _ollama_chat(model, prompt, params=params)
     except Exception as exc:
         titles_summary = "; ".join(
-            f'[{i}] {item["title"]!r}' for i, item in enumerate(batch)
+            f'[{seq}] {json.dumps(item["title"])}' for seq, item in enumerate(llm_batch)
         )
         log.warning(
-            "Batch title classification failed (%d items, model=%s): %s\nTitles: %s",
-            len(batch), model, exc, titles_summary,
+            "Batch title classification failed (%s, model=%s): %s\nTitles: %s",
+            _n(len(llm_batch), "item"), model, exc, titles_summary,
         )
-        return [classify_title(item["video_id"], item["title"], cfg) for item in batch]
+        for orig_i, item in zip(llm_positions, llm_batch):
+            results[orig_i] = classify_title(item["video_id"], item["title"], cfg)
+        return results  # type: ignore[return-value]
 
     elapsed = round(time.monotonic() - t0, 2)
     log.debug("Batch title: raw response (%d chars): %.500s", len(raw), raw)
 
-    parsed = _parse_batch_response(raw, len(batch))
+    parsed = _parse_batch_response(raw, len(llm_batch))
 
     if parsed is None:
         log.warning(
-            "Batch title parse failed (%d items, %.1fs, model=%s) — "
+            "Batch title parse failed (%s, %.1fs, model=%s) — "
             "raw response (first 500 chars): %r — falling back to individual calls",
-            len(batch), elapsed, model, raw[:500],
+            _n(len(llm_batch), "item"), elapsed, model, raw[:500],
         )
-        return [classify_title(item["video_id"], item["title"], cfg) for item in batch]
+        for orig_i, item in zip(llm_positions, llm_batch):
+            results[orig_i] = classify_title(item["video_id"], item["title"], cfg)
+        return results  # type: ignore[return-value]
 
-    results = []
-    for i, (item, entry) in enumerate(zip(batch, parsed)):
+    for seq, (orig_i, item) in enumerate(zip(llm_positions, llm_batch)):
+        entry = parsed[seq]
         if entry is None:
-            log.debug("Batch title: index %d missing from response — individual fallback", i)
-            results.append(classify_title(item["video_id"], item["title"], cfg))
+            log.debug("Batch title: index %d missing from response — individual fallback", seq)
+            results[orig_i] = classify_title(item["video_id"], item["title"], cfg)
         else:
+            if isinstance(entry.get("confidence"), (int, float)):
+                entry["confidence"] = _clamp_confidence(entry["confidence"])
             entry.update({
                 "stage":    "title",
                 "model":    model,
@@ -976,17 +1154,17 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
             # (model returns index N's score but N±1's reasoning).
             log.debug(
                 "Batch title [%d]: %r → is_clickbait=%s score=%.2f — %s",
-                i, item["title"],
+                orig_i, item["title"],
                 entry.get("is_clickbait"), entry.get("confidence", 0.0),
                 entry.get("reasoning", ""),
             )
-            results.append(entry)
+            results[orig_i] = entry
 
     log.debug(
-        "Batch title: %d items in %.1fs (%.1fs/item)",
-        len(batch), elapsed, elapsed / len(batch),
+        "Batch title: %s in %.1fs (%.1fs/item)",
+        _n(len(llm_batch), "item"), elapsed, elapsed / len(llm_batch),
     )
-    return results
+    return results  # type: ignore[return-value]
 
 
 def classify_transcripts_batch(
