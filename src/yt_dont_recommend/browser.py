@@ -268,6 +268,8 @@ def _extract_videos_from_lockup_items(items: list) -> dict:
             )
             if canonical:
                 channel_handle = canonical.lstrip("/")
+                if channel_handle.startswith("channel/"):
+                    channel_handle = channel_handle[len("channel/"):]
 
         # Legacy schema: videoRenderer
         if not video_id:
@@ -287,6 +289,8 @@ def _extract_videos_from_lockup_items(items: list) -> dict:
                         )
                         if canonical:
                             channel_handle = canonical.lstrip("/")
+                            if channel_handle.startswith("channel/"):
+                                channel_handle = channel_handle[len("channel/"):]
                             break
 
         if video_id and title:
@@ -336,7 +340,7 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
                         const canonicalUrl = lvm.metadata?.lockupMetadataViewModel?.image
                             ?.decoratedAvatarViewModel?.rendererContext?.commandContext
                             ?.onTap?.innertubeCommand?.browseEndpoint?.canonicalBaseUrl ?? null;
-                        channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                        channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '').replace(/^channel\\//, '') : null;
                     }
 
                     // Legacy schema: videoRenderer (kept as fallback for A/B tested pages)
@@ -349,7 +353,7 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
                                      ?? vr?.ownerText?.runs?.[0]?.navigationEndpoint
                                      ?? null;
                             const canonicalUrl = ep?.browseEndpoint?.canonicalBaseUrl ?? null;
-                            channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '') : null;
+                            channelHandle = canonicalUrl ? canonicalUrl.replace(/^\\//, '').replace(/^channel\\//, '') : null;
                         }
                     }
 
@@ -361,13 +365,13 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
             }
         """)
         if not data:
-            log.info("ytInitialData: no video entries found (page structure may have changed)")
+            log.info("Feed JSON cache: no video entries on initial load (page structure may have changed)")
             return {}
         result = {item["video_id"]: item for item in data}
-        log.info("ytInitialData: %d video entries on initial page load", len(result))
+        log.info("Feed JSON cache: %d video entries on initial page load", len(result))
         return result
     except Exception as exc:
-        log.warning("ytInitialData extraction failed: %s", exc)
+        log.warning("Feed JSON cache: initial extraction failed: %s", exc)
         return {}
 
 
@@ -783,7 +787,7 @@ def process_channels(channel_sources: dict[str, str],
 
         _run_blocklist = bool(channel_lookup)
         _run_clickbait = clickbait_cfg is not None
-        # Extract video metadata from ytInitialData and continuation responses.
+        # Extract video metadata from ytInitialData (initial load) and continuation responses.
         # Used as title source for clickbait and channel-handle fallback for
         # blocklist when the DOM channel link selector returns nothing.
         _json_videos: dict = _extract_feed_videos_from_json(page)
@@ -806,11 +810,11 @@ def process_channels(channel_sources: dict[str, str],
                         _json_videos.update(new_entries)
                         if new_entries:
                             log.debug(
-                                "ytInitialData: +%d entries from continuation (total %d)",
+                                "Feed JSON cache: +%d entries from continuation (total %d)",
                                 len(new_entries), len(_json_videos),
                             )
             except Exception as exc:
-                log.debug("ytInitialData continuation parse error: %s", exc)
+                log.debug("Feed JSON cache continuation parse error: %s", exc)
         page.on("response", _on_browse_response)
         blocked_count = 0
         clickbait_count = 0
@@ -854,6 +858,7 @@ def process_channels(channel_sources: dict[str, str],
 
                 channel_link = card.query_selector("a[href^='/@'], a[href^='/channel/UC']")
                 path: str | None = None
+                _video_id_for_json: str | None = None
 
                 if channel_link:
                     href = channel_link.get_attribute("href") or ""
@@ -864,17 +869,28 @@ def process_channels(channel_sources: dict[str, str],
                     elif raw_path.startswith("/channel/"):
                         path = raw_path[len("/channel/"):]  # /channel/UCxxx → UCxxx
 
-                # Fallback: derive channel handle from JSON using the video ID
-                if not path:
-                    watch_link = card.query_selector("a[href*='/watch?v=']")
-                    if watch_link:
-                        watch_href = watch_link.get_attribute("href") or ""
-                        m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", watch_href)
-                        if m:
-                            json_meta = _json_videos.get(m.group(1))
-                            if json_meta and json_meta.get("channel_handle"):
-                                path = json_meta["channel_handle"]
-                                log.debug(f"Feed card channel: {path} (from JSON fallback)")
+                # Resolve the video ID for JSON cache lookups (used both as
+                # channel-handle source and for title extraction below).
+                watch_link = card.query_selector("a[href*='/watch?v=']")
+                if watch_link:
+                    watch_href = watch_link.get_attribute("href") or ""
+                    _m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", watch_href)
+                    if _m:
+                        _video_id_for_json = _m.group(1)
+
+                # If DOM gave us a UCxxx path, try to upgrade it to @handle via
+                # the feed JSON cache — the JSON always carries the canonical handle.
+                if path and path.startswith("UC") and _video_id_for_json:
+                    json_meta = _json_videos.get(_video_id_for_json)
+                    if json_meta and json_meta.get("channel_handle"):
+                        path = json_meta["channel_handle"]
+
+                # Full fallback: no DOM channel link at all — derive from JSON cache.
+                if not path and _video_id_for_json:
+                    json_meta = _json_videos.get(_video_id_for_json)
+                    if json_meta and json_meta.get("channel_handle"):
+                        path = json_meta["channel_handle"]
+                        log.debug(f"Feed card channel: {path} (from feed JSON cache)")
 
                 if not path:
                     continue
@@ -923,43 +939,53 @@ def process_channels(channel_sources: dict[str, str],
                     # then fall back to the link element directly.
                     # Note: a[href*='/watch?v='] matches a#thumbnail first whose
                     # inner_text() is the duration overlay — avoid that path.
-                    _title_el = (
-                        card.query_selector("a#video-title-link")
-                        or card.query_selector("a#video-title")
-                        or card.query_selector("h3 a[href*='watch?v=']")
-                    )
-                    if not _title_el:
-                        log.debug(f"clickbait: {path} — no title link found (Shorts or shelf card?), skipping")
+                    # Use the video ID already resolved from the watch link above.
+                    video_id = _video_id_for_json
+                    if not video_id:
+                        # No watch link at all — try title element as a last resort for the ID.
+                        _title_el = (
+                            card.query_selector("a#video-title-link")
+                            or card.query_selector("a#video-title")
+                            or card.query_selector("h3 a[href*='watch?v=']")
+                        )
+                        if _title_el:
+                            vid_href = _title_el.get_attribute("href") or ""
+                            _vm = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', vid_href)
+                            if _vm:
+                                video_id = _vm.group(1)
+                    if not video_id:
+                        log.debug(f"clickbait: {path} — no video ID (Shorts or shelf card?), skipping")
                         continue
-                    vid_href = _title_el.get_attribute("href") or ""
-                    m = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', vid_href)
-                    if not m:
-                        log.debug(f"clickbait: {path} — no video ID in href {vid_href!r}, skipping")
-                        continue
-                    video_id = m.group(1)
-                    # Prefer JSON title from ytInitialData (clean, no duration suffix).
-                    # Falls back to DOM extraction for scrolled cards not in the JSON.
+
+                    # Prefer title from feed JSON cache (clean, no duration suffix).
+                    # Falls back to DOM extraction when the card isn't in the cache.
                     json_meta = _json_videos.get(video_id)
                     if json_meta and json_meta.get("title"):
                         video_title: str | None = json_meta["title"]
-                        log.debug(f"clickbait: {path}/{video_id} — title from ytInitialData JSON")
+                        log.debug(f"clickbait: {path}/{video_id} — title from feed JSON cache")
                     else:
                         if _json_videos:
-                            log.debug(f"clickbait: {path}/{video_id} — not in ytInitialData, falling back to DOM")
+                            log.debug(f"clickbait: {path}/{video_id} — not in feed JSON cache, falling back to DOM")
+                        _title_el = (
+                            card.query_selector("a#video-title-link")
+                            or card.query_selector("a#video-title")
+                            or card.query_selector("h3 a[href*='watch?v=']")
+                        )
                         video_title = None
-                        video_title = _title_el.get_attribute("title") or None
-                        if not video_title:
-                            _text_el = card.query_selector("yt-formatted-string#video-title, #video-title")
-                            if _text_el:
-                                video_title = _text_el.inner_text().strip() or None
-                        if not video_title:
-                            aria = _title_el.get_attribute("aria-label") or ""
-                            video_title = re.sub(
-                                r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
-                                "", aria
-                            ).strip() or None
+                        if _title_el:
+                            video_title = _title_el.get_attribute("title") or None
+                            if not video_title:
+                                _text_el = card.query_selector("yt-formatted-string#video-title, #video-title")
+                                if _text_el:
+                                    video_title = _text_el.inner_text().strip() or None
+                            if not video_title:
+                                aria = _title_el.get_attribute("aria-label") or ""
+                                video_title = re.sub(
+                                    r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
+                                    "", aria
+                                ).strip() or None
                     if not video_title:
-                        log.debug(f"clickbait: {path} — could not extract title, skipping")
+                        log.debug(f"clickbait: {path}/{video_id} — could not extract title, skipping")
                         continue
                     if video_id in _title_cache:
                         # Already classified — use cached result
@@ -1070,37 +1096,49 @@ def process_channels(channel_sources: dict[str, str],
                         _clickbait_evaluated.add(path.lower())
 
             # ---- Phase 4: act on first flagged clickbait card ----
+            # _cb_flagged entries may be stale if the card scrolled out of the DOM
+            # between Phase 3 and now. is_connected() detects this. Stale cards are
+            # skipped but NOT added to _clickbait_evaluated — the cache entry
+            # (flagged=True) is preserved so that if the card re-renders in a future
+            # pass it is immediately picked up from _cb_flagged again.
             if not found_match_this_pass and _cb_flagged:
                 card, path, video_id = _cb_flagged[0]
-                cached = _title_cache[video_id]
-                video_title = cached.get("_video_title", "(unknown)")
-                conf = cached.get("confidence", 0.0)
-                _stages_str = "+".join(cached.get("stages", ["title"]))
-                log.info(
-                    f"CLICKBAIT: {path} — {video_title!r} "
-                    f"(confidence {conf:.2f}, via {_stages_str}) — marking Not interested..."
-                )
-                if dry_run:
-                    log.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
-                    clickbait_count += 1
-                    found_match_this_pass = True
-                    _clickbait_evaluated.add(path.lower())
+                if not card.evaluate("el => el.isConnected"):
+                    log.debug(
+                        f"clickbait: {path}/{video_id} — flagged card scrolled off, "
+                        f"will retry if it reappears"
+                    )
+                    # fall through to scroll without marking evaluated
                 else:
-                    try:
-                        success = _click_not_interested(page, card)
-                    except Exception as e:
-                        log.error(f"FAIL clickbait {path}: {e}")
+                    cached = _title_cache[video_id]
+                    video_title = cached.get("_video_title", "(unknown)")
+                    conf = cached.get("confidence", 0.0)
+                    _stages_str = "+".join(cached.get("stages", ["title"]))
+                    log.info(
+                        f"CLICKBAIT: {path} — {video_title!r} "
+                        f"(confidence {conf:.2f}, via {_stages_str}) — marking Not interested..."
+                    )
+                    if dry_run:
+                        log.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
+                        clickbait_count += 1
+                        found_match_this_pass = True
                         _clickbait_evaluated.add(path.lower())
                     else:
-                        if success:
-                            log.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
-                            clickbait_count += 1
-                            found_match_this_pass = True
+                        try:
+                            success = _click_not_interested(page, card)
+                        except Exception as e:
+                            log.error(f"FAIL clickbait {path}: {e}")
                             _clickbait_evaluated.add(path.lower())
-                            time.sleep(random.uniform(_min_delay, _max_delay))
                         else:
-                            log.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
-                            _clickbait_evaluated.add(path.lower())
+                            if success:
+                                log.info(f"[clickbait] NOT_INTERESTED: {path} — {video_title!r}")
+                                clickbait_count += 1
+                                found_match_this_pass = True
+                                _clickbait_evaluated.add(path.lower())
+                                time.sleep(random.uniform(_min_delay, _max_delay))
+                            else:
+                                log.warning(f"SKIP clickbait {path} (Not interested not found in menu)")
+                                _clickbait_evaluated.add(path.lower())
 
             # Selector health check
             if len(cards) >= MIN_CARDS_FOR_SELECTOR_CHECK and pass_parseable == 0:
