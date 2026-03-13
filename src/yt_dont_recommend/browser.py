@@ -898,8 +898,6 @@ def process_channels(channel_sources: dict[str, str],
                 if path.lower() in seen_paths:
                     continue
                 seen_paths.add(path.lower())
-                if channel_link:
-                    log.debug(f"Feed card channel: {path}")
                 canonical = channel_lookup.get(path.lower())
                 if canonical and canonical in processed_set:
                     continue
@@ -1114,12 +1112,9 @@ def process_channels(channel_sources: dict[str, str],
                     video_title = cached.get("_video_title", "(unknown)")
                     conf = cached.get("confidence", 0.0)
                     _stages_str = "+".join(cached.get("stages", ["title"]))
-                    log.info(
-                        f"CLICKBAIT: {path} — {video_title!r} "
-                        f"(confidence {conf:.2f}, via {_stages_str}) — marking Not interested..."
-                    )
                     if dry_run:
-                        log.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r}")
+                        log.info(f"WOULD MARK NOT INTERESTED: {path} — {video_title!r} "
+                                 f"(confidence {conf:.2f}, via {_stages_str})")
                         clickbait_count += 1
                         found_match_this_pass = True
                         _clickbait_evaluated.add(path.lower())
