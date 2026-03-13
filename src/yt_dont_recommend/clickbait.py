@@ -214,6 +214,14 @@ video:
           → direct comparison; subject fully stated even with a question mark
         NOT clickbait: "The Universe Is Racing Apart. We May Finally Know Why."
           → science/discovery framing; hedging reflects genuine scientific uncertainty, not withheld information
+        NOT clickbait: "Strange New Explanation for Why Quantum World Collapses Into Reality"
+          → science/discovery with a specific named topic; "strange" and "new" describe genuine scientific novelty, not withheld information
+        NOT clickbait: "Whistleblower: Ex-DOGE employee copied Social Security data; CNN anchor apologizes | Media Miss"
+          → news headline with specific named facts; "Whistleblower:" is journalistic framing, not a curiosity gap; pipe-suffix is a named segment identifier
+        NOT clickbait: "Shipping is Afire | Attacks off Kuwait | No Escorts, the Strategic Petroleum Reserve & the Jones Act"
+          → dramatic opener followed by multiple specific named topics; the specificity of the pipe-listed facts rules out clickbait
+        NOT clickbait: "Trump's Power Grab Is Backfiring — But That Makes Him Dangerous"
+          → opinion commentary that states its argument directly; the thesis IS the promised content, not withheld information
         CLICKBAIT: "They got CAUGHT..."
           → withholds who, what, why — zero information; pure mystery bait
         CLICKBAIT: "Something MASSIVE Just Happened..."
@@ -499,6 +507,14 @@ EXAMPLES — calibrate against these:
     → direct comparison; subject fully stated even with a question mark
   NOT clickbait: "The Universe Is Racing Apart. We May Finally Know Why."
     → science/discovery framing; hedging reflects genuine scientific uncertainty, not withheld information
+  NOT clickbait: "Strange New Explanation for Why Quantum World Collapses Into Reality"
+    → science/discovery with a specific named topic; "strange" and "new" describe genuine scientific novelty, not withheld information
+  NOT clickbait: "Whistleblower: Ex-DOGE employee copied Social Security data; CNN anchor apologizes | Media Miss"
+    → news headline with specific named facts; "Whistleblower:" is journalistic framing, not a curiosity gap; pipe-suffix is a named segment identifier
+  NOT clickbait: "Shipping is Afire | Attacks off Kuwait | No Escorts, the Strategic Petroleum Reserve & the Jones Act"
+    → dramatic opener followed by multiple specific named topics; the pipe-listed facts are highly specific, ruling out clickbait
+  NOT clickbait: "Trump's Power Grab Is Backfiring — But That Makes Him Dangerous"
+    → opinion commentary that states its argument directly; the thesis IS the promised content, not withheld information
   CLICKBAIT: "They got CAUGHT..."
     → withholds who, what, why — zero information; pure mystery bait
   CLICKBAIT: "Something MASSIVE Just Happened..."
@@ -936,6 +952,14 @@ EXAMPLES — calibrate against these:
     → direct comparison; subject fully stated even with a question mark
   NOT clickbait: "The Universe Is Racing Apart. We May Finally Know Why."
     → science/discovery framing; hedging reflects genuine scientific uncertainty, not withheld information
+  NOT clickbait: "Strange New Explanation for Why Quantum World Collapses Into Reality"
+    → science/discovery with a specific named topic; "strange" and "new" describe genuine scientific novelty, not withheld information
+  NOT clickbait: "Whistleblower: Ex-DOGE employee copied Social Security data; CNN anchor apologizes | Media Miss"
+    → news headline with specific named facts; "Whistleblower:" is journalistic framing; pipe-suffix is a named segment identifier
+  NOT clickbait: "Shipping is Afire | Attacks off Kuwait | No Escorts, the Strategic Petroleum Reserve & the Jones Act"
+    → dramatic opener followed by multiple specific named topics; the specificity of the pipe-listed facts rules out clickbait
+  NOT clickbait: "Trump's Power Grab Is Backfiring — But That Makes Him Dangerous"
+    → opinion commentary that states its argument directly; the thesis IS the promised content
   CLICKBAIT: "They got CAUGHT..."
     → withholds who, what, why — zero information; pure mystery bait
   CLICKBAIT: "Something MASSIVE Just Happened..."
