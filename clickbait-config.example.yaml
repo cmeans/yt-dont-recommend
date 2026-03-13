@@ -72,6 +72,12 @@ video:
           → dramatic opener followed by multiple specific named topics; the specificity of the pipe-listed facts rules out clickbait
         NOT clickbait: "Trump's Power Grab Is Backfiring — But That Makes Him Dangerous"
           → opinion commentary that states its argument directly; the thesis IS the promised content, not withheld information
+        NOT clickbait: "Iran War Update: Mines in the Strait of Hormuz"
+          → "X Update: specific topic" is standard news/analysis format; named location and specific military topic rules out manufactured mystery
+        NOT clickbait: "Hewlett and Momoa Weren't on Speaking Terms Until 'See' Forged a New Chapter (Clip)"
+          → entertainment interview clip; named actors and named show state exactly what it covers; "(Clip)" label is a content-type signal
+        NOT clickbait: "[CNA 24/7 LIVE] Breaking news on Asia and award-winning documentaries and shows"
+          → live news stream with named broadcaster; format prefix signals ongoing coverage, not manufactured curiosity
         CLICKBAIT: "They got CAUGHT..."
           → withholds who, what, why — zero information; pure mystery bait
         CLICKBAIT: "Something MASSIVE Just Happened..."
