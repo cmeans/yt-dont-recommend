@@ -1066,6 +1066,7 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     title_cfg = cfg["video"]["title"]
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
+    timeout   = title_cfg.get("timeout", 300)
 
     # --- Pre-filter: separate trivially-safe titles from LLM-bound ones ---
     results: list["dict | None"] = [None] * len(batch)
@@ -1107,7 +1108,7 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
 
     t0 = time.monotonic()
     try:
-        raw = _ollama_chat(model, prompt, params=params)
+        raw = _ollama_chat(model, prompt, params=params, timeout=timeout)
     except Exception as exc:
         titles_summary = "; ".join(
             f'[{seq}] {json.dumps(item["title"])}' for seq, item in enumerate(llm_batch)
