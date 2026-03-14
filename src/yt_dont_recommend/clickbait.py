@@ -262,6 +262,14 @@ video:
           → science educator framing; superlatives describe significance of a named topic, not manufactured curiosity; educational titles use strong language to convey genuine importance
         NOT clickbait: "Girls Just Want to Have Fun"
           → classic song title; music and song titles are content announcements — there is no withheld information
+        NOT clickbait: "You Are So Beautiful"
+          → song title; a short evocative phrase is not a curiosity gap when it is the name of the content itself; apply the music rule broadly
+        NOT clickbait: "Somethin' Stupid"
+          → classic song title by Frank Sinatra & Nancy Sinatra; even a phrase that sounds vague in isolation is not clickbait when it names a song
+        NOT clickbait: "Irish MP: 'I hope Benjamin Netanyahu burns in hell'"
+          → direct quote from a named public figure (Irish MP) about a named person (Netanyahu); alarming quotes are news, not manufactured mystery; the "Person: 'quote'" format is journalism
+        NOT clickbait: "ElevenLabs just got nuked by open source"
+          → tech news with a named company (ElevenLabs) and a specific event (displaced by open source); dramatic verb ("nuked") describes a real competitive outcome, not a withheld secret
         NOT clickbait: "U.S. military bombs island key to Iran's economy and oil revenues"
           → specific military news with named actors (U.S. military), named action (bombs), and named target (island key to Iran's economy); dramatic subject matter is not a clickbait signal when the event is real
         NOT clickbait: "Confetti Carnage in the Multiverse | Everything Everywhere All at Once | CLIP 💥 4K"
