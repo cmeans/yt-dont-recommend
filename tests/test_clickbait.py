@@ -880,6 +880,16 @@ class TestPrefilterTitle:
     def test_acoustic_suffix_filtered(self):
         assert _prefilter_title("Shallow (Acoustic)") is not None
 
+    # Movie/show clip label — _PREFILTER_CONTAINS
+    def test_pipe_clip_filtered(self):
+        # "| CLIP" in movie clip titles — content-type label, not a curiosity gap
+        assert _prefilter_title(
+            "Confetti Carnage in the Multiverse | Everything Everywhere All at Once | CLIP 💥 4K"
+        ) is not None
+
+    def test_pipe_clip_case_insensitive(self):
+        assert _prefilter_title("Scene Title | Show Name | clip HD") is not None
+
     # Regex patterns — _PREFILTER_REGEX
     def test_official_final_trailer_filtered(self):
         # "official final trailer" has a word between official and trailer

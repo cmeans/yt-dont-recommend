@@ -50,6 +50,7 @@ _PREFILTER_CONTAINS = (
     "official video",
     "lyric video",
     "remaster",
+    "| clip",    # "Movie Name | CLIP 💥 4K" — named movie/show clip; content type explicit
 )
 
 # Case-insensitive suffixes that mark a title as NOT clickbait.
@@ -215,6 +216,9 @@ video:
       - Titles with specific names, numbers, dates, or verifiable facts
       - Music releases, song titles, and album names — a song or album title announces what the content is; there is no withheld information ("Girls Just Want to Have Fun", "Somethin' Stupid", "Mr. Brightside")
       - Science and nature headlines using editorial emphasis words like "Surprise!" or "Stunning" that introduce a specific named finding — the finding is present in the title, not withheld ("Surprise! Milky Way has no central black hole" — the discovery is named)
+      - Geopolitical and military news that describes a specific real event, even if dramatic — named actors, locations, and actions make it factual ("U.S. military bombs island", "Iran mines the Strait of Hormuz")
+      - Product reviews and tech comparisons in first-person format when the specific product is named ("I Replaced My Laptop With a Phone | RayNeo Air 4 Pro" — named product rules out curiosity gap)
+      - Vlog and series episodes with a specific named topic and episode number — the episode marker signals ongoing informational series content
 
       Confidence guide — use the full scale, not just 0.10 and 0.80:
       - 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
@@ -258,6 +262,14 @@ video:
           → science educator framing; superlatives describe significance of a named topic, not manufactured curiosity; educational titles use strong language to convey genuine importance
         NOT clickbait: "Girls Just Want to Have Fun"
           → classic song title; music and song titles are content announcements — there is no withheld information
+        NOT clickbait: "U.S. military bombs island key to Iran's economy and oil revenues"
+          → specific military news with named actors (U.S. military), named action (bombs), and named target (island key to Iran's economy); dramatic subject matter is not a clickbait signal when the event is real
+        NOT clickbait: "Confetti Carnage in the Multiverse | Everything Everywhere All at Once | CLIP 💥 4K"
+          → named movie clip; movie title fully stated; "CLIP" label is a content-type signal, not a curiosity gap
+        NOT clickbait: "This TRANSFORMED Our Electrical System ⚡️ Aluminum Catamaran Build Pt.61"
+          → vlog series episode with a specific named topic (electrical system) and episode number (Pt.61); series format with informational subject is not clickbait even with ALL-CAPS verb
+        NOT clickbait: "I Replaced My Laptop With a Phone | RayNeo Air 4 Pro"
+          → product review in first-person format; specific named product rules out curiosity gap; "I did X with Y" is not clickbait when Y is named explicitly
         CLICKBAIT: "They got CAUGHT..."
           → withholds who, what, why — zero information; pure mystery bait
         CLICKBAIT: "Something MASSIVE Just Happened..."
