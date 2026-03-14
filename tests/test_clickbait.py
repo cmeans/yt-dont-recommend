@@ -961,6 +961,21 @@ class TestParseBatchResponseTrailingComma:
         assert result[0]["is_clickbait"] is True
         assert result[0]["confidence"] == 0.85
 
+    def test_escaped_single_quote_in_reasoning(self):
+        """Model emits \' inside a double-quoted JSON string (invalid JSON escape).
+
+        Seen in live logs when a title contains an apostrophe and the model
+        over-escapes it: e.g. "G\\'Kar" in the reasoning field.
+        """
+        raw = (
+            '[{"index": 0, "is_clickbait": false, "confidence": 0.10,'
+            ' "reasoning": "character name G\\\'Kar; no sensational wording"}]'
+        )
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+        assert "G'Kar" in result[0]["reasoning"]
+
 
 # _parse_batch_response — single-quote fallback
 # ---------------------------------------------------------------------------
