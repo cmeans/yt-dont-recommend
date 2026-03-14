@@ -840,6 +840,10 @@ class TestPrefilterTitle:
     def test_breaking_news_prefix(self):
         assert _prefilter_title("BREAKING NEWS: something happened") is not None
 
+    def test_breaking_colon_prefix(self):
+        # "BREAKING:" without "NEWS" — caught by "breaking:" prefix
+        assert _prefilter_title("BREAKING: Loss of U.S. KC-135 Over Iraq") is not None
+
     def test_watch_live_prefix(self):
         assert _prefilter_title("WATCH LIVE: Senate vote") is not None
 
@@ -875,6 +879,17 @@ class TestPrefilterTitle:
     # Music suffix patterns — _PREFILTER_ENDS_WITH
     def test_acoustic_suffix_filtered(self):
         assert _prefilter_title("Shallow (Acoustic)") is not None
+
+    # Regex patterns — _PREFILTER_REGEX
+    def test_official_final_trailer_filtered(self):
+        # "official final trailer" has a word between official and trailer
+        assert _prefilter_title("THE DEVIL WEARS PRADA 2 Official Final Trailer (2026)") is not None
+
+    def test_official_theatrical_trailer_filtered(self):
+        assert _prefilter_title("Movie Title | Official Theatrical Trailer") is not None
+
+    def test_official_red_band_trailer_filtered(self):
+        assert _prefilter_title("Film Name - Official Red Band Trailer") is not None
 
     def test_classify_title_skips_llm_for_prefiltered(self):
         """classify_title should return without calling ollama for pre-filtered titles."""

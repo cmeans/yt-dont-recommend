@@ -63,11 +63,22 @@ _PREFILTER_ENDS_WITH = (
 
 # Case-insensitive prefixes that mark a title as NOT clickbait.
 _PREFILTER_STARTS_WITH = (
-    "breaking news:",
+    "breaking:",        # "BREAKING: specific event" — standalone colon form
+    "breaking news:",   # "BREAKING NEWS: ..." — space before "news" makes it distinct
     "watch live:",
     "weather:",
     "weather alert:",
     "live stream:",
+)
+
+# Compiled regex patterns that mark a title as NOT clickbait.
+# Used for patterns that require word-gap matching (not simple substrings).
+_PREFILTER_REGEX = (
+    # "official * trailer" — catches "Official Final Trailer", "Official Theatrical
+    # Trailer", etc. where a word appears between "official" and "trailer".
+    # _PREFILTER_CONTAINS already handles "official trailer" (no gap); this
+    # covers the variants the model flags when a modifier word is present.
+    re.compile(r"\bofficial\b.*\btrailer\b", re.IGNORECASE),
 )
 
 
@@ -87,6 +98,9 @@ def _prefilter_title(title: str) -> "str | None":
     for pfx in _PREFILTER_STARTS_WITH:
         if t.startswith(pfx):
             return f"pre-filter: prefix '{pfx}'"
+    for pat in _PREFILTER_REGEX:
+        if pat.search(title):
+            return f"pre-filter: pattern '{pat.pattern}'"
     return None
 
 
@@ -236,6 +250,8 @@ video:
           → entertainment interview clip; named actors and named show state exactly what it covers; "(Clip)" label is a content-type signal
         NOT clickbait: "[CNA 24/7 LIVE] Breaking news on Asia and award-winning documentaries and shows"
           → live news stream with named broadcaster; format prefix signals ongoing coverage, not manufactured curiosity
+        NOT clickbait: "BREAKING: Loss of U.S. KC-135 Over Iraq During Operation Epic Fury"
+          → "BREAKING:" with a specific military aircraft designation, named country, and named operation is a news alert; all key facts are present in the title
         NOT clickbait: "Surprise! Milky Way Might Not Have a Black Hole After All"
           → "Surprise!" is editorial emphasis on a specific named scientific finding; the discovery is named in the title, not withheld
         NOT clickbait: "The Most Important Picture in the History of Science"
