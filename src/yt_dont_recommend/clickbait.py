@@ -219,6 +219,8 @@ video:
       - Geopolitical and military news that describes a specific real event, even if dramatic — named actors, locations, and actions make it factual ("U.S. military bombs island", "Iran mines the Strait of Hormuz")
       - Product reviews and tech comparisons in first-person format when the specific product is named ("I Replaced My Laptop With a Phone | RayNeo Air 4 Pro" — named product rules out curiosity gap)
       - Vlog and series episodes with a specific named topic and episode number — the episode marker signals ongoing informational series content
+      - Ongoing news coverage series with a day count ("War with Iran Day 14: Nightline special coverage" — the day count and named program fully identify the content)
+      - Legal and policy analysis titles that name the specific subject and describe the angle, even with negation phrasing ("What the X Decision DOESN'T COVER" — the decision is named; negation describes the analytical angle, not a withheld secret)
 
       Confidence guide — use the full scale, not just 0.10 and 0.80:
       - 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
@@ -270,6 +272,10 @@ video:
           → direct quote from a named public figure (Irish MP) about a named person (Netanyahu); alarming quotes are news, not manufactured mystery; the "Person: 'quote'" format is journalism
         NOT clickbait: "ElevenLabs just got nuked by open source"
           → tech news with a named company (ElevenLabs) and a specific event (displaced by open source); dramatic verb ("nuked") describes a real competitive outcome, not a withheld secret
+        NOT clickbait: "War with Iran Day 14: Nightline special coverage"
+          → ongoing news series; day count (Day 14) and named program (Nightline) fully identify the content; series format is not a curiosity gap
+        NOT clickbait: "What the Supreme Court's IMMUNITY Decision DOESN'T COVER"
+          → legal analysis of a named specific decision (Immunity Decision); negation phrasing describes the analytical angle, not a withheld secret; the subject is fully named
         NOT clickbait: "U.S. military bombs island key to Iran's economy and oil revenues"
           → specific military news with named actors (U.S. military), named action (bombs), and named target (island key to Iran's economy); dramatic subject matter is not a clickbait signal when the event is real
         NOT clickbait: "Confetti Carnage in the Multiverse | Everything Everywhere All at Once | CLIP 💥 4K"
