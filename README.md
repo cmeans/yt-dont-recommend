@@ -590,6 +590,8 @@ yt-dont-recommend --check-selectors --test-channel @SomeChannel
 
 ## Acknowledgments
 
+This tool was designed and built in collaboration with [Claude Code](https://claude.ai/claude-code), Anthropic's AI coding assistant, using a model of delegated implementation with human technical authority — design decisions, live test analysis, and iteration happened conversationally, with the human retaining final judgement on architecture, quality gates, and release.
+
 The clickbait detection feature was informed by:
 
 - **ThumbnailTruth** — Naveed, Uzmi & Qazi (2025). *ThumbnailTruth: A Multi-Modal LLM Approach for Detecting Misleading YouTube Thumbnails Across Diverse Cultural Settings.* [arXiv:2509.04714](https://arxiv.org/abs/2509.04714). Their multi-modal dataset and finding that frontier models achieve 93%+ accuracy on thumbnail-based clickbait detection shaped the design of the thumbnail classification stage.
