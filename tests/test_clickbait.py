@@ -11,8 +11,10 @@ from yt_dont_recommend.clickbait import (
     _clamp_confidence,
     _deep_merge,
     _DEFAULT_CONFIG,
+    _DEFAULT_CONFIG_YAML,
     _parse_batch_response,
     _prefilter_title,
+    _prompt_hash,
     classify_thumbnail,
     classify_title,
     classify_titles_batch,
@@ -160,6 +162,74 @@ class TestLoadConfig:
         with patch.dict("sys.modules", {"yaml": None}):
             cfg = load_config(cfg_file)
         assert cfg["video"]["title"]["threshold"] == 0.75  # default, not 0.9
+
+    def test_stale_prompt_warning(self, tmp_path, caplog):
+        """load_config warns when user config prompt text differs from built-in defaults."""
+        import logging
+
+        pytest.importorskip("yaml")
+        cfg_file = tmp_path / "cb.yaml"
+        # Write a config with stale/different prompt text
+        cfg_file.write_text(
+            "video:\n  title:\n    prompt: 'old outdated prompt'\n", encoding="utf-8"
+        )
+        with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"):
+            load_config(cfg_file)
+        msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("differs from the built-in defaults" in m for m in msgs)
+
+    def test_no_stale_warning_when_prompts_match(self, tmp_path, caplog):
+        """load_config does not warn when user config has no prompt overrides."""
+        import logging
+
+        pytest.importorskip("yaml")
+        cfg_file = tmp_path / "cb.yaml"
+        # Only override a threshold — no prompt keys at all
+        cfg_file.write_text("video:\n  title:\n    threshold: 0.8\n", encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"):
+            load_config(cfg_file)
+        msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("differs from the built-in defaults" in m for m in msgs)
+
+    def test_no_stale_warning_when_prompts_identical_to_builtin(self, tmp_path, caplog):
+        """load_config does not warn when user config contains the exact built-in prompts."""
+        import logging
+
+        pytest.importorskip("yaml")
+        cfg_file = tmp_path / "cb.yaml"
+        cfg_file.write_text(_DEFAULT_CONFIG_YAML, encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"):
+            load_config(cfg_file)
+        msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("differs from the built-in defaults" in m for m in msgs)
+
+
+# ---------------------------------------------------------------------------
+# _prompt_hash
+# ---------------------------------------------------------------------------
+
+
+class TestPromptHash:
+    def test_stable_across_calls(self):
+        import yaml
+        cfg = yaml.safe_load(_DEFAULT_CONFIG_YAML) or {}
+        assert _prompt_hash(cfg) == _prompt_hash(cfg)
+
+    def test_empty_cfg_returns_hash(self):
+        h = _prompt_hash({})
+        assert isinstance(h, str) and len(h) == 8
+
+    def test_differs_when_prompt_changes(self):
+        import yaml
+        cfg_a = yaml.safe_load(_DEFAULT_CONFIG_YAML) or {}
+        cfg_b = {"video": {"title": {"prompt": "completely different prompt"}}}
+        assert _prompt_hash(cfg_a) != _prompt_hash(cfg_b)
+
+    def test_same_when_only_threshold_differs(self):
+        """Threshold changes do not affect the prompt hash."""
+        cfg_a = {"video": {"title": {"prompt": "same prompt"}}}
+        cfg_b = {"video": {"title": {"prompt": "same prompt", "threshold": 0.99}}}
+        assert _prompt_hash(cfg_a) == _prompt_hash(cfg_b)
 
 
 # ---------------------------------------------------------------------------

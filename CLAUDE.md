@@ -183,6 +183,15 @@ video:
 
 **`_pkg()` pattern**: sub-modules use late import of `yt_dont_recommend` for names that tests patch. `__init__.py` re-exports all public names so `patch("yt_dont_recommend.X")` still works for external callers. Functions that live in `cli.py` must be patched as `yt_dont_recommend.cli.X` in tests.
 
+**Stale config detection**: `load_config()` compares prompt text in the user's on-disk config against built-in defaults using `_prompt_hash(cfg)` (MD5 of all five prompt fields, 8-char hex). If the hashes differ and the user config contains at least one prompt key (checked by `_has_any_prompt(cfg)`), a WARNING is logged pointing the user to delete their config to pick up the latest prompts. Purely advisory — never blocks config loading. Threshold-only configs (no prompt keys) are silently skipped by the guard.
+
+**Deterministic prefilters (before LLM)**:
+- `_PREFILTER_CONTAINS` — substring matches (case-insensitive); includes `official trailer`, `official music video`, `lyric video`, `remaster`, `| clip`, `(radio edit)`
+- `_PREFILTER_STARTS_WITH` — title prefix matches; includes `breaking:`, `weather:`, `watch live:`
+- `_PREFILTER_REGEX` — compiled regex patterns; includes `\bofficial\b.*\btrailer\b`
+
+All prefilter hits return `is_clickbait=False, confidence=0.0, flagged=False` immediately, skipping LLM inference entirely. Prefilters are the preferred mechanism for known-safe content patterns — more reliable than few-shot examples in the LLM prompt.
+
 ### Schedule JSON Schema
 
 `~/.yt-dont-recommend/schedule.json` — written by `--schedule install`, read/updated by `--heartbeat` every minute. Separate from state.json (scheduling concerns only).

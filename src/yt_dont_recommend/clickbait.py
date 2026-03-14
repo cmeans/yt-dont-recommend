@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -50,7 +51,8 @@ _PREFILTER_CONTAINS = (
     "official video",
     "lyric video",
     "remaster",
-    "| clip",    # "Movie Name | CLIP 💥 4K" — named movie/show clip; content type explicit
+    "| clip",       # "Movie Name | CLIP 💥 4K" — named movie/show clip; content type explicit
+    "(radio edit)",  # "Artist - Song (Radio Edit)" — music format; content type explicit
 )
 
 # Case-insensitive suffixes that mark a title as NOT clickbait.
@@ -151,6 +153,42 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _prompt_hash(cfg: dict) -> str:
+    """Return an 8-char hex digest of all prompt fields in *cfg*.
+
+    Covers the five prompt keys that live in ``_DEFAULT_CONFIG_YAML``.  Used by
+    ``load_config()`` to detect when a user's config file has prompt text that
+    no longer matches the built-in defaults — e.g. after an upgrade that added
+    new few-shot examples.
+    """
+    vid = cfg.get("video", {})
+    parts = [
+        vid.get("title", {}).get("prompt", ""),
+        vid.get("thumbnail", {}).get("prompt_describe", ""),
+        vid.get("thumbnail", {}).get("prompt_classify", ""),
+        vid.get("thumbnail", {}).get("prompt_single", ""),
+        vid.get("transcript", {}).get("prompt", ""),
+    ]
+    combined = "\n---\n".join(parts)
+    return hashlib.md5(combined.encode()).hexdigest()[:8]
+
+
+def _has_any_prompt(cfg: dict) -> bool:
+    """Return True if *cfg* contains at least one prompt key.
+
+    Used by ``load_config()`` to skip the stale-prompt hash check when the user
+    config only overrides non-prompt settings (e.g. thresholds, model names).
+    """
+    vid = cfg.get("video", {})
+    return (
+        "prompt" in vid.get("title", {})
+        or "prompt_describe" in vid.get("thumbnail", {})
+        or "prompt_classify" in vid.get("thumbnail", {})
+        or "prompt_single" in vid.get("thumbnail", {})
+        or "prompt" in vid.get("transcript", {})
+    )
+
+
 def _apply_prompt(template: str, **vars: str) -> str:
     """Substitute {var} placeholders in *template*.
 
@@ -214,13 +252,7 @@ video:
       - Titles containing "Official Trailer", "Official Teaser", "Music Video" — promotional titles are not clickbait
       - Named TV show segments or recurring episode titles ("Amber Says What: ...", "Show Name Ep. 6")
       - Titles with specific names, numbers, dates, or verifiable facts
-      - Music releases, song titles, and album names — a song or album title announces what the content is; there is no withheld information ("Girls Just Want to Have Fun", "Somethin' Stupid", "Mr. Brightside")
-      - Science and nature headlines using editorial emphasis words like "Surprise!" or "Stunning" that introduce a specific named finding — the finding is present in the title, not withheld ("Surprise! Milky Way has no central black hole" — the discovery is named)
-      - Geopolitical and military news that describes a specific real event, even if dramatic — named actors, locations, and actions make it factual ("U.S. military bombs island", "Iran mines the Strait of Hormuz")
-      - Product reviews and tech comparisons in first-person format when the specific product is named ("I Replaced My Laptop With a Phone | RayNeo Air 4 Pro" — named product rules out curiosity gap)
-      - Vlog and series episodes with a specific named topic and episode number — the episode marker signals ongoing informational series content
-      - Ongoing news coverage series with a day count ("War with Iran Day 14: Nightline special coverage" — the day count and named program fully identify the content)
-      - Legal and policy analysis titles that name the specific subject and describe the angle, even with negation phrasing ("What the X Decision DOESN'T COVER" — the decision is named; negation describes the analytical angle, not a withheld secret)
+      - Music releases, song titles, and album names — a song title announces what the content is; there is no withheld information ("Girls Just Want to Have Fun", "Mr. Brightside")
 
       Confidence guide — use the full scale, not just 0.10 and 0.80:
       - 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
@@ -256,34 +288,6 @@ video:
           → entertainment interview clip; named actors and named show state exactly what it covers; "(Clip)" label is a content-type signal
         NOT clickbait: "[CNA 24/7 LIVE] Breaking news on Asia and award-winning documentaries and shows"
           → live news stream with named broadcaster; format prefix signals ongoing coverage, not manufactured curiosity
-        NOT clickbait: "BREAKING: Loss of U.S. KC-135 Over Iraq During Operation Epic Fury"
-          → "BREAKING:" with a specific military aircraft designation, named country, and named operation is a news alert; all key facts are present in the title
-        NOT clickbait: "Surprise! Milky Way Might Not Have a Black Hole After All"
-          → "Surprise!" is editorial emphasis on a specific named scientific finding; the discovery is named in the title, not withheld
-        NOT clickbait: "The Most Important Picture in the History of Science"
-          → science educator framing; superlatives describe significance of a named topic, not manufactured curiosity; educational titles use strong language to convey genuine importance
-        NOT clickbait: "Girls Just Want to Have Fun"
-          → classic song title; music and song titles are content announcements — there is no withheld information
-        NOT clickbait: "You Are So Beautiful"
-          → song title; a short evocative phrase is not a curiosity gap when it is the name of the content itself; apply the music rule broadly
-        NOT clickbait: "Somethin' Stupid"
-          → classic song title by Frank Sinatra & Nancy Sinatra; even a phrase that sounds vague in isolation is not clickbait when it names a song
-        NOT clickbait: "Irish MP: 'I hope Benjamin Netanyahu burns in hell'"
-          → direct quote from a named public figure (Irish MP) about a named person (Netanyahu); alarming quotes are news, not manufactured mystery; the "Person: 'quote'" format is journalism
-        NOT clickbait: "ElevenLabs just got nuked by open source"
-          → tech news with a named company (ElevenLabs) and a specific event (displaced by open source); dramatic verb ("nuked") describes a real competitive outcome, not a withheld secret
-        NOT clickbait: "War with Iran Day 14: Nightline special coverage"
-          → ongoing news series; day count (Day 14) and named program (Nightline) fully identify the content; series format is not a curiosity gap
-        NOT clickbait: "What the Supreme Court's IMMUNITY Decision DOESN'T COVER"
-          → legal analysis of a named specific decision (Immunity Decision); negation phrasing describes the analytical angle, not a withheld secret; the subject is fully named
-        NOT clickbait: "U.S. military bombs island key to Iran's economy and oil revenues"
-          → specific military news with named actors (U.S. military), named action (bombs), and named target (island key to Iran's economy); dramatic subject matter is not a clickbait signal when the event is real
-        NOT clickbait: "Confetti Carnage in the Multiverse | Everything Everywhere All at Once | CLIP 💥 4K"
-          → named movie clip; movie title fully stated; "CLIP" label is a content-type signal, not a curiosity gap
-        NOT clickbait: "This TRANSFORMED Our Electrical System ⚡️ Aluminum Catamaran Build Pt.61"
-          → vlog series episode with a specific named topic (electrical system) and episode number (Pt.61); series format with informational subject is not clickbait even with ALL-CAPS verb
-        NOT clickbait: "I Replaced My Laptop With a Phone | RayNeo Air 4 Pro"
-          → product review in first-person format; specific named product rules out curiosity gap; "I did X with Y" is not clickbait when Y is named explicitly
         CLICKBAIT: "They got CAUGHT..."
           → withholds who, what, why — zero information; pure mystery bait
         CLICKBAIT: "Something MASSIVE Just Happened..."
@@ -464,6 +468,24 @@ def load_config(path: "Path | str | None" = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         log.warning("Failed to load clickbait config from %s: %s", cfg_path, exc)
         return deepcopy(_DEFAULT_CONFIG)
+
+    # Warn when the user file's prompt text differs from the built-in defaults.
+    # This catches the common case where an upgrade added or changed few-shot
+    # examples but the on-disk config still has the old prompts.
+    try:
+        builtin_parsed = yaml.safe_load(_DEFAULT_CONFIG_YAML) or {}
+        if _has_any_prompt(user_cfg) and _prompt_hash(user_cfg) != _prompt_hash(builtin_parsed):
+            log.warning(
+                "clickbait-config.yaml has prompt text that differs from the "
+                "built-in defaults (your config hash: %s, built-in hash: %s). "
+                "If you have not customised the prompts, delete %s to pick up "
+                "the latest few-shot examples.",
+                _prompt_hash(user_cfg),
+                _prompt_hash(builtin_parsed),
+                cfg_path,
+            )
+    except Exception:  # noqa: BLE001
+        pass  # hash check is advisory only; never block config loading
 
     return _deep_merge(_DEFAULT_CONFIG, user_cfg)
 
