@@ -11,8 +11,10 @@ from yt_dont_recommend.clickbait import (
     _clamp_confidence,
     _deep_merge,
     _DEFAULT_CONFIG,
+    _DEFAULT_CONFIG_YAML,
     _parse_batch_response,
     _prefilter_title,
+    _prompt_hash,
     classify_thumbnail,
     classify_title,
     classify_titles_batch,
@@ -160,6 +162,74 @@ class TestLoadConfig:
         with patch.dict("sys.modules", {"yaml": None}):
             cfg = load_config(cfg_file)
         assert cfg["video"]["title"]["threshold"] == 0.75  # default, not 0.9
+
+    def test_stale_prompt_warning(self, tmp_path, caplog):
+        """load_config warns when user config prompt text differs from built-in defaults."""
+        import logging
+
+        pytest.importorskip("yaml")
+        cfg_file = tmp_path / "cb.yaml"
+        # Write a config with stale/different prompt text
+        cfg_file.write_text(
+            "video:\n  title:\n    prompt: 'old outdated prompt'\n", encoding="utf-8"
+        )
+        with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"):
+            load_config(cfg_file)
+        msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("differs from the built-in defaults" in m for m in msgs)
+
+    def test_no_stale_warning_when_prompts_match(self, tmp_path, caplog):
+        """load_config does not warn when user config has no prompt overrides."""
+        import logging
+
+        pytest.importorskip("yaml")
+        cfg_file = tmp_path / "cb.yaml"
+        # Only override a threshold — no prompt keys at all
+        cfg_file.write_text("video:\n  title:\n    threshold: 0.8\n", encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"):
+            load_config(cfg_file)
+        msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("differs from the built-in defaults" in m for m in msgs)
+
+    def test_no_stale_warning_when_prompts_identical_to_builtin(self, tmp_path, caplog):
+        """load_config does not warn when user config contains the exact built-in prompts."""
+        import logging
+
+        pytest.importorskip("yaml")
+        cfg_file = tmp_path / "cb.yaml"
+        cfg_file.write_text(_DEFAULT_CONFIG_YAML, encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"):
+            load_config(cfg_file)
+        msgs = [r.message for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not any("differs from the built-in defaults" in m for m in msgs)
+
+
+# ---------------------------------------------------------------------------
+# _prompt_hash
+# ---------------------------------------------------------------------------
+
+
+class TestPromptHash:
+    def test_stable_across_calls(self):
+        import yaml
+        cfg = yaml.safe_load(_DEFAULT_CONFIG_YAML) or {}
+        assert _prompt_hash(cfg) == _prompt_hash(cfg)
+
+    def test_empty_cfg_returns_hash(self):
+        h = _prompt_hash({})
+        assert isinstance(h, str) and len(h) == 8
+
+    def test_differs_when_prompt_changes(self):
+        import yaml
+        cfg_a = yaml.safe_load(_DEFAULT_CONFIG_YAML) or {}
+        cfg_b = {"video": {"title": {"prompt": "completely different prompt"}}}
+        assert _prompt_hash(cfg_a) != _prompt_hash(cfg_b)
+
+    def test_same_when_only_threshold_differs(self):
+        """Threshold changes do not affect the prompt hash."""
+        cfg_a = {"video": {"title": {"prompt": "same prompt"}}}
+        cfg_b = {"video": {"title": {"prompt": "same prompt", "threshold": 0.99}}}
+        assert _prompt_hash(cfg_a) == _prompt_hash(cfg_b)
 
 
 # ---------------------------------------------------------------------------
@@ -840,6 +910,10 @@ class TestPrefilterTitle:
     def test_breaking_news_prefix(self):
         assert _prefilter_title("BREAKING NEWS: something happened") is not None
 
+    def test_breaking_colon_prefix(self):
+        # "BREAKING:" without "NEWS" — caught by "breaking:" prefix
+        assert _prefilter_title("BREAKING: Loss of U.S. KC-135 Over Iraq") is not None
+
     def test_watch_live_prefix(self):
         assert _prefilter_title("WATCH LIVE: Senate vote") is not None
 
@@ -857,6 +931,45 @@ class TestPrefilterTitle:
 
     def test_clickbait_title_not_filtered(self):
         assert _prefilter_title("They got CAUGHT...") is None
+
+    # Music content markers — _PREFILTER_CONTAINS
+    def test_official_audio_filtered(self):
+        assert _prefilter_title("Bon Jovi - Livin' On A Prayer (Official Audio)") is not None
+
+    def test_official_video_filtered(self):
+        assert _prefilter_title("Lindsey Stirling - Crystallize (Official Video)") is not None
+
+    def test_lyric_video_filtered(self):
+        assert _prefilter_title("Artist - Song Title (Lyric Video)") is not None
+
+    def test_remaster_filtered(self):
+        # "remaster" in _PREFILTER_CONTAINS catches year-prefix form too
+        assert _prefilter_title("Vienna (2009 Remaster)") is not None
+
+    # Music suffix patterns — _PREFILTER_ENDS_WITH
+    def test_acoustic_suffix_filtered(self):
+        assert _prefilter_title("Shallow (Acoustic)") is not None
+
+    # Movie/show clip label — _PREFILTER_CONTAINS
+    def test_pipe_clip_filtered(self):
+        # "| CLIP" in movie clip titles — content-type label, not a curiosity gap
+        assert _prefilter_title(
+            "Confetti Carnage in the Multiverse | Everything Everywhere All at Once | CLIP 💥 4K"
+        ) is not None
+
+    def test_pipe_clip_case_insensitive(self):
+        assert _prefilter_title("Scene Title | Show Name | clip HD") is not None
+
+    # Regex patterns — _PREFILTER_REGEX
+    def test_official_final_trailer_filtered(self):
+        # "official final trailer" has a word between official and trailer
+        assert _prefilter_title("THE DEVIL WEARS PRADA 2 Official Final Trailer (2026)") is not None
+
+    def test_official_theatrical_trailer_filtered(self):
+        assert _prefilter_title("Movie Title | Official Theatrical Trailer") is not None
+
+    def test_official_red_band_trailer_filtered(self):
+        assert _prefilter_title("Film Name - Official Red Band Trailer") is not None
 
     def test_classify_title_skips_llm_for_prefiltered(self):
         """classify_title should return without calling ollama for pre-filtered titles."""
@@ -924,6 +1037,66 @@ class TestClampConfidence:
 
 
 # ---------------------------------------------------------------------------
+# _parse_batch_response — trailing comma stripping
+# ---------------------------------------------------------------------------
+
+
+class TestParseBatchResponseTrailingComma:
+    def test_trailing_comma_after_last_item(self):
+        """Trailing comma after last array element — exact pattern seen in live logs."""
+        raw = (
+            '[\n'
+            '  {"index": 0, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok"},\n'
+            '  {"index": 1, "is_clickbait": true, "confidence": 0.9, "reasoning": "bait"},\n'
+            ']'
+        )
+        result = _parse_batch_response(raw, 2)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+        assert result[1]["is_clickbait"] is True
+
+    def test_trailing_comma_inside_object(self):
+        """Trailing comma inside an object (after last key-value pair)."""
+        raw = '[{"index": 0, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok",}]'
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+
+    def test_trailing_comma_both_object_and_array(self):
+        """Trailing comma in both the object and the enclosing array."""
+        raw = (
+            '[\n'
+            '  {"index": 0, "is_clickbait": true, "confidence": 0.85, "reasoning": "bait",},\n'
+            ']'
+        )
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is True
+        assert result[0]["confidence"] == 0.85
+
+    def test_invalid_escape_single_quote(self):
+        """Model emits \\' inside a double-quoted JSON string (seen in live logs)."""
+        raw = (
+            '[{"index": 0, "is_clickbait": false, "confidence": 0.10,'
+            ' "reasoning": "character name G\\\'Kar; no sensational wording"}]'
+        )
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+        assert "G'Kar" in result[0]["reasoning"]
+
+    def test_invalid_escape_other_characters(self):
+        """Model emits other invalid \\X escapes (\\d, \\s, \\j …)."""
+        raw = (
+            '[{"index": 0, "is_clickbait": true, "confidence": 0.85,'
+            ' "reasoning": "uses \\dbait pattern and \\shady wording"}]'
+        )
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is True
+        assert "dbait" in result[0]["reasoning"]
+
+
 # _parse_batch_response — single-quote fallback
 # ---------------------------------------------------------------------------
 

@@ -100,6 +100,8 @@ pipx install 'yt-dont-recommend[clickbait]'
 
 For configuration (model selection, thresholds, thumbnail and transcript stages), see the [clickbait configuration file](clickbait-config.example.yaml) — copy it to `~/.yt-dont-recommend/clickbait-config.yaml` and edit to taste.
 
+> **Config upgrade note:** The built-in classification prompts are updated as new releases ship improved few-shot examples. If you have a `clickbait-config.yaml` that includes custom prompt text, the tool will warn on startup when your prompt text differs from the built-in defaults — so you can decide whether to pull in the latest prompts. If you only use the config file to override model name or thresholds (not prompt text), no warning is shown.
+
 ---
 
 ## Upgrading
@@ -587,6 +589,8 @@ yt-dont-recommend --check-selectors --test-channel @SomeChannel
 ```
 
 ## Acknowledgments
+
+This tool was designed and built in collaboration with [Claude Code](https://claude.ai/claude-code), Anthropic's AI coding assistant, using a model of delegated implementation with human technical authority — design decisions, live test analysis, and iteration happened conversationally, with the human retaining final judgement on architecture, quality gates, and release.
 
 The clickbait detection feature was informed by:
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -46,6 +47,12 @@ _PREFILTER_CONTAINS = (
     "official trailer",
     "official teaser",
     "official music video",
+    "official audio",
+    "official video",
+    "lyric video",
+    "remaster",
+    "| clip",       # "Movie Name | CLIP 💥 4K" — named movie/show clip; content type explicit
+    "(radio edit)",  # "Artist - Song (Radio Edit)" — music format; content type explicit
 )
 
 # Case-insensitive suffixes that mark a title as NOT clickbait.
@@ -53,15 +60,28 @@ _PREFILTER_ENDS_WITH = (
     " mv",
     " (mv)",
     " [mv]",
+    " (acoustic)",
+    " [acoustic]",
 )
 
 # Case-insensitive prefixes that mark a title as NOT clickbait.
 _PREFILTER_STARTS_WITH = (
-    "breaking news:",
+    "breaking:",        # "BREAKING: specific event" — standalone colon form
+    "breaking news:",   # "BREAKING NEWS: ..." — space before "news" makes it distinct
     "watch live:",
     "weather:",
     "weather alert:",
     "live stream:",
+)
+
+# Compiled regex patterns that mark a title as NOT clickbait.
+# Used for patterns that require word-gap matching (not simple substrings).
+_PREFILTER_REGEX = (
+    # "official * trailer" — catches "Official Final Trailer", "Official Theatrical
+    # Trailer", etc. where a word appears between "official" and "trailer".
+    # _PREFILTER_CONTAINS already handles "official trailer" (no gap); this
+    # covers the variants the model flags when a modifier word is present.
+    re.compile(r"\bofficial\b.*\btrailer\b", re.IGNORECASE),
 )
 
 
@@ -81,6 +101,9 @@ def _prefilter_title(title: str) -> "str | None":
     for pfx in _PREFILTER_STARTS_WITH:
         if t.startswith(pfx):
             return f"pre-filter: prefix '{pfx}'"
+    for pat in _PREFILTER_REGEX:
+        if pat.search(title):
+            return f"pre-filter: pattern '{pat.pattern}'"
     return None
 
 
@@ -128,6 +151,42 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             result[k] = deepcopy(v)
     return result
+
+
+def _prompt_hash(cfg: dict) -> str:
+    """Return an 8-char hex digest of all prompt fields in *cfg*.
+
+    Covers the five prompt keys that live in ``_DEFAULT_CONFIG_YAML``.  Used by
+    ``load_config()`` to detect when a user's config file has prompt text that
+    no longer matches the built-in defaults — e.g. after an upgrade that added
+    new few-shot examples.
+    """
+    vid = cfg.get("video", {})
+    parts = [
+        vid.get("title", {}).get("prompt", ""),
+        vid.get("thumbnail", {}).get("prompt_describe", ""),
+        vid.get("thumbnail", {}).get("prompt_classify", ""),
+        vid.get("thumbnail", {}).get("prompt_single", ""),
+        vid.get("transcript", {}).get("prompt", ""),
+    ]
+    combined = "\n---\n".join(parts)
+    return hashlib.md5(combined.encode()).hexdigest()[:8]
+
+
+def _has_any_prompt(cfg: dict) -> bool:
+    """Return True if *cfg* contains at least one prompt key.
+
+    Used by ``load_config()`` to skip the stale-prompt hash check when the user
+    config only overrides non-prompt settings (e.g. thresholds, model names).
+    """
+    vid = cfg.get("video", {})
+    return (
+        "prompt" in vid.get("title", {})
+        or "prompt_describe" in vid.get("thumbnail", {})
+        or "prompt_classify" in vid.get("thumbnail", {})
+        or "prompt_single" in vid.get("thumbnail", {})
+        or "prompt" in vid.get("transcript", {})
+    )
 
 
 def _apply_prompt(template: str, **vars: str) -> str:
@@ -193,6 +252,7 @@ video:
       - Titles containing "Official Trailer", "Official Teaser", "Music Video" — promotional titles are not clickbait
       - Named TV show segments or recurring episode titles ("Amber Says What: ...", "Show Name Ep. 6")
       - Titles with specific names, numbers, dates, or verifiable facts
+      - Music releases, song titles, and album names — a song title announces what the content is; there is no withheld information ("Girls Just Want to Have Fun", "Mr. Brightside")
 
       Confidence guide — use the full scale, not just 0.10 and 0.80:
       - 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
@@ -408,6 +468,24 @@ def load_config(path: "Path | str | None" = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         log.warning("Failed to load clickbait config from %s: %s", cfg_path, exc)
         return deepcopy(_DEFAULT_CONFIG)
+
+    # Warn when the user file's prompt text differs from the built-in defaults.
+    # This catches the common case where an upgrade added or changed few-shot
+    # examples but the on-disk config still has the old prompts.
+    try:
+        builtin_parsed = yaml.safe_load(_DEFAULT_CONFIG_YAML) or {}
+        if _has_any_prompt(user_cfg) and _prompt_hash(user_cfg) != _prompt_hash(builtin_parsed):
+            log.warning(
+                "clickbait-config.yaml has prompt text that differs from the "
+                "built-in defaults (your config hash: %s, built-in hash: %s). "
+                "If you have not customised the prompts, delete %s to pick up "
+                "the latest few-shot examples.",
+                _prompt_hash(user_cfg),
+                _prompt_hash(builtin_parsed),
+                cfg_path,
+            )
+    except Exception:  # noqa: BLE001
+        pass  # hash check is advisory only; never block config loading
 
     return _deep_merge(_DEFAULT_CONFIG, user_cfg)
 
@@ -750,11 +828,12 @@ def classify_title(video_id: str, title: str, cfg: dict) -> dict:
     title_cfg = cfg["video"]["title"]
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
+    timeout   = title_cfg.get("timeout", 600)
 
     prompt = _apply_prompt(title_cfg.get("prompt") or _TITLE_PROMPT, title=title)
     t0 = time.monotonic()
     try:
-        raw = _ollama_chat(model, prompt, params=params)
+        raw = _ollama_chat(model, prompt, params=params, timeout=timeout)
     except Exception as exc:  # noqa: BLE001
         log.warning("Title classification failed for %s: %s", video_id, exc)
         return {
@@ -1040,6 +1119,12 @@ def _parse_batch_response(raw: str, expected: int) -> "list[dict] | None":
         return None
 
     candidate = raw[start:end + 1]
+    # Strip trailing commas before } or ] — common LLM output artifact
+    candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
+    # Remove invalid JSON escape sequences — any \X where X is not a valid
+    # JSON escape character (", \, /, b, f, n, r, t, uXXXX).  Models sometimes
+    # apply regex/shell-style escaping (\', \d, \s, \j …) inside JSON strings.
+    candidate = re.sub(r'\\([^"\\/bfnrtu])', r'\1', candidate)
     try:
         items = json.loads(candidate)
     except json.JSONDecodeError:
@@ -1108,7 +1193,7 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     title_cfg = cfg["video"]["title"]
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
-    timeout   = title_cfg.get("timeout", 300)
+    timeout   = title_cfg.get("timeout", 600)
 
     # --- Pre-filter: separate trivially-safe titles from LLM-bound ones ---
     results: list["dict | None"] = [None] * len(batch)
