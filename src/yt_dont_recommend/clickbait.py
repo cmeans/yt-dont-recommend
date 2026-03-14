@@ -1120,8 +1120,10 @@ def _parse_batch_response(raw: str, expected: int) -> "list[dict] | None":
     candidate = raw[start:end + 1]
     # Strip trailing commas before } or ] — common LLM output artifact
     candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
-    # Remove invalid JSON escape \' — single quotes never need escaping in JSON
-    candidate = candidate.replace("\\'", "'")
+    # Remove invalid JSON escape sequences — any \X where X is not a valid
+    # JSON escape character (", \, /, b, f, n, r, t, uXXXX).  Models sometimes
+    # apply regex/shell-style escaping (\', \d, \s, \j …) inside JSON strings.
+    candidate = re.sub(r'\\([^"\\/bfnrtu])', r'\1', candidate)
     try:
         items = json.loads(candidate)
     except json.JSONDecodeError:
