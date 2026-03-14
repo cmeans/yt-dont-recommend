@@ -858,6 +858,32 @@ class TestPrefilterTitle:
     def test_clickbait_title_not_filtered(self):
         assert _prefilter_title("They got CAUGHT...") is None
 
+    # Music content markers — _PREFILTER_CONTAINS
+    def test_official_audio_filtered(self):
+        assert _prefilter_title("Bon Jovi - Livin' On A Prayer (Official Audio)") is not None
+
+    def test_official_video_filtered(self):
+        assert _prefilter_title("Lindsey Stirling - Crystallize (Official Video)") is not None
+
+    def test_lyric_video_filtered(self):
+        assert _prefilter_title("Artist - Song Title (Lyric Video)") is not None
+
+    # Music suffix patterns — _PREFILTER_ENDS_WITH
+    def test_remaster_suffix_filtered(self):
+        assert _prefilter_title("Vienna (2009 Remaster)") is not None
+
+    def test_remastered_suffix_filtered(self):
+        assert _prefilter_title("Girls Just Want to Have Fun (Remastered)") is not None
+
+    def test_acoustic_suffix_filtered(self):
+        assert _prefilter_title("Shallow (Acoustic)") is not None
+
+    def test_bracket_remaster_filtered(self):
+        assert _prefilter_title("Mr. Brightside [Remaster]") is not None
+
+    def test_official_audio_suffix_filtered(self):
+        assert _prefilter_title("Somethin' Stupid (Official Audio)") is not None
+
     def test_classify_title_skips_llm_for_prefiltered(self):
         """classify_title should return without calling ollama for pre-filtered titles."""
         with patch("yt_dont_recommend.clickbait._ollama_chat") as mock_llm:

@@ -46,6 +46,10 @@ _PREFILTER_CONTAINS = (
     "official trailer",
     "official teaser",
     "official music video",
+    "official audio",
+    "official video",
+    "lyric video",
+    "remaster",
 )
 
 # Case-insensitive suffixes that mark a title as NOT clickbait.
@@ -53,6 +57,19 @@ _PREFILTER_ENDS_WITH = (
     " mv",
     " (mv)",
     " [mv]",
+    " (official audio)",
+    " [official audio]",
+    " (official video)",
+    " [official video]",
+    " (lyric video)",
+    " [lyric video]",
+    " (official lyric video)",
+    " (remaster)",
+    " [remaster]",
+    " (remastered)",
+    " [remastered]",
+    " (acoustic)",
+    " [acoustic]",
 )
 
 # Case-insensitive prefixes that mark a title as NOT clickbait.
@@ -193,6 +210,8 @@ video:
       - Titles containing "Official Trailer", "Official Teaser", "Music Video" — promotional titles are not clickbait
       - Named TV show segments or recurring episode titles ("Amber Says What: ...", "Show Name Ep. 6")
       - Titles with specific names, numbers, dates, or verifiable facts
+      - Music releases, song titles, and album names — a song or album title announces what the content is; there is no withheld information ("Girls Just Want to Have Fun", "Somethin' Stupid", "Mr. Brightside")
+      - Science and nature headlines using editorial emphasis words like "Surprise!" or "Stunning" that introduce a specific named finding — the finding is present in the title, not withheld ("Surprise! Milky Way has no central black hole" — the discovery is named)
 
       Confidence guide — use the full scale, not just 0.10 and 0.80:
       - 0.95: Unmistakable pure bait — no informational content at all ("they got caught", "Yikes.", "You NEED to see this")
@@ -228,6 +247,12 @@ video:
           → entertainment interview clip; named actors and named show state exactly what it covers; "(Clip)" label is a content-type signal
         NOT clickbait: "[CNA 24/7 LIVE] Breaking news on Asia and award-winning documentaries and shows"
           → live news stream with named broadcaster; format prefix signals ongoing coverage, not manufactured curiosity
+        NOT clickbait: "Surprise! Milky Way Might Not Have a Black Hole After All"
+          → "Surprise!" is editorial emphasis on a specific named scientific finding; the discovery is named in the title, not withheld
+        NOT clickbait: "The Most Important Picture in the History of Science"
+          → science educator framing; superlatives describe significance of a named topic, not manufactured curiosity; educational titles use strong language to convey genuine importance
+        NOT clickbait: "Girls Just Want to Have Fun"
+          → classic song title; music and song titles are content announcements — there is no withheld information
         CLICKBAIT: "They got CAUGHT..."
           → withholds who, what, why — zero information; pure mystery bait
         CLICKBAIT: "Something MASSIVE Just Happened..."
