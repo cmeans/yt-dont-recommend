@@ -1118,6 +1118,8 @@ def _parse_batch_response(raw: str, expected: int) -> "list[dict] | None":
         return None
 
     candidate = raw[start:end + 1]
+    # Strip trailing commas before } or ] — common LLM output artifact
+    candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
     try:
         items = json.loads(candidate)
     except json.JSONDecodeError:
