@@ -367,6 +367,44 @@ def get_selectors() -> dict[str, str | list[str]]:
     return merged
 
 
+def write_selector_overrides(overrides: dict) -> None:
+    """Merge selector overrides into config.yaml atomically.
+
+    Only writes keys that differ from code defaults.  Adds a
+    ``selectors_updated_at`` timestamp so staleness can be checked later.
+    Requires pyyaml — raises ImportError if not installed.
+    """
+    from datetime import datetime, timezone
+
+    import yaml  # type: ignore[import-untyped]
+
+    cfg: dict = {}
+    if CONFIG_FILE.exists():
+        cfg = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    existing_sels = cfg.get("selectors", {})
+    if not isinstance(existing_sels, dict):
+        existing_sels = {}
+
+    # Only write keys that actually differ from code defaults.
+    for key, val in overrides.items():
+        if key in _SELECTOR_DEFAULTS and val == _SELECTOR_DEFAULTS[key]:
+            continue  # no need to override — matches the default
+        existing_sels[key] = val
+    existing_sels["selectors_updated_at"] = datetime.now(timezone.utc).isoformat()
+    cfg["selectors"] = existing_sels
+
+    tmp = CONFIG_FILE.with_suffix(".tmp")
+    tmp.write_text(yaml.dump(cfg, default_flow_style=False, sort_keys=False), encoding="utf-8")
+    tmp.rename(CONFIG_FILE)
+
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "Selector overrides written to %s: %s",
+        CONFIG_FILE,
+        ", ".join(sorted(k for k in overrides if k in existing_sels)),
+    )
+
+
 def _n(count: int, word: str) -> str:
     """Return '{count} {word}' with correct plural — e.g. _n(1,'channel') → '1 channel',
     _n(2,'channel') → '2 channels'. Works for all regular English nouns."""

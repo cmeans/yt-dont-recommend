@@ -1146,12 +1146,37 @@ def process_channels(channel_sources: dict[str, str],
             if len(cards) >= MIN_CARDS_FOR_SELECTOR_CHECK and pass_parseable == 0:
                 zero_parse_passes += 1
                 if zero_parse_passes >= SELECTOR_WARN_AFTER:
-                    pkg.write_attention(
-                        f"Possible selector failure: {zero_parse_passes} consecutive feed passes "
-                        f"each had {len(cards)}+ cards but zero parseable channel links. "
-                        f"YouTube may have changed its DOM. Run --check-selectors to diagnose."
-                    )
-                    break
+                    # Attempt inline repair before giving up
+                    repaired = False
+                    try:
+                        from .config import write_selector_overrides
+                        from .diagnostics import discover_selectors
+                        log.warning(
+                            "Possible selector failure: %d consecutive passes with 0 "
+                            "parseable links. Attempting inline repair...",
+                            zero_parse_passes,
+                        )
+                        discovered = discover_selectors(page)
+                        if discovered and "feed_card" in discovered:
+                            write_selector_overrides(discovered)
+                            sels.update(discovered)
+                            zero_parse_passes = 0
+                            repaired = True
+                            log.info(
+                                "Inline repair: discovered %d selector(s), "
+                                "written to config.yaml. Resuming scan.",
+                                len(discovered),
+                            )
+                    except Exception as exc:
+                        log.debug("Inline repair failed: %s", exc)
+
+                    if not repaired:
+                        pkg.write_attention(
+                            f"Possible selector failure: {zero_parse_passes} consecutive feed passes "
+                            f"each had {len(cards)}+ cards but zero parseable channel links. "
+                            f"YouTube may have changed its DOM. Run --check-selectors --repair to diagnose."
+                        )
+                        break
             else:
                 zero_parse_passes = 0
                 if not selector_confirmed and pass_parseable > 0:

@@ -1,14 +1,17 @@
 """
 Tests for the selector registry: _SELECTOR_DEFAULTS, load_selectors_config,
-get_selectors, and config override merging.
+get_selectors, config override merging, and write_selector_overrides.
 """
 
 from unittest.mock import patch
+
+import yaml
 
 from yt_dont_recommend.config import (
     _SELECTOR_DEFAULTS,
     get_selectors,
     load_selectors_config,
+    write_selector_overrides,
 )
 
 
@@ -151,3 +154,57 @@ class TestGetSelectors:
         with patch("yt_dont_recommend.config.CONFIG_FILE", tmp_path / "nope.yaml"):
             sels = get_selectors()
             assert set(sels.keys()) == set(_SELECTOR_DEFAULTS.keys())
+
+
+class TestWriteSelectorOverrides:
+    """Test writing selector overrides to config.yaml."""
+
+    def test_creates_config_file(self, tmp_path):
+        """Creates config.yaml if it doesn't exist."""
+        cfg = tmp_path / "config.yaml"
+        with patch("yt_dont_recommend.config.CONFIG_FILE", cfg):
+            write_selector_overrides({"feed_card": "div.new-card"})
+        assert cfg.exists()
+        data = yaml.safe_load(cfg.read_text())
+        assert data["selectors"]["feed_card"] == "div.new-card"
+        assert "selectors_updated_at" in data["selectors"]
+
+    def test_merges_with_existing_config(self, tmp_path):
+        """Preserves existing config sections when adding selectors."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("timing:\n  min_delay: 5\n")
+        with patch("yt_dont_recommend.config.CONFIG_FILE", cfg):
+            write_selector_overrides({"feed_card": "div.new-card"})
+        data = yaml.safe_load(cfg.read_text())
+        assert data["timing"]["min_delay"] == 5
+        assert data["selectors"]["feed_card"] == "div.new-card"
+
+    def test_merges_with_existing_selectors(self, tmp_path):
+        """Adds new overrides without removing existing ones."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("selectors:\n  login_check: '#custom-login'\n")
+        with patch("yt_dont_recommend.config.CONFIG_FILE", cfg):
+            write_selector_overrides({"feed_card": "div.new-card"})
+        data = yaml.safe_load(cfg.read_text())
+        assert data["selectors"]["login_check"] == "#custom-login"
+        assert data["selectors"]["feed_card"] == "div.new-card"
+
+    def test_skips_values_matching_defaults(self, tmp_path):
+        """Does not write overrides that match code defaults."""
+        cfg = tmp_path / "config.yaml"
+        with patch("yt_dont_recommend.config.CONFIG_FILE", cfg):
+            write_selector_overrides({
+                "feed_card": _SELECTOR_DEFAULTS["feed_card"],  # matches default
+                "login_check": "#custom-login",  # differs from default
+            })
+        data = yaml.safe_load(cfg.read_text())
+        assert "feed_card" not in data["selectors"]
+        assert data["selectors"]["login_check"] == "#custom-login"
+
+    def test_atomic_write(self, tmp_path):
+        """Config is written atomically (no .tmp file left behind)."""
+        cfg = tmp_path / "config.yaml"
+        with patch("yt_dont_recommend.config.CONFIG_FILE", cfg):
+            write_selector_overrides({"feed_card": "div.x"})
+        assert not (tmp_path / "config.tmp").exists()
+        assert cfg.exists()

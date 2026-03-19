@@ -115,6 +115,7 @@ from .config import (
     load_schedule_config,
     load_selectors_config,
     setup_logging,
+    write_selector_overrides,
 )
 
 # --- Re-exports from scheduler ---
