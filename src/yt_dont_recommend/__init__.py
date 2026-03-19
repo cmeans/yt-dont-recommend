@@ -89,6 +89,7 @@ from .config import (
     _SELECTOR_DEFAULTS,
     ATTENTION_FILE,
     BUILTIN_SOURCES,
+    DATA_DIR,
     DEFAULT_BLOCKLIST_EXCLUDE_FILE,
     DEFAULT_CLICKBAIT_EXCLUDE_FILE,
     DEFAULT_SOURCES,
@@ -111,10 +112,13 @@ from .config import (
     VIDEO_SELECTORS,
     __version__,
     _n,
+    clear_profile_cache,
+    ensure_data_dir,
     get_selectors,
     load_schedule_config,
     load_selectors_config,
     setup_logging,
+    write_selector_overrides,
 )
 
 # --- Re-exports from scheduler ---

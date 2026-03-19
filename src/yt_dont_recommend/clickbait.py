@@ -372,7 +372,8 @@ video:
 def _write_default_config(cfg_path: Path) -> None:
     """Write the default config as commented YAML on first use."""
     try:
-        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        from .config import ensure_data_dir
+        ensure_data_dir()
         cfg_path.write_text(_DEFAULT_CONFIG_YAML, encoding="utf-8")
         log.info("Created default clickbait config: %s", cfg_path)
     except Exception as exc:

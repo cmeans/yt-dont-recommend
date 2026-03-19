@@ -49,7 +49,9 @@ def do_login() -> None:
     """Open a browser window for the user to log into YouTube."""
     from playwright.sync_api import sync_playwright
 
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    from .config import ensure_data_dir
+    ensure_data_dir()
+    PROFILE_DIR.mkdir(exist_ok=True, mode=0o700)
 
     print("\nLogin setup")
     print("-----------")
@@ -84,6 +86,8 @@ def do_login() -> None:
             pass
         context.close()
 
+    from .config import clear_profile_cache
+    clear_profile_cache()
     log.info("Login session saved. You can now run without --login.")
 
 
@@ -607,7 +611,9 @@ def open_browser(headless: bool = False, sels: dict | None = None) -> tuple | No
     if sels is None:
         sels = get_selectors()
 
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    from .config import ensure_data_dir
+    ensure_data_dir()
+    PROFILE_DIR.mkdir(exist_ok=True, mode=0o700)
     pw_cm = sync_playwright()
     p = pw_cm.__enter__()
     context = _launch_context(
@@ -643,6 +649,9 @@ def close_browser(handle: tuple) -> None:
     log.info("Closing browser (saving session to disk)...")
     context.close()
     pw_cm.__exit__(None, None, None)
+
+    from .config import clear_profile_cache
+    clear_profile_cache()
 
 
 def process_channels(channel_sources: dict[str, str],
@@ -1146,12 +1155,37 @@ def process_channels(channel_sources: dict[str, str],
             if len(cards) >= MIN_CARDS_FOR_SELECTOR_CHECK and pass_parseable == 0:
                 zero_parse_passes += 1
                 if zero_parse_passes >= SELECTOR_WARN_AFTER:
-                    pkg.write_attention(
-                        f"Possible selector failure: {zero_parse_passes} consecutive feed passes "
-                        f"each had {len(cards)}+ cards but zero parseable channel links. "
-                        f"YouTube may have changed its DOM. Run --check-selectors to diagnose."
-                    )
-                    break
+                    # Attempt inline repair before giving up
+                    repaired = False
+                    try:
+                        from .config import write_selector_overrides
+                        from .diagnostics import discover_selectors
+                        log.warning(
+                            "Possible selector failure: %d consecutive passes with 0 "
+                            "parseable links. Attempting inline repair...",
+                            zero_parse_passes,
+                        )
+                        discovered = discover_selectors(page)
+                        if discovered and "feed_card" in discovered:
+                            write_selector_overrides(discovered)
+                            sels.update(discovered)
+                            zero_parse_passes = 0
+                            repaired = True
+                            log.info(
+                                "Inline repair: discovered %d selector(s), "
+                                "written to config.yaml. Resuming scan.",
+                                len(discovered),
+                            )
+                    except Exception as exc:
+                        log.debug("Inline repair failed: %s", exc)
+
+                    if not repaired:
+                        pkg.write_attention(
+                            f"Possible selector failure: {zero_parse_passes} consecutive feed passes "
+                            f"each had {len(cards)}+ cards but zero parseable channel links. "
+                            f"YouTube may have changed its DOM. Run --check-selectors --repair to diagnose."
+                        )
+                        break
             else:
                 zero_parse_passes = 0
                 if not selector_confirmed and pass_parseable > 0:
@@ -1181,6 +1215,8 @@ def process_channels(channel_sources: dict[str, str],
             context.close()
             if _pw_cm is not None:
                 _pw_cm.__exit__(None, None, None)
+            from .config import clear_profile_cache
+            clear_profile_cache()
 
     if dry_run:
         parts = []

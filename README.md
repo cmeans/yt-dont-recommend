@@ -375,12 +375,16 @@ All data lives in `~/.yt-dont-recommend/`:
 
 | Path | Purpose |
 |------|---------|
-| `browser-profile/` | Chromium profile with your login session |
+| `browser-profile/` | Chromium profile with your login session (Google cookies, local storage) |
 | `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings, notification topic |
 | `run.log` | Timestamped log of all actions (rotates at 1 MB, 5 backups kept) |
 | `needs-attention.txt` | Alert flag written when action is required (e.g. selector failure, expired login session); auto-cleared on a successful run |
 | `config.yaml` | Optional: override timing delays, per-session cap, browser behaviour, and DOM selectors. Copy from [`config.example.yaml`](config.example.yaml). Requires `pyyaml` (`pip install pyyaml`). |
 | `clickbait-config.yaml` | Optional: configure clickbait model, thresholds, and pipeline stages. Copy from [`clickbait-config.example.yaml`](clickbait-config.example.yaml). |
+
+**Security:** The data directory is created with owner-only permissions (`chmod 700`). The `browser-profile/` contains your Google login session cookies — anyone with read access to this directory can act as your Google account. Existing installations with overly permissive directories are automatically fixed on the next run.
+
+**Disk usage:** Browser cache is automatically cleared after each run, keeping the profile at ~10 MB (session data only). Without cleanup, Chromium caches can grow to 400+ MB.
 
 ## Caveats
 

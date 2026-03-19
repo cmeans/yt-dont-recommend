@@ -175,6 +175,11 @@ def load_state() -> AppState:
 def save_state(state: AppState) -> None:
     STATE_FILE = _state_file()
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from .config import ensure_data_dir
+        ensure_data_dir()
+    except Exception:
+        pass  # permission fix is best-effort; don't block state save
     state["last_run"] = datetime.now().isoformat()
     # Don't leave empty pending_unblock in the state file
     if "pending_unblock" in state and not state["pending_unblock"]:
@@ -235,6 +240,11 @@ def write_attention(message: str) -> None:
     global _had_attention
     _had_attention = True
     ATTENTION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from .config import ensure_data_dir
+        ensure_data_dir()
+    except Exception:
+        pass
     timestamp = datetime.now().isoformat(timespec="seconds")
     with open(ATTENTION_FILE, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")

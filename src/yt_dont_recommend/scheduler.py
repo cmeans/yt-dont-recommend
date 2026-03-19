@@ -94,7 +94,8 @@ def load_schedule() -> dict:
 
 def save_schedule(data: dict) -> None:
     """Write schedule.json atomically (write to .tmp, then rename)."""
-    SCHEDULE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    from .config import ensure_data_dir
+    ensure_data_dir()
     tmp = SCHEDULE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(SCHEDULE_FILE)

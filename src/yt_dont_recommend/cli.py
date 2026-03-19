@@ -424,6 +424,11 @@ def main() -> None:
                             "Opens a visible browser, checks both home feed and a channel page, "
                             "and saves a report with screenshots. Run this after YouTube updates break things."
                         ))
+    parser.add_argument("--repair", action="store_true",
+                        help=(
+                            "Used with --check-selectors: if the home feed test fails, "
+                            "attempt to discover working selectors and write them to config.yaml."
+                        ))
     parser.add_argument("--test-channel", default="@YouTube", metavar="CHANNEL",
                         help=(
                             "Channel to use for the --check-selectors channel page test "
@@ -680,7 +685,7 @@ def main() -> None:
 
     if args.check_selectors:
         from .diagnostics import check_selectors
-        ok = check_selectors(args.test_channel)
+        ok = check_selectors(args.test_channel, repair=args.repair)
         sys.exit(0 if ok else 1)
 
     # Determine operating mode. Running without --blocklist or --clickbait shows help.

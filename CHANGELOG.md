@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 ## [Unreleased]
 
 ### Added
+- **Selector auto-repair**: `--check-selectors --repair` discovers working selectors when the built-in ones break and writes them to `config.yaml` automatically. Includes discovery heuristics for feed card container, channel links, menu buttons, and menu item text (including localized phrases).
+- **Inline self-healing**: during normal `--blocklist` or `--clickbait` runs, if the selector health check detects 3 consecutive passes with no parseable channel links, the tool attempts inline repair before giving up — discovers working selectors, writes them to config, and resumes the scan.
+- `write_selector_overrides()` function for atomic config.yaml updates.
+- `discover_selectors()` function with heuristics for feed card, channel link, menu button, and menu phrase discovery.
 - **Ruff linting**: integrated ruff for code quality enforcement. Added to CI pipeline (runs before tests on every push/PR). All existing issues fixed.
 - Ruff config in `pyproject.toml` with per-file ignores for intentional patterns (late imports, re-exports).
 
