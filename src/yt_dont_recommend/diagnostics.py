@@ -346,7 +346,9 @@ def check_selectors(test_channel: str = "@YouTube", repair: bool = False) -> boo
 
         return found_target
 
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    from .config import clear_profile_cache, ensure_data_dir
+    ensure_data_dir()
+    PROFILE_DIR.mkdir(exist_ok=True, mode=0o700)
 
     with sync_playwright() as p:
         from .browser import _launch_context
@@ -372,6 +374,7 @@ def check_selectors(test_channel: str = "@YouTube", repair: bool = False) -> boo
         if not avatar:
             pr("ERROR: Not logged in. Run --login first.")
             context.close()
+            clear_profile_cache()
             return False
         pr("Login confirmed.")
 
@@ -587,6 +590,8 @@ def check_selectors(test_channel: str = "@YouTube", repair: bool = False) -> boo
         _screenshot(page, data_dir / f"check-watch-{date_str}.png", pr)
 
         context.close()
+
+    clear_profile_cache()
 
     # Summary
     pr(f"\n{'=' * 60}")
