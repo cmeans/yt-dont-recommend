@@ -369,7 +369,7 @@ All data lives in `~/.yt-dont-recommend/`:
 | `processed.json` | Channels already handled, blocked-by source tracking, subscription warnings, notification topic |
 | `run.log` | Timestamped log of all actions (rotates at 1 MB, 5 backups kept) |
 | `needs-attention.txt` | Alert flag written when action is required (e.g. selector failure, expired login session); auto-cleared on a successful run |
-| `config.yaml` | Optional: override timing delays, per-session cap, and browser behaviour (e.g. `use_system_chrome`). Copy from [`config.example.yaml`](config.example.yaml). Requires `pyyaml` (`pip install pyyaml`). |
+| `config.yaml` | Optional: override timing delays, per-session cap, browser behaviour, and DOM selectors. Copy from [`config.example.yaml`](config.example.yaml). Requires `pyyaml` (`pip install pyyaml`). |
 | `clickbait-config.yaml` | Optional: configure clickbait model, thresholds, and pipeline stages. Copy from [`clickbait-config.example.yaml`](clickbait-config.example.yaml). |
 
 ## Caveats
@@ -585,6 +585,32 @@ To test against a specific channel instead of the default (`@YouTube`):
 ```bash
 yt-dont-recommend --check-selectors --test-channel @SomeChannel
 ```
+
+### Overriding Selectors
+
+If YouTube changes its DOM and the built-in selectors break, you can override them in `~/.yt-dont-recommend/config.yaml` without waiting for a code update. Add a `selectors:` section with only the keys you need to change:
+
+```yaml
+selectors:
+  feed_card: "div.new-video-card"
+  menu_buttons:
+    - "button[aria-label='More options']"
+```
+
+All 14 selector keys are documented in [`config.example.yaml`](config.example.yaml). Missing keys fall back to built-in defaults.
+
+### Non-English YouTube
+
+If your YouTube is in a language other than English, the menu item text won't match the built-in phrases. Override the text phrases in `config.yaml`:
+
+```yaml
+selectors:
+  dont_recommend_phrases:
+    - "no recomendar el canal"      # Spanish
+  not_interested_phrase: "no me interesa"
+```
+
+Run `--check-selectors` to see the exact menu item text in your language — the checker prints every menu item it finds.
 
 ## Acknowledgments
 
