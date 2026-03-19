@@ -2,15 +2,14 @@
 
 import json
 from copy import deepcopy
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from yt_dont_recommend.clickbait import (
+    _DEFAULT_CONFIG,
     _clamp_confidence,
     _deep_merge,
-    _DEFAULT_CONFIG,
     _parse_batch_response,
     _prefilter_title,
     classify_thumbnail,
@@ -22,7 +21,6 @@ from yt_dont_recommend.clickbait import (
     extract_json,
     load_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -295,7 +293,7 @@ class TestClassifyThumbnail:
             patch("yt_dont_recommend.clickbait._fetch_thumbnail_b64", return_value="imgdata"),
             patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat),
         ):
-            result = classify_thumbnail("vid1", "A title", cfg)
+            classify_thumbnail("vid1", "A title", cfg)
 
         assert len(calls) == 1
         assert calls[0]["has_image"] is True

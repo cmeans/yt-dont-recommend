@@ -16,7 +16,6 @@ import base64
 import json
 import logging
 import re
-
 import time
 import urllib.request
 from copy import deepcopy
@@ -708,9 +707,9 @@ def _fetch_transcript(video_id: str) -> "tuple[str | None, str]":
     """
     try:
         from youtube_transcript_api import (
-            YouTubeTranscriptApi,
-            TranscriptsDisabled,
             NoTranscriptFound,
+            TranscriptsDisabled,
+            YouTubeTranscriptApi,
         )
     except ImportError:
         return None, "no_api"

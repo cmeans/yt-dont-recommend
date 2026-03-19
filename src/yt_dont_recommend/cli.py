@@ -15,31 +15,31 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
+from .blocklist import check_removals, resolve_source
 from .config import (
-    BUILTIN_SOURCES,
-    DEFAULT_SOURCES,
-    STATE_FILE,
-    LOG_FILE,
-    DEFAULT_BLOCKLIST_EXCLUDE_FILE,
-    DEFAULT_CLICKBAIT_EXCLUDE_FILE,
     _LEGACY_EXCLUDE_FILE,
     ATTENTION_FILE,
-    __version__,
+    BUILTIN_SOURCES,
+    DEFAULT_BLOCKLIST_EXCLUDE_FILE,
+    DEFAULT_CLICKBAIT_EXCLUDE_FILE,
+    DEFAULT_SOURCES,
+    LOG_FILE,
+    STATE_FILE,
     VERSION_CHECK_INTERVAL,
-    setup_logging,
+    __version__,
     _n,
+    setup_logging,
 )
+from .scheduler import _find_installed_binary, schedule_cmd
 from .state import (
+    _ntfy_notify,
+    check_attention_flag,
     load_state,
     save_state,
-    _ntfy_notify,
     write_attention,
-    check_attention_flag,
 )
-from .blocklist import resolve_source, check_removals
-from .scheduler import schedule_cmd, _find_installed_binary
 
 log = logging.getLogger(__name__)
 
@@ -227,24 +227,24 @@ def setup_notify() -> None:
     state = load_state()
     if state.get("notify_topic"):
         topic = state["notify_topic"]
-        print(f"\nNotifications already configured.")
+        print("\nNotifications already configured.")
         print(f"Topic : {topic}")
         print(f"URL   : https://ntfy.sh/{topic}")
-        print(f"\nTo reconfigure, run --remove-notify first.")
+        print("\nTo reconfigure, run --remove-notify first.")
         return
 
     topic = f"ydr-{secrets.token_hex(16)}"
     state["notify_topic"] = topic
     save_state(state)
 
-    print(f"\nNotification topic generated.")
-    print(f"\nSubscribe in the ntfy app or browser:")
+    print("\nNotification topic generated.")
+    print("\nSubscribe in the ntfy app or browser:")
     print(f"  https://ntfy.sh/{topic}")
-    print(f"\nSteps:")
-    print(f"  1. Install the ntfy app (https://ntfy.sh) on your phone or desktop.")
-    print(f"  2. Subscribe to the topic above.")
-    print(f"  3. Run: yt-dont-recommend --test-notify")
-    print(f"\nYour topic is private — it is a random string not guessable by others.")
+    print("\nSteps:")
+    print("  1. Install the ntfy app (https://ntfy.sh) on your phone or desktop.")
+    print("  2. Subscribe to the topic above.")
+    print("  3. Run: yt-dont-recommend --test-notify")
+    print("\nYour topic is private — it is a random string not guessable by others.")
 
 
 def remove_notify() -> None:
@@ -624,7 +624,7 @@ def main() -> None:
             for src in info.get("sources", []):
                 per_source[src] = per_source.get(src, 0) + 1
         if per_source:
-            print(f"\nBlocked by source  :")
+            print("\nBlocked by source  :")
             for src, count in sorted(per_source.items(), key=lambda x: -x[1]):
                 size = state.get("source_sizes", {}).get(src)
                 size_str = f"  (list size: {size})" if size is not None else ""
@@ -636,9 +636,9 @@ def main() -> None:
             total_blocked = len(state.get("blocked_by", {}))
             pct = total_blocked / total_on_lists * 100 if total_on_lists else 0
             print(f"\nFeed coverage      : {total_blocked} of ~{total_on_lists} channels blocked ({pct:.1f}%)")
-            print(f"                     (channels appear in coverage only after showing in the home feed)")
+            print("                     (channels appear in coverage only after showing in the home feed)")
         if whb:
-            print(f"\nSubscribed channels in blocklist (skipped, notified once):")
+            print("\nSubscribed channels in blocklist (skipped, notified once):")
             for ch, info in whb.items():
                 print(f"  {ch}  (sources: {info.get('sources', [])}, first seen: {info.get('first_seen', '?')[:10]})")
         print(f"\nState file         : {STATE_FILE}")
@@ -874,7 +874,7 @@ def main() -> None:
     if not channel_sources and not all_unblocks and clickbait_cfg is None:
         log.info("Nothing to do.")
     else:
-        from .browser import open_browser, close_browser, process_channels
+        from .browser import close_browser, open_browser, process_channels
         browser_handle = open_browser(headless=args.headless)
         if browser_handle is None:
             return  # write_attention already called by open_browser

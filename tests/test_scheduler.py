@@ -10,18 +10,17 @@ Covers:
 """
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import yt_dont_recommend as ydr
 from yt_dont_recommend.scheduler import (
     _compute_daily_plan,
+    _schedule_linux,
+    heartbeat,
     load_schedule,
     save_schedule,
-    heartbeat,
-    _schedule_linux,
     schedule_cmd,
 )
-
 
 # ---------------------------------------------------------------------------
 # _compute_daily_plan
@@ -305,7 +304,7 @@ class TestScheduleLinux:
         _schedule_linux("install", "/bin/yt-dont-recommend", schedule)
 
         assert written, "crontab - was never called"
-        cron_lines = [l for l in written[0].splitlines() if "yt-dont-recommend" in l]
+        cron_lines = [line for line in written[0].splitlines() if "yt-dont-recommend" in line]
         assert cron_lines, "no crontab entry written"
         assert cron_lines[0].startswith("* * * * *"), f"Not every-minute: {cron_lines[0]}"
         assert "--heartbeat" in cron_lines[0]

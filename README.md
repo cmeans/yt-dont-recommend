@@ -15,7 +15,7 @@ No browser extension can do this. Extensions filter content client-side on a sin
 - [Uninstall](#uninstall)
 - [Development Setup](#development-setup)
 - [Usage](#usage)
-- [Exclusion List](#exclusion-list)
+- [Exclusion Lists](#exclusion-lists)
 - [Subscription Protection](#subscription-protection)
 - [Auto-Unblock (False Positive Correction)](#auto-unblock-false-positive-correction)
 - [Blocklist Format](#blocklist-format)
@@ -23,11 +23,13 @@ No browser extension can do this. Extensions filter content client-side on a sin
 - [How It Works](#how-it-works)
 - [State & Logs](#state--logs)
 - [Caveats](#caveats)
+- [Automatic Safeguards](#automatic-safeguards)
 - [Running Periodically](#running-periodically)
 - [Notifications](#notifications)
 - [Updates](#updates)
 - [Checking and Updating Selectors](#checking-and-updating-selectors)
 - [Acknowledgments](#acknowledgments)
+- [Changelog](#changelog)
 - [License](#license)
 
 ---
@@ -190,6 +192,14 @@ A browser window opens — sign into your Google account, then close it. Your se
 > - uv tool: `uvx playwright install-deps chromium`
 > - uv (dev): `uv run playwright install-deps chromium`
 > - pipx / pip/venv: `playwright install-deps chromium`
+
+**Running tests and linting:**
+
+```bash
+uv run pytest tests/ -v        # unit tests (251+)
+uv run ruff check src/ tests/  # lint
+bash scripts/smoke-test.sh     # CLI integration smoke test
+```
 
 ## Usage
 
@@ -621,6 +631,10 @@ The clickbait detection feature was informed by:
 - **ThumbnailTruth** — Naveed, Uzmi & Qazi (2025). *ThumbnailTruth: A Multi-Modal LLM Approach for Detecting Misleading YouTube Thumbnails Across Diverse Cultural Settings.* [arXiv:2509.04714](https://arxiv.org/abs/2509.04714). Their multi-modal dataset and finding that frontier models achieve 93%+ accuracy on thumbnail-based clickbait detection shaped the design of the thumbnail classification stage.
 
 - **Visual Description Grounding** — The two-step thumbnail pipeline (describe what you see literally, then classify from that description) follows an established technique for reducing hallucination in vision-language models. By committing to a factual description before applying classification pressure, the model cannot rationalize a predetermined label by confabulating matching visual evidence.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of all releases.
 
 ## License
 

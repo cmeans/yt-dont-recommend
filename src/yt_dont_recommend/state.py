@@ -13,7 +13,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import TypedDict
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
 log = logging.getLogger(__name__)
 
@@ -61,10 +61,12 @@ class AppState(TypedDict, total=False):
     clickbait_acted: dict[str, dict]
 
 from .config import (
-    STATE_FILE as _CONFIG_STATE_FILE,
     ATTENTION_FILE,
-    STATE_VERSION,
     CLICKBAIT_ACTED_PRUNE_DAYS,
+    STATE_VERSION,
+)
+from .config import (
+    STATE_FILE as _CONFIG_STATE_FILE,
 )
 
 # Set to True by write_attention() so main() can exit with code 1 when

@@ -15,7 +15,7 @@ import sys
 log = logging.getLogger(__name__)
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import urlopen, Request
+from urllib.request import Request, urlopen
 
 from .config import BUILTIN_SOURCES
 from .state import save_state

@@ -22,7 +22,6 @@ import pytest
 import yt_dont_recommend as ydr
 from yt_dont_recommend.clickbait import _DEFAULT_CONFIG
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

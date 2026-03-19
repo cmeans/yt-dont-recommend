@@ -3,15 +3,12 @@ Tests for the selector registry: _SELECTOR_DEFAULTS, load_selectors_config,
 get_selectors, and config override merging.
 """
 
-import json
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 
 from yt_dont_recommend.config import (
     _SELECTOR_DEFAULTS,
-    load_selectors_config,
     get_selectors,
+    load_selectors_config,
 )
 
 
