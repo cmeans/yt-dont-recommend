@@ -431,7 +431,7 @@ def check_selectors(test_channel: str = "@YouTube", repair: bool = False) -> boo
         page.goto(search_url, wait_until="domcontentloaded")
         time.sleep(PAGE_LOAD_WAIT)
 
-        search_ok = test_context(page, f"TEST 2: Search Results ({test_channel})")
+        search_ok = test_context(page, f"TEST 2: Search Results ({test_channel}) [expected: no option]")
         _screenshot(page, data_dir / f"check-search-{date_str}.png", pr)
 
         # Test 3: channel header "more actions" button (next to Subscribe)
@@ -441,7 +441,7 @@ def check_selectors(test_channel: str = "@YouTube", repair: bool = False) -> boo
         time.sleep(PAGE_LOAD_WAIT)
 
         pr(f"\n{'=' * 60}")
-        pr(f"  TEST 3: Channel Header Menu ({test_channel})")
+        pr(f"  TEST 3: Channel Header Menu ({test_channel}) [expected: no option]")
         pr(f"{'=' * 60}")
 
         # Candidate selectors for the "⋮" button in the channel header
@@ -504,7 +504,7 @@ def check_selectors(test_channel: str = "@YouTube", repair: bool = False) -> boo
 
         # Test 4: video watch page — menu below the video title
         pr(f"\n{'=' * 60}")
-        pr(f"  TEST 4: Video Watch Page Menu ({test_channel})")
+        pr(f"  TEST 4: Video Watch Page Menu ({test_channel}) [expected: no option]")
         pr(f"{'=' * 60}")
 
         # Navigate to the channel's videos page to get a video link
@@ -592,24 +592,19 @@ def check_selectors(test_channel: str = "@YouTube", repair: bool = False) -> boo
     pr(f"\n{'=' * 60}")
     pr("  SUMMARY")
     pr(f"{'=' * 60}")
-    pr(f"  Home feed:      {'PASS' if home_ok else 'FAIL'}")
-    pr(f"  Search results: {'PASS' if search_ok else 'FAIL'}")
-    pr(f"  Channel header: {'PASS' if header_ok else 'FAIL'}")
-    pr(f"  Video page:     {'PASS' if watch_ok else 'FAIL'}")
+    pr(f"  Home feed:      {'PASS' if home_ok else 'FAIL'}  ← this is what matters")
+    pr(f"  Search results: {'PASS' if search_ok else 'expected (no option)':>22}")
+    pr(f"  Channel header: {'PASS' if header_ok else 'expected (no option)':>22}")
+    pr(f"  Video page:     {'PASS' if watch_ok else 'expected (no option)':>22}")
+    pr()
+    pr('  "Don\'t recommend channel" only appears in the home feed.')
+    pr("  Tests 2-4 confirm this is still the case — FAIL is normal there.")
 
-    if watch_ok:
-        pr("\n  Video page approach works — navigate to a video from the channel,")
-        pr("  then use the menu below the video title.")
-    elif header_ok:
-        pr("\n  Channel header approach works — most efficient option.")
-        pr("  Navigate to channel page and use the header menu.")
-    elif search_ok:
-        pr("\n  Search results approach works.")
-    elif home_ok:
-        pr("\n  Only the home feed works. The processing loop needs a feed-scanning approach.")
+    if home_ok:
+        pr("\n  Home feed selectors are working. No action needed.")
     else:
-        pr("\n  Target not found in any context.")
-        pr("  Check the screenshots and menu item lists above, then update selectors.")
+        pr("\n  HOME FEED FAILED — selectors need repair.")
+        pr("  Run --check-selectors --repair to attempt auto-discovery.")
 
     report_path = data_dir / f"selector-check-{date_str}.txt"
     report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
