@@ -17,10 +17,7 @@ log = logging.getLogger(__name__)
 from .config import (
     PROFILE_DIR,
     PAGE_LOAD_WAIT,
-    VIDEO_SELECTORS,
-    MENU_BTN_SELECTORS,
-    MENU_ITEM_SELECTOR,
-    TARGET_PHRASES,
+    get_selectors,
 )
 
 
@@ -52,6 +49,10 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     Returns True if the target option was found (exit code 0), False otherwise (exit code 1).
     """
     from playwright.sync_api import sync_playwright
+    from .config import VIDEO_SELECTORS
+
+    sels = get_selectors()
+    dr_phrases = sels["dont_recommend_phrases"]
 
     date_str = date.today().isoformat()
     report_lines: list[str] = []
@@ -91,7 +92,7 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
         # Menu button selectors
         pr("\nMenu button selectors (scoped to video element):")
         menu_btn = None
-        for sel in MENU_BTN_SELECTORS:
+        for sel in sels["menu_buttons"]:
             btn = video_element.query_selector(sel)
             pr(f"  {'FOUND' if btn else 'not found':20}  {sel}")
             if btn and menu_btn is None:
@@ -114,13 +115,13 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
         menu_btn.click()
         time.sleep(1.0)
 
-        items = page.query_selector_all(MENU_ITEM_SELECTOR)
+        items = page.query_selector_all(sels["menu_items"])
         pr(f"\nMenu items ({len(items)} found):")
         for item in items:
             text = (item.inner_text() or "").strip()
             if not text:
                 continue
-            is_target = any(p in text.lower() for p in TARGET_PHRASES)
+            is_target = any(p in text.lower() for p in dr_phrases)
             marker = "  <-- TARGET" if is_target else ""
             pr(f"  - {text}{marker}")
             if is_target:
@@ -156,7 +157,7 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
 
         # button#avatar-btn exists on both logged-in and logged-out pages.
         # The notification bell only appears when a Google account is active.
-        avatar = page.query_selector("#notification-button, ytd-notification-topbar-button-renderer")
+        avatar = page.query_selector(sels["login_check"])
         if not avatar:
             pr("ERROR: Not logged in. Run --login first.")
             context.close()
@@ -225,13 +226,13 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
             header_btn.click()
             time.sleep(1.0)
 
-            items = page.query_selector_all(MENU_ITEM_SELECTOR)
+            items = page.query_selector_all(sels["menu_items"])
             pr(f"\nMenu items ({len(items)} found):")
             for item in items:
                 text = (item.inner_text() or "").strip()
                 if not text:
                     continue
-                is_target = any(p in text.lower() for p in TARGET_PHRASES)
+                is_target = any(p in text.lower() for p in dr_phrases)
                 marker = "  <-- TARGET" if is_target else ""
                 pr(f"  - {text}{marker}")
                 if is_target:
@@ -309,13 +310,13 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
                 watch_btn.click()
                 time.sleep(1.0)
 
-                items = page.query_selector_all(MENU_ITEM_SELECTOR)
+                items = page.query_selector_all(sels["menu_items"])
                 pr(f"\nMenu items ({len(items)} found):")
                 for item in items:
                     text = (item.inner_text() or "").strip()
                     if not text:
                         continue
-                    is_target = any(p in text.lower() for p in TARGET_PHRASES)
+                    is_target = any(p in text.lower() for p in dr_phrases)
                     marker = "  <-- TARGET" if is_target else ""
                     pr(f"  - {text}{marker}")
                     if is_target:

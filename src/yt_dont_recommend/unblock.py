@@ -30,7 +30,7 @@ def _pkg():
     return _p
 
 
-def _perform_browser_unblocks(page: Any, channels: list[str], state: dict) -> list[str]:
+def _perform_browser_unblocks(page: Any, channels: list[str], state: dict, *, sels: dict | None = None) -> list[str]:
     """
     Navigate to myactivity.google.com/page?page=youtube_user_feedback and remove
     the 'Don't recommend channel' feedback entry for each channel.
@@ -53,6 +53,9 @@ def _perform_browser_unblocks(page: Any, channels: list[str], state: dict) -> li
         return []
 
     pkg = _pkg()
+    if sels is None:
+        from .config import get_selectors
+        sels = get_selectors()
 
     log.info(f"Reversing YouTube 'Don't recommend' for {_n(len(channels), 'channel')} via myactivity.google.com...")
 
@@ -73,8 +76,7 @@ def _perform_browser_unblocks(page: Any, channels: list[str], state: dict) -> li
                     name = re.sub(r'^\(\d+\)\s*', '', name)  # strip notification count prefix
                     display_name = name or None
                 if not display_name:
-                    for sel in ("ytd-channel-name yt-formatted-string", "#channel-name yt-formatted-string",
-                                "h1 yt-formatted-string", "#channel-name a"):
+                    for sel in sels["channel_name_selectors"]:
                         el = page.query_selector(sel)
                         if el:
                             display_name = el.inner_text().strip() or None
