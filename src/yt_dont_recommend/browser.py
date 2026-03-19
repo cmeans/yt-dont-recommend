@@ -821,6 +821,7 @@ def process_channels(channel_sources: dict[str, str],
         no_progress_scrolls = 0
         zero_parse_passes = 0
         selector_confirmed = False
+        first_pass_logged = False
         seen_paths: set[str] = set()
 
         while True:
@@ -1165,13 +1166,14 @@ def process_channels(channel_sources: dict[str, str],
                         ATTENTION_FILE.unlink()
                         log.info("Selector working — previous attention alert cleared.")
 
-            # Only log pass summary when there was activity or a diagnostic signal —
-            # suppresses the wall of identical "0 evaluated" lines during feed exhaustion.
-            if found_match_this_pass or evaluated_clickbait_this_pass or not cards or pass_parseable == 0:
+            # Always log the first pass (proves selectors are working), then suppress
+            # the wall of identical "0 evaluated" lines during feed exhaustion.
+            if not first_pass_logged or found_match_this_pass or evaluated_clickbait_this_pass or not cards or pass_parseable == 0:
                 log.debug(
                     f"Pass: {len(cards)} cards, {pass_parseable} with channel links"
                     + (f", {evaluated_clickbait_this_pass} evaluated for clickbait" if _run_clickbait else "")
                 )
+                first_pass_logged = True
 
             if found_match_this_pass or evaluated_clickbait_this_pass:
                 no_progress_scrolls = 0
