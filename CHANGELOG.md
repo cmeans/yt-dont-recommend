@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-03-19
+
+### Fixed
+- **Batch JSON parse reliability**: strip trailing commas (`,]`, `,}`) and invalid escape sequences (`\'`, `\d`, `\s`, etc.) from LLM responses before parsing. Eliminates batch parse failures that previously required individual-item fallback.
+- **Title classification timeout**: default increased from 300s to 600s. Individual fallback path (`classify_title`) now reads timeout from config instead of using hardcoded 90s.
+- Claude Code collaboration note added to README Acknowledgments.
+
 ## [0.4.0] - 2026-03-19
 
 ### Added
