@@ -750,11 +750,12 @@ def classify_title(video_id: str, title: str, cfg: dict) -> dict:
     title_cfg = cfg["video"]["title"]
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
+    timeout   = title_cfg.get("timeout", 600)
 
     prompt = _apply_prompt(title_cfg.get("prompt") or _TITLE_PROMPT, title=title)
     t0 = time.monotonic()
     try:
-        raw = _ollama_chat(model, prompt, params=params)
+        raw = _ollama_chat(model, prompt, params=params, timeout=timeout)
     except Exception as exc:  # noqa: BLE001
         log.warning("Title classification failed for %s: %s", video_id, exc)
         return {
@@ -1040,6 +1041,12 @@ def _parse_batch_response(raw: str, expected: int) -> "list[dict] | None":
         return None
 
     candidate = raw[start:end + 1]
+    # Strip trailing commas before } or ] — common LLM output artifact
+    candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
+    # Remove invalid JSON escape sequences — any \X where X is not a valid
+    # JSON escape character (", \, /, b, f, n, r, t, uXXXX).  Models sometimes
+    # apply regex/shell-style escaping (\', \d, \s, \j …) inside JSON strings.
+    candidate = re.sub(r'\\([^"\\/bfnrtu])', r'\1', candidate)
     try:
         items = json.loads(candidate)
     except json.JSONDecodeError:
@@ -1108,7 +1115,7 @@ def _classify_title_batch(batch: "list[dict]", cfg: dict) -> "list[dict]":
     title_cfg = cfg["video"]["title"]
     model     = title_cfg["model"]["name"]
     params    = title_cfg["model"].get("params") or {}
-    timeout   = title_cfg.get("timeout", 300)
+    timeout   = title_cfg.get("timeout", 600)
 
     # --- Pre-filter: separate trivially-safe titles from LLM-bound ones ---
     results: list["dict | None"] = [None] * len(batch)

@@ -924,6 +924,66 @@ class TestClampConfidence:
 
 
 # ---------------------------------------------------------------------------
+# _parse_batch_response — trailing comma stripping
+# ---------------------------------------------------------------------------
+
+
+class TestParseBatchResponseTrailingComma:
+    def test_trailing_comma_after_last_item(self):
+        """Trailing comma after last array element — exact pattern seen in live logs."""
+        raw = (
+            '[\n'
+            '  {"index": 0, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok"},\n'
+            '  {"index": 1, "is_clickbait": true, "confidence": 0.9, "reasoning": "bait"},\n'
+            ']'
+        )
+        result = _parse_batch_response(raw, 2)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+        assert result[1]["is_clickbait"] is True
+
+    def test_trailing_comma_inside_object(self):
+        """Trailing comma inside an object (after last key-value pair)."""
+        raw = '[{"index": 0, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok",}]'
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+
+    def test_trailing_comma_both_object_and_array(self):
+        """Trailing comma in both the object and the enclosing array."""
+        raw = (
+            '[\n'
+            '  {"index": 0, "is_clickbait": true, "confidence": 0.85, "reasoning": "bait",},\n'
+            ']'
+        )
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is True
+        assert result[0]["confidence"] == 0.85
+
+    def test_invalid_escape_single_quote(self):
+        """Model emits \\' inside a double-quoted JSON string (seen in live logs)."""
+        raw = (
+            '[{"index": 0, "is_clickbait": false, "confidence": 0.10,'
+            ' "reasoning": "character name G\\\'Kar; no sensational wording"}]'
+        )
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is False
+        assert "G'Kar" in result[0]["reasoning"]
+
+    def test_invalid_escape_other_characters(self):
+        """Model emits other invalid \\X escapes (\\d, \\s, \\j …)."""
+        raw = (
+            '[{"index": 0, "is_clickbait": true, "confidence": 0.85,'
+            ' "reasoning": "uses \\dbait pattern and \\shady wording"}]'
+        )
+        result = _parse_batch_response(raw, 1)
+        assert result is not None
+        assert result[0]["is_clickbait"] is True
+        assert "dbait" in result[0]["reasoning"]
+
+
 # _parse_batch_response — single-quote fallback
 # ---------------------------------------------------------------------------
 

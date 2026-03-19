@@ -24,7 +24,7 @@ video:
                           # 0.75 is the recommended value for llama3.1:8b;
                           # phi3.5 users should use 0.85 to reduce false positives
     ambiguous_low: 0.4    # confidence >= this but < threshold → run next stage
-    timeout: 300          # seconds per batch LLM call (10 titles/call; 90-150s typical on modest hw)
+    timeout: 600          # seconds per Ollama call (batch or individual fallback); increase on slow/busy hw
     prompt: |
       You are a YouTube clickbait detector. Classify the video title below.
 
