@@ -1,4 +1,4 @@
-# config.yaml — yt-dont-recommend timing configuration
+# config.yaml — yt-dont-recommend configuration
 #
 # Copy this file to ~/.yt-dont-recommend/config.yaml and edit.
 # All keys are optional — omitted keys fall back to built-in defaults.
@@ -38,3 +38,57 @@ schedule:
   # Whether scheduled (heartbeat-spawned) runs use --headless.
   # Set to false only if you need to see the browser window during scheduled runs.
   headless: true      # default: true
+
+# Selector overrides — YouTube changes its DOM frequently.
+# If selectors break, run --check-selectors to diagnose, then override here.
+# Only uncomment the selectors you need to change.
+# A future --check-selectors --repair will auto-populate this section.
+#
+# selectors:
+#   # Feed card container (the element that wraps each video in the home feed)
+#   feed_card: "ytd-rich-item-renderer"
+#
+#   # Channel link within a card (extracts @handle or /channel/UCxxx)
+#   channel_link: "a[href^='/@'], a[href^='/channel/UC']"
+#
+#   # Video watch link within a card (extracts video ID)
+#   watch_link: "a[href*='/watch?v=']"
+#
+#   # Title element selectors (tried in order)
+#   title_link:
+#     - "a#video-title-link"
+#     - "a#video-title"
+#     - "h3 a[href*='watch?v=']"
+#
+#   # Title text element (plain text extraction fallback)
+#   title_text: "yt-formatted-string#video-title, #video-title"
+#
+#   # Three-dot menu button selectors (tried in order)
+#   menu_buttons:
+#     - "button[aria-label='More actions']"
+#     - "button[aria-label='Action menu']"
+#
+#   # Menu item container selector
+#   menu_items: "ytd-menu-service-item-renderer, tp-yt-paper-item, ytd-menu-navigation-item-renderer, [role='menuitem']"
+#
+#   # Text phrases for menu item matching (case-insensitive).
+#   # Override for non-English YouTube (e.g. Spanish: "no recomendar el canal").
+#   dont_recommend_phrases:
+#     - "don't recommend"
+#     - "dont recommend"
+#
+#   # "Not interested" phrase (clickbait mode). Override for non-English YouTube.
+#   not_interested_phrase: "not interested"
+#
+#   # Login check selector (notification bell = logged in)
+#   login_check: "#notification-button, ytd-notification-topbar-button-renderer"
+#
+#   # Subscription page channel links
+#   subscription_links: "ytd-channel-renderer a#main-link, ytd-channel-renderer a[href^='/@'], ytd-channel-renderer a[href^='/channel/UC']"
+#
+#   # Channel display name selectors for unblock (tried in order)
+#   channel_name_selectors:
+#     - "ytd-channel-name yt-formatted-string"
+#     - "#channel-name yt-formatted-string"
+#     - "h1 yt-formatted-string"
+#     - "#channel-name a"

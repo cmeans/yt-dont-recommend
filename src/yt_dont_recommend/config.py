@@ -107,6 +107,9 @@ _CRON_MARKER = "# managed by yt-dont-recommend"
 
 # Selectors used both for processing and selector checks.
 # YouTube changes its DOM frequently — run --check-selectors if things break.
+# These module-level constants are the CODE DEFAULTS. Users can override them
+# via the `selectors:` section in config.yaml.  Use get_selectors() to get the
+# merged view (config overrides on top of code defaults).
 VIDEO_SELECTORS = [
     "ytd-rich-item-renderer",
     "ytd-grid-video-renderer",
@@ -126,6 +129,55 @@ MENU_ITEM_SELECTOR = (
     "ytd-menu-navigation-item-renderer, [role='menuitem']"
 )
 TARGET_PHRASES = ("don't recommend", "dont recommend")
+
+# --- Selector registry ---
+# Canonical names for every configurable selector.  get_selectors() merges
+# user overrides from config.yaml on top of these defaults.
+
+_SELECTOR_DEFAULTS: dict[str, str | list[str]] = {
+    # Feed card scanning
+    "feed_card": "ytd-rich-item-renderer",
+    "channel_link": "a[href^='/@'], a[href^='/channel/UC']",
+    "watch_link": "a[href*='/watch?v=']",
+    "title_link": [
+        "a#video-title-link",
+        "a#video-title",
+        "h3 a[href*='watch?v=']",
+    ],
+    "title_text": "yt-formatted-string#video-title, #video-title",
+
+    # Menu interaction
+    "menu_buttons": list(MENU_BTN_SELECTORS),
+    "menu_items": MENU_ITEM_SELECTOR,
+    "not_interested_items": (
+        "ytd-menu-service-item-renderer, tp-yt-paper-item, "
+        "ytd-menu-navigation-item-renderer, [role='menuitem'], "
+        "yt-list-item-view-model"
+    ),
+    "not_interested_inner_btn": "button.yt-list-item-view-model__button-or-anchor",
+
+    # Text phrases (configurable for localization)
+    "dont_recommend_phrases": list(TARGET_PHRASES),
+    "not_interested_phrase": "not interested",
+
+    # Login detection
+    "login_check": "#notification-button, ytd-notification-topbar-button-renderer",
+
+    # Subscription page
+    "subscription_links": (
+        "ytd-channel-renderer a#main-link, "
+        "ytd-channel-renderer a[href^='/@'], "
+        "ytd-channel-renderer a[href^='/channel/UC']"
+    ),
+
+    # Unblock: channel display name resolution
+    "channel_name_selectors": [
+        "ytd-channel-name yt-formatted-string",
+        "#channel-name yt-formatted-string",
+        "h1 yt-formatted-string",
+        "#channel-name a",
+    ],
+}
 
 
 # --- Helpers ---
@@ -240,6 +292,79 @@ def load_schedule_config() -> dict:
         return result
     except Exception:
         return {}
+
+
+def load_selectors_config() -> dict:
+    """Load selector overrides from the ``selectors:`` section of config.yaml.
+
+    Returns a dict whose keys match ``_SELECTOR_DEFAULTS``.  Only keys
+    present in the file are returned; missing keys fall back to the code
+    defaults when merged by ``get_selectors()``.
+
+    Returns an empty dict if config.yaml is absent, unparseable, pyyaml
+    is not installed, or the ``selectors:`` section is missing.
+    """
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        sels = data.get("selectors", {})
+        if not isinstance(sels, dict):
+            return {}
+        # Only accept keys we know about.
+        result: dict = {}
+        for key, default_val in _SELECTOR_DEFAULTS.items():
+            if key not in sels:
+                continue
+            val = sels[key]
+            # Type-check: lists stay lists, strings stay strings.
+            if isinstance(default_val, list):
+                if isinstance(val, list):
+                    result[key] = val
+                elif isinstance(val, str):
+                    result[key] = [val]  # convenience: single string → one-item list
+                else:
+                    continue  # skip invalid types silently
+            else:
+                if isinstance(val, str):
+                    result[key] = val
+                elif isinstance(val, list):
+                    result[key] = ", ".join(str(v) for v in val)
+                else:
+                    continue
+        # Warn about unrecognised keys.
+        unknown = set(sels.keys()) - set(_SELECTOR_DEFAULTS.keys()) - {"selectors_updated_at"}
+        if unknown:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "config.yaml selectors: unrecognised keys ignored: %s", ", ".join(sorted(unknown))
+            )
+        return result
+    except Exception:
+        return {}
+
+
+def get_selectors() -> dict[str, str | list[str]]:
+    """Return the merged selector config: code defaults + user overrides.
+
+    Call this once at the start of a run and pass the result through to
+    functions that need selectors.  Do NOT cache across runs — the user may
+    edit config.yaml between runs.
+    """
+    merged = dict(_SELECTOR_DEFAULTS)
+    overrides = load_selectors_config()
+    if overrides:
+        merged.update(overrides)
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "Selector overrides loaded from config.yaml: %s",
+            ", ".join(sorted(overrides.keys())),
+        )
+    return merged
 
 
 def _n(count: int, word: str) -> str:

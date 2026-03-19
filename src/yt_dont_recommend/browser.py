@@ -36,6 +36,7 @@ from .config import (
     pick_viewport,
     DEFAULT_SESSION_CAP,
     load_timing_config,
+    get_selectors,
 )
 from .unblock import _perform_browser_unblocks, _pending_attempted_this_run
 
@@ -375,9 +376,9 @@ def _extract_feed_videos_from_json(page: Any) -> dict:
         return {}
 
 
-def _find_menu_btn(card: Any) -> Any:
+def _find_menu_btn(card: Any, sels: dict) -> Any:
     """Find the 'More actions' menu button within a feed card. Returns element or None."""
-    for sel in MENU_BTN_SELECTORS:
+    for sel in sels["menu_buttons"]:
         btn = card.query_selector(sel)
         if btn:
             return btn
@@ -389,15 +390,7 @@ def _find_menu_btn(card: Any) -> Any:
     return None
 
 
-_NOT_INTERESTED_PHRASE = "not interested"
-_NOT_INTERESTED_ITEM_SELECTOR = (
-    "ytd-menu-service-item-renderer, tp-yt-paper-item, "
-    "ytd-menu-navigation-item-renderer, [role='menuitem'], "
-    "yt-list-item-view-model"
-)
-
-
-def _click_not_interested(page: Any, card: Any) -> bool:
+def _click_not_interested(page: Any, card: Any, sels: dict) -> bool:
     """
     Click 'Not interested' on a home feed video card.
 
@@ -411,7 +404,7 @@ def _click_not_interested(page: Any, card: Any) -> bool:
     card.hover()
     time.sleep(random.uniform(0.3, 0.7))
 
-    menu_btn = _find_menu_btn(card)
+    menu_btn = _find_menu_btn(card, sels)
     if not menu_btn:
         log.debug("Could not find menu button on feed card (Not interested)")
         return False
@@ -420,12 +413,13 @@ def _click_not_interested(page: Any, card: Any) -> bool:
     time.sleep(random.uniform(0.7, 1.5))
 
     target_item = None
-    for item in page.query_selector_all(_NOT_INTERESTED_ITEM_SELECTOR):
+    ni_phrase = sels["not_interested_phrase"]
+    for item in page.query_selector_all(sels["not_interested_items"]):
         try:
             text = (item.inner_text() or "").strip().lower()
         except Exception:
             text = (item.evaluate("el => el.textContent") or "").strip().lower()
-        if _NOT_INTERESTED_PHRASE in text:
+        if ni_phrase in text:
             target_item = item
             break
 
@@ -434,7 +428,7 @@ def _click_not_interested(page: Any, card: Any) -> bool:
         return False
 
     # New YouTube UI wraps the action in a button inside the list item
-    btn = target_item.query_selector("button.yt-list-item-view-model__button-or-anchor")
+    btn = target_item.query_selector(sels["not_interested_inner_btn"])
     if btn:
         btn.click()
     else:
@@ -443,7 +437,7 @@ def _click_not_interested(page: Any, card: Any) -> bool:
     return True
 
 
-def _click_dont_recommend(page: Any, card: Any) -> bool:
+def _click_dont_recommend(page: Any, card: Any, sels: dict) -> bool:
     """
     Click 'Don't recommend channel' on a home feed card.
 
@@ -457,7 +451,7 @@ def _click_dont_recommend(page: Any, card: Any) -> bool:
     card.hover()
     time.sleep(random.uniform(0.3, 0.7))
 
-    menu_btn = _find_menu_btn(card)
+    menu_btn = _find_menu_btn(card, sels)
     if not menu_btn:
         log.debug("Could not find menu button on feed card")
         return False
@@ -466,9 +460,10 @@ def _click_dont_recommend(page: Any, card: Any) -> bool:
     time.sleep(random.uniform(0.7, 1.5))
 
     target_item = None
-    for item in page.query_selector_all(MENU_ITEM_SELECTOR):
+    dr_phrases = sels["dont_recommend_phrases"]
+    for item in page.query_selector_all(sels["menu_items"]):
         text = (item.inner_text() or "").strip().lower()
-        if any(p in text for p in TARGET_PHRASES):
+        if any(p in text for p in dr_phrases):
             target_item = item
             break
 
@@ -481,7 +476,7 @@ def _click_dont_recommend(page: Any, card: Any) -> bool:
     return True
 
 
-def fetch_subscriptions(page: Any) -> set[str]:
+def fetch_subscriptions(page: Any, sels: dict | None = None) -> set[str]:
     """
     Scrape the YouTube subscriptions management page and return a set of
     lowercased canonical channel IDs (@handle or UCxxx).
@@ -489,6 +484,8 @@ def fetch_subscriptions(page: Any) -> set[str]:
     Returns an empty set if the page cannot be parsed, with a warning logged.
     """
     pkg = _pkg()
+    if sels is None:
+        sels = get_selectors()
 
     log.info("Fetching subscriptions list...")
     page.goto("https://www.youtube.com/feed/channels", wait_until="domcontentloaded", timeout=60000)
@@ -499,11 +496,7 @@ def fetch_subscriptions(page: Any) -> set[str]:
     max_scrolls = 50
 
     for _ in range(max_scrolls):
-        links = page.query_selector_all(
-            "ytd-channel-renderer a#main-link, "
-            "ytd-channel-renderer a[href^='/@'], "
-            "ytd-channel-renderer a[href^='/channel/UC']"
-        )
+        links = page.query_selector_all(sels["subscription_links"])
         for link in links:
             href = (link.get_attribute("href") or "").split("?")[0].rstrip("/")
             if href.startswith("/@"):
@@ -605,7 +598,7 @@ def _resolve_ucxxx_to_handles(page: Any, channels: list[str], state: dict) -> li
     return result
 
 
-def open_browser(headless: bool = False) -> tuple | None:
+def open_browser(headless: bool = False, sels: dict | None = None) -> tuple | None:
     """Open a persistent Chromium browser and verify the YouTube login session.
 
     Returns (playwright_cm, context, page) on success, or None if not logged in
@@ -615,6 +608,8 @@ def open_browser(headless: bool = False) -> tuple | None:
     """
     from playwright.sync_api import sync_playwright
     pkg = _pkg()
+    if sels is None:
+        sels = get_selectors()
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     pw_cm = sync_playwright()
@@ -636,7 +631,7 @@ def open_browser(headless: bool = False) -> tuple | None:
 
     # button#avatar-btn exists on both logged-in and logged-out pages.
     # The notification bell only appears when a Google account is active.
-    avatar = page.query_selector("#notification-button, ytd-notification-topbar-button-renderer")
+    avatar = page.query_selector(sels["login_check"])
     if not avatar:
         pkg.write_attention("Not logged in — session may have expired. Run: yt-dont-recommend --login")
         context.close()
@@ -677,6 +672,7 @@ def process_channels(channel_sources: dict[str, str],
     processed in a single pass — no redundant scrolling.
     """
     pkg = _pkg()
+    sels = get_selectors()
 
     MAX_NO_PROGRESS_SCROLLS = 20
 
@@ -708,7 +704,7 @@ def process_channels(channel_sources: dict[str, str],
     _own_browser = _browser is None
     _pw_cm = None
     if _own_browser:
-        handle = open_browser(headless=headless)
+        handle = open_browser(headless=headless, sels=sels)
         if handle is None:
             return  # write_attention already called by open_browser
         _pw_cm, context, page = handle
@@ -719,7 +715,7 @@ def process_channels(channel_sources: dict[str, str],
         # Reverse any blocks on YouTube before scanning for new ones
         if to_unblock and not dry_run:
             _pending_attempted_this_run.update(to_unblock)
-            successfully_unblocked = _perform_browser_unblocks(page, to_unblock, state)
+            successfully_unblocked = _perform_browser_unblocks(page, to_unblock, state, sels=sels)
             pending_unblock = state.setdefault("pending_unblock", {})
             for ch in successfully_unblocked:
                 pending_unblock.pop(ch, None)
@@ -730,7 +726,7 @@ def process_channels(channel_sources: dict[str, str],
         if not channel_sources and clickbait_cfg is None:
             return
 
-        subscriptions = fetch_subscriptions(page) if channel_sources else set()
+        subscriptions = fetch_subscriptions(page, sels=sels) if channel_sources else set()
 
         # Resolve any UCxxx IDs to @handles and preserve source attribution.
         # Modern feed cards only expose @handle links, so UCxxx entries won't
@@ -831,9 +827,7 @@ def process_channels(channel_sources: dict[str, str],
             if no_progress_scrolls >= MAX_NO_PROGRESS_SCROLLS:
                 # Before reporting feed exhaustion, re-check login: an expired
                 # session shows zero cards and is indistinguishable from a quiet feed.
-                still_logged_in = page.query_selector(
-                    "#notification-button, ytd-notification-topbar-button-renderer"
-                )
+                still_logged_in = page.query_selector(sels["login_check"])
                 if not still_logged_in:
                     pkg.write_attention(
                         "Session expired mid-run — run yt-dont-recommend --login to restore."
@@ -844,7 +838,7 @@ def process_channels(channel_sources: dict[str, str],
                     )
                 break
 
-            cards = page.query_selector_all("ytd-rich-item-renderer")
+            cards = page.query_selector_all(sels["feed_card"])
             found_match_this_pass = False
             pass_parseable = 0
 
@@ -857,7 +851,7 @@ def process_channels(channel_sources: dict[str, str],
                 if limit and (blocked_count + clickbait_count) >= limit:
                     break
 
-                channel_link = card.query_selector("a[href^='/@'], a[href^='/channel/UC']")
+                channel_link = card.query_selector(sels["channel_link"])
                 path: str | None = None
                 _video_id_for_json: str | None = None
 
@@ -872,7 +866,7 @@ def process_channels(channel_sources: dict[str, str],
 
                 # Resolve the video ID for JSON cache lookups (used both as
                 # channel-handle source and for title extraction below).
-                watch_link = card.query_selector("a[href*='/watch?v=']")
+                watch_link = card.query_selector(sels["watch_link"])
                 if watch_link:
                     watch_href = watch_link.get_attribute("href") or ""
                     _m = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", watch_href)
@@ -949,11 +943,11 @@ def process_channels(channel_sources: dict[str, str],
                     video_id = _video_id_for_json
                     if not video_id:
                         # No watch link at all — try title element as a last resort for the ID.
-                        _title_el = (
-                            card.query_selector("a#video-title-link")
-                            or card.query_selector("a#video-title")
-                            or card.query_selector("h3 a[href*='watch?v=']")
-                        )
+                        _title_el = None
+                        for _tl_sel in sels["title_link"]:
+                            _title_el = card.query_selector(_tl_sel)
+                            if _title_el:
+                                break
                         if _title_el:
                             vid_href = _title_el.get_attribute("href") or ""
                             _vm = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', vid_href)
@@ -972,16 +966,16 @@ def process_channels(channel_sources: dict[str, str],
                     else:
                         if _json_videos:
                             log.debug(f"clickbait: {path}/{video_id} — not in feed JSON cache, falling back to DOM")
-                        _title_el = (
-                            card.query_selector("a#video-title-link")
-                            or card.query_selector("a#video-title")
-                            or card.query_selector("h3 a[href*='watch?v=']")
-                        )
+                        _title_el = None
+                        for _tl_sel in sels["title_link"]:
+                            _title_el = card.query_selector(_tl_sel)
+                            if _title_el:
+                                break
                         video_title = None
                         if _title_el:
                             video_title = _title_el.get_attribute("title") or None
                             if not video_title:
-                                _text_el = card.query_selector("yt-formatted-string#video-title, #video-title")
+                                _text_el = card.query_selector(sels["title_text"])
                                 if _text_el:
                                     video_title = _text_el.inner_text().strip() or None
                             if not video_title:
@@ -1017,7 +1011,7 @@ def process_channels(channel_sources: dict[str, str],
                 else:
                     log.info(f"Found in feed: {canonical} — blocking...")
                     try:
-                        success = _click_dont_recommend(page, card)
+                        success = _click_dont_recommend(page, card, sels)
                     except Exception as e:
                         log.error(f"FAIL {canonical}: {e}")
                         state["stats"]["total_failed"] += 1
@@ -1133,7 +1127,7 @@ def process_channels(channel_sources: dict[str, str],
                         _clickbait_evaluated.add(path.lower())
                     else:
                         try:
-                            success = _click_not_interested(page, card)
+                            success = _click_not_interested(page, card, sels)
                         except Exception as e:
                             log.error(f"FAIL clickbait {path}: {e}")
                             _clickbait_evaluated.add(path.lower())
