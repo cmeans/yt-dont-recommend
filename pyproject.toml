@@ -16,12 +16,13 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/cmeans/yt-dont-recommend"
 "Bug Tracker" = "https://github.com/cmeans/yt-dont-recommend/issues"
-Changelog = "https://github.com/cmeans/yt-dont-recommend/releases"
+Changelog = "https://github.com/cmeans/yt-dont-recommend/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
     "pytest",
     "pyyaml",
+    "ruff",
 ]
 clickbait = [
     "ollama",
@@ -34,3 +35,29 @@ yt-dont-recommend = "yt_dont_recommend.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/yt_dont_recommend"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",   # line too long — handled by formatter if we adopt it later
+]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py re-exports names for the _pkg() late-import pattern.
+"src/yt_dont_recommend/__init__.py" = ["F401", "E402"]
+# Sub-modules use late imports to avoid circular dependencies.
+"src/yt_dont_recommend/blocklist.py" = ["E402"]
+"src/yt_dont_recommend/browser.py" = ["E402"]
+"src/yt_dont_recommend/clickbait.py" = ["E402"]
+"src/yt_dont_recommend/diagnostics.py" = ["E402"]
+"src/yt_dont_recommend/unblock.py" = ["E402"]
+"src/yt_dont_recommend/scheduler.py" = ["E402"]
+"src/yt_dont_recommend/cli.py" = ["E402"]
+"src/yt_dont_recommend/state.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["yt_dont_recommend"]

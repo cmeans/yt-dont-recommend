@@ -7,18 +7,11 @@ as they did in the original test_yt_dont_recommend.py.
 """
 
 import json
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import yt_dont_recommend as ydr
-from yt_dont_recommend.blocklist import (
-    parse_text_blocklist,
-    parse_json_blocklist,
-    channel_to_url,
-    resolve_source,
-    check_removals,
-)
 
 # Canonical channel IDs used in tests (no leading /).
 # When a test needs to exercise the /@ or /channel/ prefix normalization path,
@@ -445,7 +438,6 @@ class TestPerSourceStats:
         assert "grew by 15" in caplog.text
 
     def test_no_growth_message_when_same_size(self, tmp_path, monkeypatch, caplog):
-        import logging
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
         state["source_sizes"]["deslop"] = 100

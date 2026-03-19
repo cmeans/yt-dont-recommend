@@ -19,26 +19,22 @@ from pathlib import Path
 from typing import Any
 
 from .config import (
-    PROFILE_DIR,
-    PAGE_LOAD_WAIT,
-    MIN_DELAY,
-    MAX_DELAY,
+    ATTENTION_FILE,
+    DEFAULT_SESSION_CAP,
     LONG_PAUSE_EVERY,
     LONG_PAUSE_SECONDS,
+    MAX_DELAY,
     MIN_CARDS_FOR_SELECTOR_CHECK,
+    MIN_DELAY,
+    PAGE_LOAD_WAIT,
+    PROFILE_DIR,
     SELECTOR_WARN_AFTER,
-    ATTENTION_FILE,
-    VIDEO_SELECTORS,
-    MENU_BTN_SELECTORS,
-    MENU_ITEM_SELECTOR,
-    TARGET_PHRASES,
     _n,
-    pick_viewport,
-    DEFAULT_SESSION_CAP,
-    load_timing_config,
     get_selectors,
+    load_timing_config,
+    pick_viewport,
 )
-from .unblock import _perform_browser_unblocks, _pending_attempted_this_run
+from .unblock import _pending_attempted_this_run, _perform_browser_unblocks
 
 log = logging.getLogger(__name__)
 
@@ -754,9 +750,13 @@ def process_channels(channel_sources: dict[str, str],
         _classify_transcript = None
         if clickbait_cfg is not None:
             try:
+                from .clickbait import (
+                    classify_thumbnail as _classify_thumbnail,
+                )
                 from .clickbait import (  # type: ignore[assignment]
                     classify_titles_batch as _classify_titles_batch,
-                    classify_thumbnail as _classify_thumbnail,
+                )
+                from .clickbait import (
                     classify_transcript as _classify_transcript,
                 )
             except ImportError:

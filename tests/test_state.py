@@ -8,13 +8,9 @@ as they did in the original test_yt_dont_recommend.py.
 
 import json
 import logging
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 
 import yt_dont_recommend as ydr
-from yt_dont_recommend.state import load_state, save_state
-
 
 # ---------------------------------------------------------------------------
 # State management (load_state / save_state)
@@ -146,7 +142,7 @@ class TestVersionChecking:
         assert saved["state_version"] == ydr.STATE_VERSION
 
     def test_state_version_warn_on_newer_schema(self, tmp_path, monkeypatch, caplog):
-        import json, logging
+        import json
         state_file = tmp_path / "processed.json"
         monkeypatch.setattr(ydr, "STATE_FILE", state_file)
         # Write a state file with a future schema version
@@ -156,7 +152,7 @@ class TestVersionChecking:
         assert any("newer version" in r.message for r in caplog.records)
 
     def test_state_version_no_warn_on_same_or_older_schema(self, tmp_path, monkeypatch, caplog):
-        import json, logging
+        import json
         state_file = tmp_path / "processed.json"
         monkeypatch.setattr(ydr, "STATE_FILE", state_file)
         state_file.write_text(json.dumps({"state_version": ydr.STATE_VERSION}))

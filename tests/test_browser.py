@@ -11,17 +11,15 @@ Functions under test are imported directly from yt_dont_recommend, but
 patch targets that live in cli.py must be patched as yt_dont_recommend.cli.X.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
 import yt_dont_recommend as ydr
 import yt_dont_recommend.unblock as unblock_mod
 from yt_dont_recommend.browser import process_channels
 from yt_dont_recommend.unblock import (
-    _perform_browser_unblocks,
     _MAX_DISPLAY_NAME_RETRIES,
+    _perform_browser_unblocks,
 )
-
 
 # ---------------------------------------------------------------------------
 # First-run welcome and --uninstall
@@ -227,7 +225,7 @@ class TestPerformBrowserUnblocks:
         state["pending_unblock"]["@ghost"]["_retry_count"] = _MAX_DISPLAY_NAME_RETRIES - 2
         page = _make_page(display_name_on_page=None)
 
-        result = _perform_browser_unblocks(page, ["@ghost"], state)
+        _perform_browser_unblocks(page, ["@ghost"], state)
 
         assert "@ghost" in state["pending_unblock"]
         assert state["pending_unblock"]["@ghost"]["_retry_count"] == _MAX_DISPLAY_NAME_RETRIES - 1

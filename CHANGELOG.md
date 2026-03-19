@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Ruff linting**: integrated ruff for code quality enforcement. Added to CI pipeline (runs before tests on every push/PR). All existing issues fixed.
+- Ruff config in `pyproject.toml` with per-file ignores for intentional patterns (late imports, re-exports).
+
+### Fixed
+- Removed unused imports (`VIDEO_SELECTORS`, `MENU_BTN_SELECTORS`, `MENU_ITEM_SELECTOR`, `TARGET_PHRASES`) left over from the selector registry refactor in browser.py.
+- Fixed ambiguous variable names (`l` → `line`) in scheduler.py.
+- Fixed f-strings with no placeholders, unused test variables, unsorted imports.
+
 ## [0.4.1] - 2026-03-19
 
 ### Fixed

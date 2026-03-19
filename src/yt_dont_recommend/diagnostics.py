@@ -15,8 +15,8 @@ from urllib.parse import quote
 log = logging.getLogger(__name__)
 
 from .config import (
-    PROFILE_DIR,
     PAGE_LOAD_WAIT,
+    PROFILE_DIR,
     get_selectors,
 )
 
@@ -49,6 +49,7 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     Returns True if the target option was found (exit code 0), False otherwise (exit code 1).
     """
     from playwright.sync_api import sync_playwright
+
     from .config import VIDEO_SELECTORS
 
     sels = get_selectors()

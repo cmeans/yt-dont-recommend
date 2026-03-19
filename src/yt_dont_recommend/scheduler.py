@@ -53,21 +53,20 @@ Key behaviours
 """
 
 import json
+import logging
 import random
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import logging
-
 from .config import (
-    LOG_FILE,
-    SCHEDULE_FILE,
-    ATTENTION_FILE,
+    _CRON_MARKER,
     _LAUNCHD_LABEL,
     _LAUNCHD_PLIST,
-    _CRON_MARKER,
+    ATTENTION_FILE,
+    LOG_FILE,
+    SCHEDULE_FILE,
 )
 
 log = logging.getLogger(__name__)
@@ -301,7 +300,7 @@ def _schedule_macos(action: str, bin_path: str, schedule: dict) -> None:
         )
         print(f"Installed:  {plist_path}")
         print(f"Status:     {status}")
-        print(f"Heartbeat:  every minute")
+        print("Heartbeat:  every minute")
         if sched:
             print(f"Modes:      {_modes_summary(sched)}")
             print(f"Headless:   {'yes' if sched.get('headless', True) else 'no'}")
@@ -337,7 +336,7 @@ def _schedule_macos(action: str, bin_path: str, schedule: dict) -> None:
         plistlib.dump(plist, f)
     subprocess.run(["launchctl", "load", str(plist_path)], check=True)
     save_schedule(schedule)
-    print(f"Schedule installed. Heartbeat: every minute.")
+    print("Schedule installed. Heartbeat: every minute.")
     print(f"Modes:      {_modes_summary(schedule)}")
     print(f"Plist:      {plist_path}")
     print(f"Logs:       {LOG_FILE}")
@@ -355,16 +354,16 @@ def _schedule_linux(action: str, bin_path: str, schedule: dict) -> None:
     """
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     existing = result.stdout.splitlines() if result.returncode == 0 else []
-    managed  = [l for l in existing if _CRON_MARKER in l]
-    other    = [l for l in existing if _CRON_MARKER not in l]
+    managed  = [line for line in existing if _CRON_MARKER in line]
+    other    = [line for line in existing if _CRON_MARKER not in line]
 
     if action == "status":
         if not managed:
             print("No schedule installed.")
             return
         sched = load_schedule()
-        print(f"Installed:  crontab entry present")
-        print(f"Heartbeat:  every minute")
+        print("Installed:  crontab entry present")
+        print("Heartbeat:  every minute")
         if sched:
             print(f"Modes:      {_modes_summary(sched)}")
             print(f"Headless:   {'yes' if sched.get('headless', True) else 'no'}")
@@ -375,7 +374,7 @@ def _schedule_linux(action: str, bin_path: str, schedule: dict) -> None:
         if not managed:
             print("No schedule to remove.")
             return
-        new_crontab = "\n".join(l for l in other if l.strip())
+        new_crontab = "\n".join(line for line in other if line.strip())
         if new_crontab and not new_crontab.endswith("\n"):
             new_crontab += "\n"
         subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
@@ -389,11 +388,11 @@ def _schedule_linux(action: str, bin_path: str, schedule: dict) -> None:
     cron_line = (
         f"* * * * * {bin_path} --heartbeat >> /dev/null 2>&1  {_CRON_MARKER}"
     )
-    new_lines   = [l for l in other if l.strip()] + [cron_line]
+    new_lines   = [line for line in other if line.strip()] + [cron_line]
     new_crontab = "\n".join(new_lines) + "\n"
     subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
     save_schedule(schedule)
-    print(f"Schedule installed. Heartbeat: every minute.")
+    print("Schedule installed. Heartbeat: every minute.")
     print(f"Modes:      {_modes_summary(schedule)}")
     print(f"Entry:      {cron_line}")
     print(f"Logs:       {LOG_FILE}")

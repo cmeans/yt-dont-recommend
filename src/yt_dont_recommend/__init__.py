@@ -54,91 +54,90 @@ import logging
 log = logging.getLogger(__name__)
 
 # --- Re-exports from config ---
-from .config import (
-    BUILTIN_SOURCES,
-    DEFAULT_SOURCES,
-    PROFILE_DIR,
-    STATE_FILE,
-    LOG_FILE,
-    SCHEDULE_FILE,
-    DEFAULT_BLOCKLIST_EXCLUDE_FILE,
-    DEFAULT_CLICKBAIT_EXCLUDE_FILE,
-    _LEGACY_EXCLUDE_FILE,
-    MIN_DELAY,
-    MAX_DELAY,
-    PAGE_LOAD_WAIT,
-    LONG_PAUSE_EVERY,
-    LONG_PAUSE_SECONDS,
-    MIN_CARDS_FOR_SELECTOR_CHECK,
-    SELECTOR_WARN_AFTER,
-    ATTENTION_FILE,
-    __version__,
-    VERSION_CHECK_INTERVAL,
-    STATE_VERSION,
-    VIDEO_SELECTORS,
-    MENU_BTN_SELECTORS,
-    MENU_ITEM_SELECTOR,
-    TARGET_PHRASES,
-    _SELECTOR_DEFAULTS,
-    load_selectors_config,
-    get_selectors,
-    _LAUNCHD_LABEL,
-    _LAUNCHD_PLIST,
-    _CRON_MARKER,
-    setup_logging,
-    load_schedule_config,
-    _n,
-)
-
-# --- Re-exports from state ---
-from .state import (
-    _had_attention,
-    load_state,
-    save_state,
-    _desktop_notify,
-    _ntfy_notify,
-    write_attention,
-    check_attention_flag,
-)
-
 # --- Re-exports from blocklist ---
 from .blocklist import (
-    parse_text_blocklist,
-    parse_json_blocklist,
-    fetch_remote,
-    resolve_source,
     channel_to_url,
     check_removals,
-)
-
-# --- Re-exports from scheduler ---
-from .scheduler import (
-    load_schedule,
-    save_schedule,
-    _compute_daily_plan,
-    heartbeat,
-    _find_installed_binary,
-    _schedule_macos,
-    _schedule_linux,
-    schedule_cmd,
+    fetch_remote,
+    parse_json_blocklist,
+    parse_text_blocklist,
+    resolve_source,
 )
 
 # --- Re-exports from cli ---
 from .cli import (
+    _clickbait_install_cmd,
+    _detect_installer,
+    _first_run_welcome,
     _get_current_version,
     _get_latest_pypi_version,
     _version_tuple,
-    _detect_installer,
     check_for_update,
     do_auto_upgrade,
     do_revert,
-    setup_notify,
-    remove_notify,
-    test_notify,
-    _first_run_welcome,
     do_uninstall,
-    _clickbait_install_cmd,
     main,
+    remove_notify,
+    setup_notify,
+    test_notify,
+)
+from .config import (
+    _CRON_MARKER,
+    _LAUNCHD_LABEL,
+    _LAUNCHD_PLIST,
+    _LEGACY_EXCLUDE_FILE,
+    _SELECTOR_DEFAULTS,
+    ATTENTION_FILE,
+    BUILTIN_SOURCES,
+    DEFAULT_BLOCKLIST_EXCLUDE_FILE,
+    DEFAULT_CLICKBAIT_EXCLUDE_FILE,
+    DEFAULT_SOURCES,
+    LOG_FILE,
+    LONG_PAUSE_EVERY,
+    LONG_PAUSE_SECONDS,
+    MAX_DELAY,
+    MENU_BTN_SELECTORS,
+    MENU_ITEM_SELECTOR,
+    MIN_CARDS_FOR_SELECTOR_CHECK,
+    MIN_DELAY,
+    PAGE_LOAD_WAIT,
+    PROFILE_DIR,
+    SCHEDULE_FILE,
+    SELECTOR_WARN_AFTER,
+    STATE_FILE,
+    STATE_VERSION,
+    TARGET_PHRASES,
+    VERSION_CHECK_INTERVAL,
+    VIDEO_SELECTORS,
+    __version__,
+    _n,
+    get_selectors,
+    load_schedule_config,
+    load_selectors_config,
+    setup_logging,
+)
+
+# --- Re-exports from scheduler ---
+from .scheduler import (
+    _compute_daily_plan,
+    _find_installed_binary,
+    _schedule_linux,
+    _schedule_macos,
+    heartbeat,
+    load_schedule,
+    save_schedule,
+    schedule_cmd,
+)
+
+# --- Re-exports from state ---
+from .state import (
+    _desktop_notify,
+    _had_attention,
+    _ntfy_notify,
+    check_attention_flag,
+    load_state,
+    save_state,
+    write_attention,
 )
 
 # --- Browser automation thin wrappers ---
