@@ -194,15 +194,25 @@ def heartbeat() -> None:
     if not due_modes:
         return
 
-    # Mark as executed before spawning (prevents double-fire on slow spawn)
+    # Mark all past-due unexecuted slots as executed before spawning.
+    # Coalescing protects against the catch-up storm where a machine wakes
+    # from sleep with N past-due slots and fires N spawns on N consecutive
+    # heartbeats (issue #17). One heartbeat → one spawn, regardless of how
+    # many stale slots accumulated.
     for mode in due_modes:
         mode_plan = today_plan.setdefault(mode, {})
         planned   = mode_plan.get("planned_utc", [])
         executed  = mode_plan.setdefault("executed_utc", [])
+        coalesced = []
         for t in planned:
             if t <= now_hhmm and t not in executed:
                 executed.append(t)
-                break
+                coalesced.append(t)
+        if len(coalesced) > 1:
+            log.info(
+                "Catching up %s: coalesced %d stale slots (%s) into one run",
+                mode, len(coalesced), ", ".join(coalesced),
+            )
     save_schedule(schedule)
 
     # Build and spawn — due modes combined into one invocation

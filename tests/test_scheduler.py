@@ -273,6 +273,90 @@ class TestHeartbeat:
                 heartbeat()
         assert len(spawned) == 1, "heartbeat must spawn when no attention flag"
 
+    def test_multi_stale_slots_no_consecutive_spawn_storm(self, tmp_path, monkeypatch):
+        """Catch-up scenario: machine wakes with 3 past-due slots, then
+        cron fires heartbeat on 3 consecutive minutes. Expect a single spawn
+        total, not one per tick (the catch-up storm bug from issue #17)."""
+        sf = tmp_path / "schedule.json"
+        monkeypatch.setattr("yt_dont_recommend.scheduler.SCHEDULE_FILE", sf)
+        save_schedule(self._make_schedule(
+            "2026-03-11", ["03:17", "09:45", "15:22"]
+        ))
+
+        spawned = []
+        tick_times = ["15:30", "15:31", "15:32"]
+        with patch("yt_dont_recommend.scheduler.subprocess.Popen",
+                   side_effect=lambda cmd: spawned.append(cmd)):
+            for hhmm in tick_times:
+                with patch("yt_dont_recommend.scheduler.datetime") as mock_dt:
+                    mock_dt.now.return_value = self._mock_now("2026-03-11", hhmm)
+                    heartbeat()
+
+        assert len(spawned) == 1, (
+            f"expected 1 spawn after 3 consecutive heartbeats, got {len(spawned)} "
+            "(catch-up storm — issue #17)"
+        )
+
+    def test_multi_stale_slots_all_marked_executed(self, tmp_path, monkeypatch):
+        """All past-due slots must land in executed_utc after one heartbeat."""
+        sf = tmp_path / "schedule.json"
+        monkeypatch.setattr("yt_dont_recommend.scheduler.SCHEDULE_FILE", sf)
+        save_schedule(self._make_schedule(
+            "2026-03-11", ["03:17", "09:45", "15:22"]
+        ))
+
+        with patch("yt_dont_recommend.scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value = self._mock_now("2026-03-11", "15:30")
+            with patch("yt_dont_recommend.scheduler.subprocess.Popen"):
+                heartbeat()
+
+        executed = load_schedule()["today"]["blocklist"]["executed_utc"]
+        assert set(executed) == {"03:17", "09:45", "15:22"}, (
+            f"expected all 3 past-due slots marked executed, got {executed}"
+        )
+
+    def test_multi_stale_slots_coalesce_across_modes(self, tmp_path, monkeypatch):
+        """Both modes with multiple stale slots: still exactly one spawn."""
+        sf = tmp_path / "schedule.json"
+        monkeypatch.setattr("yt_dont_recommend.scheduler.SCHEDULE_FILE", sf)
+        schedule = {
+            "modes": {
+                "blocklist": {"runs_per_day": 2},
+                "clickbait": {"runs_per_day": 4},
+            },
+            "headless": True,
+            "today": {
+                "date": "2026-03-11",
+                "blocklist": {
+                    "planned_utc":  ["03:17", "15:22"],
+                    "executed_utc": [],
+                },
+                "clickbait": {
+                    "planned_utc":  ["01:00", "07:30", "13:00"],
+                    "executed_utc": [],
+                },
+            },
+        }
+        save_schedule(schedule)
+
+        spawned = []
+        with patch("yt_dont_recommend.scheduler.datetime") as mock_dt:
+            mock_dt.now.return_value = self._mock_now("2026-03-11", "15:30")
+            with patch("yt_dont_recommend.scheduler.subprocess.Popen",
+                       side_effect=lambda cmd: spawned.append(cmd)):
+                heartbeat()
+
+        assert len(spawned) == 1
+        assert "--blocklist" in spawned[0]
+        assert "--clickbait" in spawned[0]
+        updated = load_schedule()
+        assert set(updated["today"]["blocklist"]["executed_utc"]) == {
+            "03:17", "15:22",
+        }
+        assert set(updated["today"]["clickbait"]["executed_utc"]) == {
+            "01:00", "07:30", "13:00",
+        }
+
 
 # ---------------------------------------------------------------------------
 # _schedule_linux
