@@ -1,0 +1,27 @@
+name: Sync Labels
+
+# Syncs GitHub labels from .github/labels.yml (source of truth).
+# Runs on push to main that modifies the label file, or on-demand.
+# delete-other-labels is false, so ad-hoc UI labels are preserved; flip
+# it to true once the label set in labels.yml is truly canonical.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+      - ".github/workflows/sync-labels.yml"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EndBug/label-sync@v2
+        with:
+          config-file: .github/labels.yml
+          delete-other-labels: false
