@@ -18,8 +18,8 @@ State machine (typical PR life cycle):
 2. **Awaiting CI** — applied automatically on PR open/push. Waits for CI to complete.
 3. **Ready for QA** — applied automatically once CI passes (and `Dev Active` is not set). QA can now review.
 4. **QA Active** — QA sets this while actively reviewing. Dev must not push during this window; any new push resets to `Awaiting CI` and comments to notify.
-5. **QA Approved** / **QA Failed** — QA's verdict. `QA Failed` sends it back to dev.
-6. **Ready for QA Signoff** — final maintainer review, then merge.
+5. **Ready for QA Signoff** / **QA Failed** — QA's verdict. `Ready for QA Signoff` = pass (QA's active status clears automatically); `QA Failed` sends it back to dev.
+6. **QA Approved** — maintainer's final approval. Satisfies the `QA Gate` status check and makes the PR mergeable. Replaces `Ready for QA Signoff`.
 7. **CI Failed** — applied automatically when CI fails. Dev fixes → new push resets to `Awaiting CI`.
 
 Other labels:
