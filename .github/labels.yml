@@ -11,6 +11,26 @@
 #   * The sync workflow is configured with delete-other-labels: false, so
 #     ad-hoc labels added through the UI are preserved. Delete them manually
 #     (or flip the flag) once canonicalisation is desired.
+#
+# First-time bootstrap (chicken-and-egg):
+#   sync-labels.yml only runs on push to main, so the QA-workflow labels
+#   don't exist on a brand-new repo when pr-labels.yml first tries to use
+#   them — the on-push job will fail with "could not add label". To avoid
+#   this, bootstrap the labels before merging the PR that introduces
+#   these workflows:
+#
+#     gh auth status >/dev/null
+#     python -c "
+#     import yaml, subprocess
+#     for lbl in yaml.safe_load(open('.github/labels.yml')):
+#         subprocess.run(['gh','label','create',lbl['name'],
+#             '--repo','OWNER/REPO',
+#             '--color',lbl['color'],
+#             '--description',lbl.get('description',''),
+#             '--force'])
+#     "
+#
+#   After that, sync-labels.yml takes over maintenance on every main push.
 
 # --- GitHub defaults (kept so they stay present after any future canonicalise)
 
