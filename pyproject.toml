@@ -8,7 +8,24 @@ version = "0.4.2"
 requires-python = ">=3.10"
 description = "Bulk-train YouTube's recommendation algorithm via 'Don't recommend channel' — works on Fire TV, mobile, and smart TVs"
 readme = {file = "README-pypi.md", content-type = "text/markdown"}
-license = { file = "LICENSE" }
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Chris Means", email = "chris.a.means@gmail.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Utilities",
+]
 dependencies = [
     "playwright",
 ]

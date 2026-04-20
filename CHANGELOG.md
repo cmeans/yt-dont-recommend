@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **License changed from MIT to Apache-2.0.** Published versions `≤ 0.4.2` remain under MIT; this change applies to the next published version onward. The switch brings an explicit patent grant and aligns with the licensing used across the other `cmeans/mcp-*` repositories.
+
+### Fixed
+
+- PyPI badges for Python versions and License now render correctly. `pyproject.toml` now declares Trove classifiers (Python 3.10–3.13, `License :: OSI Approved :: Apache Software License`) and a string license field, which is what `shields.io/pypi/pyversions` and `shields.io/pypi/l` read.
+
 ## [0.4.2] - 2026-03-19
 
 ### Added
