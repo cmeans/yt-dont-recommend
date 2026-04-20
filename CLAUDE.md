@@ -8,6 +8,28 @@ Warn them: "This will wipe the conversation thread. Suggest `/compact` instead u
 **`/compact`** — use when context is filling up. Summarizes and continues. Safe.
 **`/clear`** — wipes everything. Only appropriate for a genuine fresh start.
 
+## PR & Label Workflow
+
+All changes ship through PRs (no direct pushes to `main`). Label transitions are driven by `.github/workflows/pr-labels.yml` + `pr-labels-ci.yml`; a `QA Gate` status check (`qa-gate.yml`) blocks merge until QA signs off.
+
+State machine (typical PR life cycle):
+
+1. **Dev Active** — dev is still iterating. Set manually. Blocks automatic promotion even if CI passes.
+2. **Awaiting CI** — applied automatically on PR open/push. Waits for CI to complete.
+3. **Ready for QA** — applied automatically once CI passes (and `Dev Active` is not set). QA can now review.
+4. **QA Active** — QA sets this while actively reviewing. Dev must not push during this window; any new push resets to `Awaiting CI` and comments to notify.
+5. **Ready for QA Signoff** / **QA Failed** — QA's verdict. `Ready for QA Signoff` = pass (QA's active status clears automatically); `QA Failed` sends it back to dev.
+6. **QA Approved** — maintainer's final approval. Satisfies the `QA Gate` status check and makes the PR mergeable. Replaces `Ready for QA Signoff`.
+7. **CI Failed** — applied automatically when CI fails. Dev fixes → new push resets to `Awaiting CI`.
+
+Other labels:
+
+- **`merge-order: 0..3`** — coordinate dependent PRs in a release batch (0 = infra/CI first).
+- **`P0..P3`** — optional triage priority, not enforced by any workflow.
+- **Domain labels** (`security`, `packaging`, `dx`, `testing`, `platform-compat`, `performance`, `code-review`, `dependencies`) — applied manually for categorisation.
+
+**Source of truth for labels is `.github/labels.yml`.** Add or modify labels there; the `sync-labels.yml` workflow applies changes on merge to `main`. Do not create labels through the GitHub UI — they'll get overwritten next time the sync runs (or silently diverge from the file today, since `delete-other-labels` is currently `false`).
+
 ## What This Is
 
 A Python/Playwright script that bulk-trains a YouTube account's recommendation algorithm by automating the "Don't recommend channel" action against channel blocklists. Ships with community-maintained AI slop blocklists, but supports any blocklist for any reason.

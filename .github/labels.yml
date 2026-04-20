@@ -1,0 +1,147 @@
+# GitHub labels — source of truth for this repo.
+#
+# Changes merged to main are synced automatically by
+# .github/workflows/sync-labels.yml (EndBug/label-sync).
+#
+# Conventions:
+#   * QA workflow labels drive pr-labels.yml / pr-labels-ci.yml / qa-gate.yml.
+#     Their exact names are referenced in those workflows — rename with care.
+#   * merge-order: N is used to coordinate dependent PRs in a release batch.
+#   * Priority P0..P3 is optional triage metadata; not enforced by any workflow.
+#   * The sync workflow is configured with delete-other-labels: false, so
+#     ad-hoc labels added through the UI are preserved. Delete them manually
+#     (or flip the flag) once canonicalisation is desired.
+#
+# First-time bootstrap (chicken-and-egg):
+#   sync-labels.yml only runs on push to main, so the QA-workflow labels
+#   don't exist on a brand-new repo when pr-labels.yml first tries to use
+#   them — the on-push job will fail with "could not add label". To avoid
+#   this, bootstrap the labels before merging the PR that introduces
+#   these workflows:
+#
+#     gh auth status >/dev/null
+#     python -c "
+#     import yaml, subprocess
+#     for lbl in yaml.safe_load(open('.github/labels.yml')):
+#         subprocess.run(['gh','label','create',lbl['name'],
+#             '--repo','OWNER/REPO',
+#             '--color',lbl['color'],
+#             '--description',lbl.get('description',''),
+#             '--force'])
+#     "
+#
+#   After that, sync-labels.yml takes over maintenance on every main push.
+
+# --- GitHub defaults (kept so they stay present after any future canonicalise)
+
+- name: bug
+  color: "d73a4a"
+  description: Something isn't working
+- name: documentation
+  color: "0075ca"
+  description: Improvements or additions to documentation
+- name: duplicate
+  color: "cfd3d7"
+  description: This issue or pull request already exists
+- name: enhancement
+  color: "a2eeef"
+  description: New feature or request
+- name: good first issue
+  color: "7057ff"
+  description: Good for newcomers
+- name: help wanted
+  color: "008672"
+  description: Extra attention is needed
+- name: invalid
+  color: "e4e669"
+  description: This doesn't seem right
+- name: question
+  color: "d876e3"
+  description: Further information is requested
+- name: wontfix
+  color: "ffffff"
+  description: This will not be worked on
+
+# --- QA workflow (state machine — referenced by pr-labels*.yml)
+
+- name: Awaiting CI
+  color: "C2E0C6"
+  description: Dev complete, waiting for CI to pass before QA
+- name: Dev Active
+  color: "FBCA04"
+  description: Developer is actively working on this PR; QA should not start
+- name: Ready for QA
+  color: "0075CA"
+  description: Dev work complete — QA can begin review
+- name: QA Active
+  color: "D93F0B"
+  description: QA is actively reviewing; Dev should not push changes
+- name: QA Approved
+  color: "0E8A16"
+  description: Manual QA testing completed and passed
+- name: QA Failed
+  color: "D93F0B"
+  description: QA found issues — needs dev attention
+- name: Ready for QA Signoff
+  color: "7057FF"
+  description: QA passed — ready for maintainer final review and merge
+- name: CI Failed
+  color: "B60205"
+  description: CI failed — dev needs to fix
+
+# --- Merge coordination
+
+- name: "merge-order: 0"
+  color: "5319E7"
+  description: Merge before all others — infrastructure/CI change
+- name: "merge-order: 1"
+  color: "0E8A16"
+  description: Merge first in the current batch
+- name: "merge-order: 2"
+  color: "1D76DB"
+  description: "Merge second — depends on merge-order: 1"
+- name: "merge-order: 3"
+  color: "BFD4F2"
+  description: Merge third in current batch
+
+# --- Priority (optional)
+
+- name: "P0: critical"
+  color: "B60205"
+  description: Must fix now
+- name: "P1: high"
+  color: "D93F0B"
+  description: Fix soon
+- name: "P2: medium"
+  color: "FBCA04"
+  description: Should fix
+- name: "P3: low"
+  color: "0E8A16"
+  description: Nice to have
+
+# --- Domain
+
+- name: dependencies
+  color: "0075ca"
+  description: Dependency updates
+- name: testing
+  color: "0E8A16"
+  description: Platform and integration testing
+- name: platform-compat
+  color: "1D76DB"
+  description: Platform-specific issues (Linux, macOS)
+- name: performance
+  color: "5319E7"
+  description: Performance-related
+- name: security
+  color: "B60205"
+  description: Security-related
+- name: code-review
+  color: "BFD4F2"
+  description: Surfaced from code review
+- name: packaging
+  color: "1D76DB"
+  description: Packaging / distribution
+- name: dx
+  color: "C2E0C6"
+  description: Developer experience
