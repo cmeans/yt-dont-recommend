@@ -6,12 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+
+- **Codecov coverage reporting** in CI: `pytest-cov>=7.0` added as a dev dependency, `[tool.coverage.*]` configuration added to `pyproject.toml`, and a `codecov/codecov-action@v5` upload step now runs on the Ubuntu CI job. A Codecov badge is displayed in the README.
+- README status badges (PyPI version, supported Python versions, license, CI, download count) and `.github/FUNDING.yml` for GitHub Sponsors — brings the project in line with the `cmeans/mcp-*` repo conventions.
+
 ### Changed
 
 - **License changed from MIT to Apache-2.0.** Published versions `≤ 0.4.2` remain under MIT; this change applies to the next published version onward. The switch brings an explicit patent grant and aligns with the licensing used across the other `cmeans/mcp-*` repositories.
 
 ### Fixed
 
+- **Scheduler catch-up spawn storm** (closes #17): after the host woke from sleep (or otherwise missed multiple consecutive scheduled slots), the heartbeat loop would spawn one full blocklist+clickbait run per missed slot back-to-back, resulting in three or more overlapping browser sessions fighting over the same Chromium profile. Stale missed slots are now coalesced into a single catch-up run.
 - PyPI badges for Python versions and License now render correctly. `pyproject.toml` now declares Trove classifiers (Python 3.10–3.13, `License :: OSI Approved :: Apache Software License`) and a string license field, which is what `shields.io/pypi/pyversions` and `shields.io/pypi/l` read.
 
 ## [0.4.2] - 2026-03-19
