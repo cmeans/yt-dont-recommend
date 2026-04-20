@@ -1057,7 +1057,7 @@ def _parse_batch_response(raw: str, expected: int) -> "list[dict] | None":
         except Exception:
             return None
 
-    if not isinstance(items, list):
+    if not isinstance(items, list):  # pragma: no cover - defensive; candidate always starts with '['
         return None
 
     # Map by index field; fall back to positional if index missing

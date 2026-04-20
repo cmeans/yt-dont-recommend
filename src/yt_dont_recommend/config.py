@@ -74,8 +74,8 @@ CONFIG_FILE = Path.home() / ".yt-dont-recommend" / "config.yaml"
 try:
     from importlib.metadata import version as _pkg_version
     __version__: str = _pkg_version("yt-dont-recommend")
-except Exception:
-    __version__ = "0.0.0"  # fallback for editable installs without metadata
+except Exception:  # pragma: no cover - fires only in editable installs without metadata
+    __version__ = "0.0.0"
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.

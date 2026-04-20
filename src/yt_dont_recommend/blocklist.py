@@ -58,7 +58,7 @@ def parse_text_blocklist(raw: str) -> list[str]:
         # Strip inline comment: "@handle  # reason" → "@handle"
         if "#" in line:
             line = line[:line.index("#")].strip()
-        if not line:
+        if not line:  # pragma: no cover - defensive; unreachable given prior checks
             continue
         # Strip leading slash: /@handle → @handle
         if line.startswith("/@"):

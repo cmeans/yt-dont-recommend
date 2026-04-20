@@ -2,7 +2,7 @@
 
 import json
 from copy import deepcopy
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -993,3 +993,301 @@ class TestParseBatchResponseSingleQuote:
         assert result is not None
         assert result[0]["is_clickbait"] is False
         assert result[0]["confidence"] == 0.1
+
+
+# ---------------------------------------------------------------------------
+# _write_default_config — exception path
+# ---------------------------------------------------------------------------
+
+class TestWriteDefaultConfigExceptionPath:
+    def test_load_config_tolerates_write_failure(self, tmp_path, caplog):
+        """When the default config can't be written (permission error, etc.),
+        load_config still returns the defaults without raising."""
+        import logging
+        cfg_path = tmp_path / "nonexistent" / "clickbait.yaml"
+        with (
+            patch("yt_dont_recommend.config.ensure_data_dir", side_effect=PermissionError("denied")),
+            caplog.at_level(logging.WARNING, logger="yt_dont_recommend.clickbait"),
+        ):
+            cfg = load_config(cfg_path)
+        # Still returns usable defaults
+        assert "video" in cfg
+        assert "title" in cfg["video"]
+
+
+# ---------------------------------------------------------------------------
+# extract_json — regex-block fallback where the matched {...} won't parse
+# ---------------------------------------------------------------------------
+
+class TestExtractJsonRegexFallback:
+    def test_brace_match_with_invalid_json_inside_returns_empty(self):
+        """If the first {...} block in prose doesn't parse, extract_json
+        falls through to regex-field extraction."""
+        # Outer parse fails; regex finds `{not: valid}`; inner parse fails too.
+        # Then the regex-field extraction (is_clickbait / confidence) finds nothing.
+        raw = "prose before {not: valid json} prose after"
+        out = extract_json(raw)
+        # extract_json returns a dict even on total failure — values are defaults.
+        assert isinstance(out, dict)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_thumbnail_b64 — network paths
+# ---------------------------------------------------------------------------
+
+class TestFetchThumbnail:
+    def test_first_quality_success_returns_base64(self, monkeypatch):
+        import base64
+
+        from yt_dont_recommend.clickbait import _fetch_thumbnail_b64
+
+        big_body = b"x" * 6000  # > 5000, passes placeholder check
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return big_body
+
+        def fake_urlopen(req, timeout=10):
+            return FakeResp()
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        result = _fetch_thumbnail_b64("VID123")
+        assert result == base64.b64encode(big_body).decode()
+
+    def test_first_quality_placeholder_falls_through_to_hqdefault(self, monkeypatch):
+        import base64
+
+        from yt_dont_recommend.clickbait import _fetch_thumbnail_b64
+
+        small = b"x" * 100  # placeholder
+        big = b"x" * 9000
+
+        class FakeResp:
+            def __init__(self, body): self.body = body
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return self.body
+
+        calls = []
+        def fake_urlopen(req, timeout=10):
+            calls.append(req.full_url)
+            if "maxresdefault" in req.full_url:
+                return FakeResp(small)
+            return FakeResp(big)
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        result = _fetch_thumbnail_b64("VID123")
+        assert result == base64.b64encode(big).decode()
+        assert any("hqdefault" in u for u in calls)
+
+    def test_both_qualities_fail_returns_none(self, monkeypatch):
+        from yt_dont_recommend.clickbait import _fetch_thumbnail_b64
+
+        def boom(req, timeout=10):
+            raise OSError("network")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        assert _fetch_thumbnail_b64("VID123") is None
+
+
+# ---------------------------------------------------------------------------
+# _ollama_chat — happy path (ollama available)
+# ---------------------------------------------------------------------------
+
+class TestOllamaChatHappyPath:
+    def test_calls_ollama_client_and_returns_content(self, monkeypatch):
+        """When ollama is installed, _ollama_chat constructs a Client,
+        calls chat, and returns the message content."""
+        from yt_dont_recommend.clickbait import _ollama_chat
+
+        mock_client_instance = MagicMock()
+        mock_response = MagicMock()
+        mock_response.message.content = "classified!"
+        mock_client_instance.chat.return_value = mock_response
+
+        mock_client_cls = MagicMock(return_value=mock_client_instance)
+        fake_ollama = MagicMock()
+        fake_ollama.Client = mock_client_cls
+
+        with patch.dict("sys.modules", {"ollama": fake_ollama}):
+            result = _ollama_chat(
+                "llama3.1:8b",
+                "classify this",
+                img_b64="aGVsbG8=",
+                params={"num_predict": 50},
+                timeout=120,
+            )
+
+        assert result == "classified!"
+        mock_client_cls.assert_called_once_with(timeout=120)
+        # Verify chat was called with model, messages (including images), and merged params
+        call = mock_client_instance.chat.call_args
+        assert call.kwargs["model"] == "llama3.1:8b"
+        assert call.kwargs["messages"][0]["content"] == "classify this"
+        assert call.kwargs["messages"][0]["images"] == ["aGVsbG8="]
+        assert call.kwargs["options"]["temperature"] == 0
+        assert call.kwargs["options"]["num_predict"] == 50
+
+
+# ---------------------------------------------------------------------------
+# _fetch_transcript — all branches
+# ---------------------------------------------------------------------------
+
+class TestFetchTranscript:
+    def _make_fake_api(self, status, text_or_exc):
+        """Build a fake youtube_transcript_api module with the given behavior.
+
+        status: 'ok' | 'disabled' | 'not_found' | 'error'
+        """
+
+        class TranscriptsDisabled(Exception):
+            pass
+
+        class NoTranscriptFound(Exception):
+            pass
+
+        fake_api = MagicMock()
+        fake_api.TranscriptsDisabled = TranscriptsDisabled
+        fake_api.NoTranscriptFound = NoTranscriptFound
+
+        class FakeInstance:
+            def fetch(self, video_id, languages):
+                if status == "ok":
+                    segments = [MagicMock(text=t) for t in text_or_exc]
+                    return segments
+                if status == "disabled":
+                    raise TranscriptsDisabled("disabled")
+                if status == "not_found":
+                    raise NoTranscriptFound("no transcript")
+                raise RuntimeError("generic error")
+
+        fake_api.YouTubeTranscriptApi = FakeInstance
+        return fake_api
+
+    def test_no_api_returned_when_module_missing(self):
+        from yt_dont_recommend.clickbait import _fetch_transcript
+        with patch.dict("sys.modules", {"youtube_transcript_api": None}):
+            text, status = _fetch_transcript("vid1")
+        assert text is None
+        assert status == "no_api"
+
+    def test_ok_returns_joined_text(self):
+        from yt_dont_recommend.clickbait import _fetch_transcript
+        fake = self._make_fake_api("ok", ["hello", "world"])
+        with patch.dict("sys.modules", {"youtube_transcript_api": fake}):
+            text, status = _fetch_transcript("vid1")
+        assert text == "hello world"
+        assert status == "ok"
+
+    def test_disabled(self):
+        from yt_dont_recommend.clickbait import _fetch_transcript
+        fake = self._make_fake_api("disabled", None)
+        with patch.dict("sys.modules", {"youtube_transcript_api": fake}):
+            text, status = _fetch_transcript("vid1")
+        assert text is None
+        assert status == "disabled"
+
+    def test_not_found(self):
+        from yt_dont_recommend.clickbait import _fetch_transcript
+        fake = self._make_fake_api("not_found", None)
+        with patch.dict("sys.modules", {"youtube_transcript_api": fake}):
+            text, status = _fetch_transcript("vid1")
+        assert text is None
+        assert status == "not_found"
+
+    def test_other_exception_returns_error(self):
+        from yt_dont_recommend.clickbait import _fetch_transcript
+        fake = self._make_fake_api("other", None)
+        with patch.dict("sys.modules", {"youtube_transcript_api": fake}):
+            text, status = _fetch_transcript("vid1")
+        assert text is None
+        assert status == "error"
+
+
+# ---------------------------------------------------------------------------
+# _parse_batch_response — remaining branches
+# ---------------------------------------------------------------------------
+
+class TestParseBatchResponseEdgeCases:
+    def test_both_json_and_ast_fail_returns_none(self):
+        """When candidate is bracketed but is neither valid JSON nor a valid
+        Python literal, _parse_batch_response returns None."""
+        # `[foo bar baz]` — bare words, no commas; JSON fails, ast.literal_eval
+        # sees undefined names and raises ValueError.
+        assert _parse_batch_response("[foo bar baz]", 2) is None
+
+    def test_non_dict_items_skipped(self):
+        """Items that aren't dicts are skipped by the indexer, leaving those
+        slots as None."""
+        # First element is a bare number (not a dict); second is a valid dict.
+        raw = '[1, {"index": 1, "is_clickbait": true, "confidence": 0.9, "reasoning": "x"}]'
+        result = _parse_batch_response(raw, 2)
+        assert result is not None
+        assert result[0] is None  # bare int was skipped
+        assert result[1] is not None
+        assert result[1]["is_clickbait"] is True
+
+
+# ---------------------------------------------------------------------------
+# _classify_transcript_batch — remaining policy and failure branches
+# ---------------------------------------------------------------------------
+
+class TestTranscriptBatchRemainingBranches:
+    def _items(self, n=2):
+        return [{"video_id": f"vid{i}", "title": f"Title {i}"} for i in range(n)]
+
+    def test_no_transcript_title_only_policy(self):
+        """Items without transcripts under `title-only` policy get a deferral
+        marker instead of a verdict."""
+        cfg = _cfg({"video": {"transcript": {"no_transcript": "title-only"}}})
+        with patch("yt_dont_recommend.clickbait._fetch_transcript", return_value=(None, "disabled")):
+            results = classify_transcripts_batch(self._items(2), cfg)
+        assert len(results) == 2
+        for r in results:
+            assert r["_defer_to_title"] is True
+            assert r["is_clickbait"] is False
+
+    def test_ollama_raises_falls_back_to_per_item(self):
+        """When the batch LLM call raises, each pending item is classified
+        individually via classify_transcript()."""
+        individual_calls = []
+
+        def mock_chat(model, prompt, **kw):
+            individual_calls.append(True)
+            if len(individual_calls) == 1:
+                # First call is the batch request — raise
+                raise RuntimeError("ollama connection dropped")
+            # Subsequent calls are per-item fallbacks
+            return '{"is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}'
+
+        with (
+            patch("yt_dont_recommend.clickbait._fetch_transcript", return_value=("tx text", "ok")),
+            patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat),
+        ):
+            results = classify_transcripts_batch(self._items(2), _cfg())
+        assert len(results) == 2
+        # Batch + 2 individual fallbacks = 3 total LLM calls
+        assert len(individual_calls) == 3
+
+    def test_batch_parse_missing_slot_falls_back_per_item(self):
+        """When the batch response is missing an index, that slot falls back
+        to a per-item classify_transcript() call."""
+        individual_calls = []
+
+        def mock_chat(model, prompt, **kw):
+            individual_calls.append(True)
+            if len(individual_calls) == 1:
+                # Batch request — return only index 0; index 1 missing
+                return '[{"index": 0, "is_clickbait": false, "confidence": 0.1, "reasoning": "ok"}]'
+            # Per-item fallback for index 1
+            return '{"is_clickbait": false, "confidence": 0.2, "reasoning": "per-item"}'
+
+        with (
+            patch("yt_dont_recommend.clickbait._fetch_transcript", return_value=("tx text", "ok")),
+            patch("yt_dont_recommend.clickbait._ollama_chat", side_effect=mock_chat),
+        ):
+            results = classify_transcripts_batch(self._items(2), _cfg())
+        assert len(results) == 2
+        # 1 batch + 1 per-item for the missing slot
+        assert len(individual_calls) == 2

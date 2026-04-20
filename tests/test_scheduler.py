@@ -482,3 +482,272 @@ class TestScheduleCmd:
         schedule_cmd("install", blocklist_runs=2, clickbait_runs=6)
         assert called[0]["modes"]["blocklist"]["runs_per_day"] == 2
         assert called[0]["modes"]["clickbait"]["runs_per_day"] == 6
+
+
+# ---------------------------------------------------------------------------
+# _find_installed_binary
+# ---------------------------------------------------------------------------
+
+class TestFindInstalledBinary:
+    def test_returns_argv0_when_resolved_and_non_py(self, monkeypatch, tmp_path):
+        """Installed binaries have suffix != .py — argv[0] is authoritative."""
+        from yt_dont_recommend import scheduler as sched_mod
+        bin_path = tmp_path / "yt-dont-recommend"
+        bin_path.write_text("#!/bin/sh\n")
+        bin_path.chmod(0o755)
+        monkeypatch.setattr(sched_mod.sys, "argv", [str(bin_path)])
+        assert sched_mod._find_installed_binary() == str(bin_path)
+
+    def test_falls_back_to_which_in_dev_mode(self, monkeypatch):
+        """In dev mode argv[0] is a .py; falls through to shutil.which()."""
+        from yt_dont_recommend import scheduler as sched_mod
+        monkeypatch.setattr(sched_mod.sys, "argv", ["/some/dev/script.py"])
+        with patch("shutil.which", return_value="/opt/bin/yt-dont-recommend"):
+            assert sched_mod._find_installed_binary() == "/opt/bin/yt-dont-recommend"
+
+    def test_final_fallback_uses_python_plus_argv0(self, monkeypatch):
+        """If argv[0] is .py and shutil.which fails, use python-plus-argv0."""
+        from yt_dont_recommend import scheduler as sched_mod
+        monkeypatch.setattr(sched_mod.sys, "argv", ["/some/dev/script.py"])
+        monkeypatch.setattr(sched_mod.sys, "executable", "/usr/bin/python3")
+        with patch("shutil.which", return_value=None):
+            result = sched_mod._find_installed_binary()
+        assert result.startswith("/usr/bin/python3")
+        assert "script.py" in result
+
+
+# ---------------------------------------------------------------------------
+# _modes_summary
+# ---------------------------------------------------------------------------
+
+class TestModesSummary:
+    def test_empty_modes_returns_none_configured(self):
+        from yt_dont_recommend.scheduler import _modes_summary
+        assert _modes_summary({}) == "none configured"
+        assert _modes_summary({"modes": {}}) == "none configured"
+
+    def test_populated_modes_formatted_correctly(self):
+        from yt_dont_recommend.scheduler import _modes_summary
+        out = _modes_summary({"modes": {
+            "blocklist": {"runs_per_day": 2},
+            "clickbait": {"runs_per_day": 4},
+        }})
+        assert "blocklist: 2x/day" in out
+        assert "clickbait: 4x/day" in out
+
+
+# ---------------------------------------------------------------------------
+# _print_today_plan
+# ---------------------------------------------------------------------------
+
+class TestPrintTodayPlan:
+    def test_no_date_is_noop(self, capsys):
+        from yt_dont_recommend.scheduler import _print_today_plan
+        _print_today_plan({"today": {}})
+        assert capsys.readouterr().out == ""
+
+    def test_prints_planned_and_executed_times(self, capsys):
+        from yt_dont_recommend.scheduler import _print_today_plan
+        _print_today_plan({
+            "modes": {"blocklist": {"runs_per_day": 2}},
+            "today": {
+                "date": "2026-04-20",
+                "blocklist": {
+                    "planned_utc":  ["03:17", "15:44"],
+                    "executed_utc": ["03:17"],
+                },
+            },
+        })
+        out = capsys.readouterr().out
+        assert "2026-04-20" in out
+        assert "03:17" in out
+        assert "\u2713" in out   # executed check mark
+        assert "15:44" in out
+        assert "pending" in out
+
+    def test_prints_no_runs_scheduled_when_planned_empty(self, capsys):
+        from yt_dont_recommend.scheduler import _print_today_plan
+        _print_today_plan({
+            "modes": {"blocklist": {"runs_per_day": 0}},
+            "today": {
+                "date": "2026-04-20",
+                "blocklist": {"planned_utc": [], "executed_utc": []},
+            },
+        })
+        assert "no runs scheduled today" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# _schedule_macos — launchd install/remove/status
+# ---------------------------------------------------------------------------
+
+class TestScheduleMacos:
+    def _setup_paths(self, monkeypatch, tmp_path):
+        """Point every scheduler file path into tmp_path."""
+        from yt_dont_recommend import scheduler as sched_mod
+        plist = tmp_path / "com.ydr.heartbeat.plist"
+        sched_file = tmp_path / "schedule.json"
+        monkeypatch.setattr(sched_mod, "_LAUNCHD_PLIST", plist)
+        monkeypatch.setattr(sched_mod, "SCHEDULE_FILE", sched_file)
+        monkeypatch.setattr("yt_dont_recommend.config.SCHEDULE_FILE", sched_file)
+        return plist, sched_file
+
+    def test_install_creates_plist_and_loads(self, monkeypatch, tmp_path, capsys):
+        from yt_dont_recommend.scheduler import _schedule_macos
+        plist, sched_file = self._setup_paths(monkeypatch, tmp_path)
+        with patch("yt_dont_recommend.scheduler.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            _schedule_macos("install", "/bin/ydr",
+                            {"modes": {"blocklist": {"runs_per_day": 2}}, "headless": True})
+        assert plist.exists()
+        # Verify launchctl load was called
+        load_calls = [c for c in mock_run.call_args_list
+                      if "launchctl" in c.args[0] and "load" in c.args[0]]
+        assert load_calls
+        assert "Schedule installed" in capsys.readouterr().out
+
+    def test_install_unloads_existing_plist(self, monkeypatch, tmp_path, capsys):
+        from yt_dont_recommend.scheduler import _schedule_macos
+        plist, _ = self._setup_paths(monkeypatch, tmp_path)
+        plist.write_text("existing plist")
+        with patch("yt_dont_recommend.scheduler.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            _schedule_macos("install", "/bin/ydr",
+                            {"modes": {"blocklist": {"runs_per_day": 1}}, "headless": False})
+        unload_calls = [c for c in mock_run.call_args_list
+                        if "launchctl" in c.args[0] and "unload" in c.args[0]]
+        assert unload_calls
+        assert "Replacing existing schedule" in capsys.readouterr().out
+
+    def test_remove_without_plist_says_nothing_to_remove(self, monkeypatch, tmp_path, capsys):
+        from yt_dont_recommend.scheduler import _schedule_macos
+        self._setup_paths(monkeypatch, tmp_path)
+        _schedule_macos("remove", "/bin/ydr", {})
+        assert "No schedule to remove" in capsys.readouterr().out
+
+    def test_remove_unloads_and_deletes_plist(self, monkeypatch, tmp_path, capsys):
+        from yt_dont_recommend.scheduler import _schedule_macos
+        plist, _ = self._setup_paths(monkeypatch, tmp_path)
+        plist.write_text("existing")
+        with patch("yt_dont_recommend.scheduler.subprocess.run") as mock_run:
+            _schedule_macos("remove", "/bin/ydr", {})
+        assert not plist.exists()
+        assert any("unload" in c.args[0] for c in mock_run.call_args_list)
+        assert "Schedule removed" in capsys.readouterr().out
+
+    def test_status_no_plist(self, monkeypatch, tmp_path, capsys):
+        from yt_dont_recommend.scheduler import _schedule_macos
+        self._setup_paths(monkeypatch, tmp_path)
+        _schedule_macos("status", "/bin/ydr", {})
+        assert "No schedule installed" in capsys.readouterr().out
+
+    def test_status_loaded(self, monkeypatch, tmp_path, capsys):
+        from yt_dont_recommend.scheduler import _schedule_macos, save_schedule
+        plist, _ = self._setup_paths(monkeypatch, tmp_path)
+        plist.write_text("plist content")
+        save_schedule({
+            "modes": {"blocklist": {"runs_per_day": 2}},
+            "headless": True,
+            "today": {"date": "2026-04-20", "blocklist": {"planned_utc": ["03:17"], "executed_utc": []}},
+        })
+        with patch("yt_dont_recommend.scheduler.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            _schedule_macos("status", "/bin/ydr", {})
+        out = capsys.readouterr().out
+        assert "loaded" in out
+        assert "blocklist: 2x/day" in out
+        assert "Headless:" in out
+
+    def test_status_plist_present_but_not_loaded(self, monkeypatch, tmp_path, capsys):
+        from yt_dont_recommend.scheduler import _schedule_macos
+        plist, _ = self._setup_paths(monkeypatch, tmp_path)
+        plist.write_text("plist content")
+        with patch("yt_dont_recommend.scheduler.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1)
+            _schedule_macos("status", "/bin/ydr", {})
+        out = capsys.readouterr().out
+        assert "plist present but not loaded" in out
+
+
+# ---------------------------------------------------------------------------
+# _schedule_linux — remove branches
+# ---------------------------------------------------------------------------
+
+class TestScheduleLinuxRemoveBranches:
+    def test_remove_without_managed_entry_says_nothing_to_remove(self, tmp_path, monkeypatch, capsys):
+        """Remove should print 'nothing to remove' when the crontab has no
+        managed entry."""
+        with patch("yt_dont_recommend.scheduler.subprocess.run") as mock_run:
+            # crontab -l returns other entries, but none are the managed line
+            mock_run.return_value = MagicMock(returncode=0, stdout="# user's own entry\n")
+            _schedule_linux("remove", "/bin/ydr", {})
+        assert "No schedule to remove" in capsys.readouterr().out
+
+    def test_remove_preserves_other_entries_and_adds_trailing_newline(self, tmp_path, monkeypatch, capsys):
+        """Remove path with existing non-managed entries should preserve them
+        and end the crontab with a newline (line 390)."""
+        from yt_dont_recommend.config import _CRON_MARKER
+        run_calls = []
+
+        def fake_run(*args, **kwargs):
+            # First call: `crontab -l` returns a mix; second: `crontab -` to write
+            if args[0][:2] == ["crontab", "-l"]:
+                mixed = f"# user entry\n* * * * * /other {_CRON_MARKER}"
+                return MagicMock(returncode=0, stdout=mixed)
+            run_calls.append(kwargs.get("input", ""))
+            return MagicMock(returncode=0)
+
+        with patch("yt_dont_recommend.scheduler.subprocess.run", side_effect=fake_run):
+            _schedule_linux("remove", "/bin/ydr", {})
+        # New crontab should contain the non-managed entry only, end with newline
+        assert len(run_calls) == 1
+        new_crontab = run_calls[0]
+        assert "# user entry" in new_crontab
+        assert new_crontab.endswith("\n")
+
+
+# ---------------------------------------------------------------------------
+# schedule_cmd — non-install dispatch + macOS dispatch
+# ---------------------------------------------------------------------------
+
+class TestScheduleCmdDispatch:
+    def test_status_on_linux_calls_linux_platform_fn(self, monkeypatch):
+        from yt_dont_recommend import scheduler as sched_mod
+        called = []
+        monkeypatch.setattr(ydr, "_find_installed_binary", lambda: "/bin/ydr")
+        monkeypatch.setattr(sched_mod, "_find_installed_binary", lambda: "/bin/ydr")
+        monkeypatch.setattr(ydr, "_schedule_linux",
+                            lambda action, path, sched: called.append(("linux", action)))
+        monkeypatch.setattr(sched_mod, "_schedule_linux",
+                            lambda action, path, sched: called.append(("linux", action)))
+        monkeypatch.setattr(sched_mod.sys, "platform", "linux")
+        schedule_cmd("status")
+        assert called == [("linux", "status")]
+
+    def test_remove_on_macos_calls_macos_platform_fn(self, monkeypatch):
+        from yt_dont_recommend import scheduler as sched_mod
+        called = []
+        monkeypatch.setattr(ydr, "_find_installed_binary", lambda: "/bin/ydr")
+        monkeypatch.setattr(sched_mod, "_find_installed_binary", lambda: "/bin/ydr")
+        monkeypatch.setattr(ydr, "_schedule_macos",
+                            lambda action, path, sched: called.append(("macos", action)))
+        monkeypatch.setattr(sched_mod, "_schedule_macos",
+                            lambda action, path, sched: called.append(("macos", action)))
+        monkeypatch.setattr(sched_mod.sys, "platform", "darwin")
+        schedule_cmd("remove")
+        assert called == [("macos", "remove")]
+
+    def test_install_on_macos_calls_macos_platform_fn(self, monkeypatch, tmp_path):
+        from yt_dont_recommend import scheduler as sched_mod
+        called = []
+        monkeypatch.setattr(ydr, "_find_installed_binary", lambda: "/bin/ydr")
+        monkeypatch.setattr(sched_mod, "_find_installed_binary", lambda: "/bin/ydr")
+        monkeypatch.setattr(ydr, "_schedule_macos",
+                            lambda action, path, sched: called.append(sched))
+        monkeypatch.setattr(sched_mod, "_schedule_macos",
+                            lambda action, path, sched: called.append(sched))
+        monkeypatch.setattr(sched_mod.sys, "platform", "darwin")
+        monkeypatch.setattr("yt_dont_recommend.scheduler.SCHEDULE_FILE", tmp_path / "sched.json")
+        schedule_cmd("install", blocklist_runs=1, clickbait_runs=0)
+        assert called
+        assert called[0]["modes"]["blocklist"]["runs_per_day"] == 1

@@ -306,3 +306,261 @@ class TestClickbaitStateKeys:
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
         assert state["state_version"] == 3
+
+
+# ---------------------------------------------------------------------------
+# _state_file — fallback when the package attribute is missing
+# ---------------------------------------------------------------------------
+
+class TestStateFileFallback:
+    def test_state_file_falls_back_to_config_constant_on_attribute_error(self, monkeypatch):
+        """When yt_dont_recommend.STATE_FILE is unreachable (e.g. attribute
+        deleted during an unusual test), _state_file() falls back to the
+        config module constant rather than raising."""
+        from yt_dont_recommend import config as cfg_mod
+        from yt_dont_recommend import state as state_mod
+        monkeypatch.delattr(ydr, "STATE_FILE", raising=False)
+        assert state_mod._state_file() == cfg_mod.STATE_FILE
+
+
+# ---------------------------------------------------------------------------
+# load_state — legacy stat-key migration, ucxxx self-mapping, v2 persist
+# ---------------------------------------------------------------------------
+
+class TestLoadStateMigrations:
+    def _write(self, path, data):
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_legacy_success_skipped_failed_keys_migrated(self, tmp_path, monkeypatch):
+        sf = tmp_path / "processed.json"
+        self._write(sf, {
+            "blocked_by": {},
+            "stats": {"success": 5, "skipped": 2, "failed": 1},
+        })
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        loaded = ydr.load_state()
+        assert loaded["stats"] == {"total_blocked": 5, "total_skipped": 2, "total_failed": 1}
+
+    def test_ucxxx_self_mapping_is_cleared(self, tmp_path, monkeypatch):
+        sf = tmp_path / "processed.json"
+        self._write(sf, {
+            "blocked_by": {},
+            "ucxxx_to_handle": {"UCxxx": "UCxxx", "UCyyy": "@someone"},
+        })
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        loaded = ydr.load_state()
+        assert loaded["ucxxx_to_handle"]["UCxxx"] is None
+        assert loaded["ucxxx_to_handle"]["UCyyy"] == "@someone"
+
+    def test_v2_migration_drops_legacy_processed_list(self, tmp_path, monkeypatch, caplog):
+        sf = tmp_path / "processed.json"
+        self._write(sf, {
+            "blocked_by": {"@a": {"sources": ["deslop"]}},
+            "processed": ["@a", "@b", "@c"],
+        })
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        with caplog.at_level(logging.INFO, logger="yt_dont_recommend.state"):
+            loaded = ydr.load_state()
+        assert "processed" not in loaded
+        rewritten = json.loads(sf.read_text())
+        assert "processed" not in rewritten
+
+    def test_v2_migration_persist_error_is_non_fatal(self, tmp_path, monkeypatch):
+        """If the post-migration rewrite fails, load_state() still returns
+        the migrated in-memory state."""
+        sf = tmp_path / "processed.json"
+        self._write(sf, {
+            "blocked_by": {},
+            "processed": ["@a"],
+        })
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+
+        import builtins
+        real_open = builtins.open
+
+        def fake_open(path, mode="r", *args, **kwargs):
+            if str(path) == str(sf) and "w" in mode:
+                raise OSError("disk full")
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", fake_open)
+        loaded = ydr.load_state()
+        assert "processed" not in loaded
+
+
+# ---------------------------------------------------------------------------
+# save_state — ensure_data_dir failure and empty-pending_unblock cleanup
+# ---------------------------------------------------------------------------
+
+class TestSaveStateBranches:
+    def test_ensure_data_dir_failure_is_swallowed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        with patch("yt_dont_recommend.config.ensure_data_dir", side_effect=PermissionError("denied")):
+            state = ydr.load_state()
+            ydr.save_state(state)
+        assert (tmp_path / "processed.json").exists()
+
+    def test_empty_pending_unblock_is_removed_on_save(self, tmp_path, monkeypatch):
+        sf = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        state = ydr.load_state()
+        state["pending_unblock"] = {}
+        ydr.save_state(state)
+        written = json.loads(sf.read_text())
+        assert "pending_unblock" not in written
+
+
+# ---------------------------------------------------------------------------
+# _desktop_notify — platform-specific subprocess calls
+# ---------------------------------------------------------------------------
+
+class TestDesktopNotify:
+    def test_macos_uses_osascript(self, monkeypatch):
+        from yt_dont_recommend.state import _desktop_notify
+        monkeypatch.setattr("sys.platform", "darwin")
+        with patch("yt_dont_recommend.state.subprocess.run") as m:
+            _desktop_notify("hello")
+        args, _ = m.call_args
+        assert args[0][0] == "osascript"
+        assert 'display notification "hello"' in args[0][-1]
+
+    def test_linux_uses_notify_send(self, monkeypatch):
+        from yt_dont_recommend.state import _desktop_notify
+        monkeypatch.setattr("sys.platform", "linux")
+        with patch("yt_dont_recommend.state.subprocess.run") as m:
+            _desktop_notify("hello")
+        args, _ = m.call_args
+        assert args[0][0] == "notify-send"
+        assert args[0][-1] == "hello"
+
+    def test_subprocess_failure_is_swallowed(self, monkeypatch):
+        from yt_dont_recommend.state import _desktop_notify
+        monkeypatch.setattr("sys.platform", "linux")
+        with patch("yt_dont_recommend.state.subprocess.run",
+                   side_effect=FileNotFoundError("notify-send missing")):
+            _desktop_notify("hello")
+
+
+# ---------------------------------------------------------------------------
+# _ntfy_notify — success and failure
+# ---------------------------------------------------------------------------
+
+class TestNtfyNotify:
+    def test_posts_to_ntfy_sh_with_headers(self, monkeypatch):
+        from yt_dont_recommend.state import _ntfy_notify
+
+        captured = {}
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(req, timeout=10):
+            captured["url"] = req.full_url
+            captured["headers"] = dict(req.header_items())
+            captured["data"] = req.data
+            return FakeResp()
+
+        monkeypatch.setattr("yt_dont_recommend.state.urlopen", fake_urlopen)
+        _ntfy_notify("mytopic", "alert body")
+        assert captured["url"] == "https://ntfy.sh/mytopic"
+        assert captured["headers"].get("Title") == "yt-dont-recommend"
+        assert captured["headers"].get("Priority") == "high"
+        assert captured["data"] == b"alert body"
+
+    def test_network_failure_is_swallowed(self, monkeypatch, caplog):
+        from yt_dont_recommend.state import _ntfy_notify
+
+        def boom(req, timeout=10):
+            raise OSError("no network")
+
+        monkeypatch.setattr("yt_dont_recommend.state.urlopen", boom)
+        with caplog.at_level(logging.DEBUG, logger="yt_dont_recommend.state"):
+            _ntfy_notify("mytopic", "alert")
+
+
+# ---------------------------------------------------------------------------
+# write_attention — flag-file append + notification fan-out
+# ---------------------------------------------------------------------------
+
+class TestWriteAttention:
+    def test_writes_to_attention_file_and_triggers_desktop_notify(self, tmp_path, monkeypatch):
+        af = tmp_path / "needs-attention.txt"
+        monkeypatch.setattr("yt_dont_recommend.state.ATTENTION_FILE", af)
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        with (
+            patch("yt_dont_recommend.state._desktop_notify") as mock_desktop,
+            patch("yt_dont_recommend.state._ntfy_notify") as mock_ntfy,
+        ):
+            ydr.write_attention("selector broke")
+        assert af.exists()
+        assert "selector broke" in af.read_text()
+        mock_desktop.assert_called_once_with("selector broke")
+        mock_ntfy.assert_not_called()
+
+    def test_triggers_ntfy_when_topic_configured(self, tmp_path, monkeypatch):
+        af = tmp_path / "needs-attention.txt"
+        sf = tmp_path / "processed.json"
+        monkeypatch.setattr("yt_dont_recommend.state.ATTENTION_FILE", af)
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        state = ydr.load_state()
+        state["notify_topic"] = "ydr-abc123"
+        ydr.save_state(state)
+        with (
+            patch("yt_dont_recommend.state._desktop_notify"),
+            patch("yt_dont_recommend.state._ntfy_notify") as mock_ntfy,
+        ):
+            ydr.write_attention("login expired")
+        mock_ntfy.assert_called_once_with("ydr-abc123", "login expired")
+
+    def test_ensure_data_dir_failure_is_swallowed(self, tmp_path, monkeypatch):
+        af = tmp_path / "needs-attention.txt"
+        monkeypatch.setattr("yt_dont_recommend.state.ATTENTION_FILE", af)
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        with (
+            patch("yt_dont_recommend.config.ensure_data_dir", side_effect=PermissionError("denied")),
+            patch("yt_dont_recommend.state._desktop_notify"),
+            patch("yt_dont_recommend.state._ntfy_notify"),
+        ):
+            ydr.write_attention("something broke")
+        assert af.exists()
+
+
+# ---------------------------------------------------------------------------
+# check_attention_flag — pending-alerts banner
+# ---------------------------------------------------------------------------
+
+class TestCheckAttentionFlag:
+    def test_no_file_is_noop(self, tmp_path, monkeypatch, capsys):
+        af = tmp_path / "needs-attention.txt"
+        monkeypatch.setattr("yt_dont_recommend.state.ATTENTION_FILE", af)
+        ydr.check_attention_flag()
+        assert capsys.readouterr().out == ""
+
+    def test_empty_file_is_deleted(self, tmp_path, monkeypatch, capsys):
+        af = tmp_path / "needs-attention.txt"
+        af.write_text("   \n  ", encoding="utf-8")
+        monkeypatch.setattr("yt_dont_recommend.state.ATTENTION_FILE", af)
+        ydr.check_attention_flag()
+        assert not af.exists()
+        assert capsys.readouterr().out == ""
+
+    def test_populated_file_prints_banner_non_tty(self, tmp_path, monkeypatch, capsys):
+        af = tmp_path / "needs-attention.txt"
+        af.write_text("[2026-04-20] selector broke\n", encoding="utf-8")
+        monkeypatch.setattr("yt_dont_recommend.state.ATTENTION_FILE", af)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        ydr.check_attention_flag()
+        out = capsys.readouterr().out
+        assert "ACTION REQUIRED" in out
+        assert "selector broke" in out
+        assert "--clear-alerts" in out
+
+    def test_populated_file_waits_for_input_when_tty(self, tmp_path, monkeypatch):
+        af = tmp_path / "needs-attention.txt"
+        af.write_text("[x] alert\n", encoding="utf-8")
+        monkeypatch.setattr("yt_dont_recommend.state.ATTENTION_FILE", af)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        with patch("builtins.input", return_value="") as mock_input:
+            ydr.check_attention_flag()
+        mock_input.assert_called_once()
