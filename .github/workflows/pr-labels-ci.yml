@@ -50,8 +50,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
         run: |
           # Look up the associated PR.
           # The API can 404 after a force-push (orphaned run).
@@ -106,8 +106,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
         run: |
           PR=""
           API_OUT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/pull_requests" \
