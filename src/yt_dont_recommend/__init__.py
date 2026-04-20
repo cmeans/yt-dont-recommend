@@ -215,7 +215,3 @@ def check_selectors(test_channel: str = "@YouTube") -> bool:
     """
     from .diagnostics import check_selectors as _check_selectors
     return _check_selectors(test_channel)
-
-
-if __name__ == "__main__":
-    main()

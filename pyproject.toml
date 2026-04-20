@@ -89,11 +89,6 @@ skip_empty = true
 # Regression guard: pure-logic modules are at 100%; browser.py/diagnostics.py
 # are Playwright-heavy and intentionally left at their natural (low) coverage.
 # 60% gives headroom for browser-module churn without flaking on PRs that don't
-# touch coverage at all.
+# touch coverage at all. No exclude_lines — any line reported as missed has to
+# be covered by a real test, deleted as dead code, or refactored to be testable.
 fail_under = 60
-exclude_lines = [
-    "pragma: no cover",
-    "if __name__ == .__main__.:",
-    "raise NotImplementedError",
-    "if TYPE_CHECKING:",
-]

@@ -20,6 +20,25 @@ class TestPluralHelper:
         assert cfg._n(2, "channel") == "2 channels"
 
 
+class TestResolveVersion:
+    def test_returns_installed_distribution_version(self):
+        """Happy path — the installed version string."""
+        v = cfg._resolve_version()
+        assert isinstance(v, str)
+        assert v  # non-empty
+
+    def test_falls_back_to_0_0_0_when_metadata_unavailable(self, monkeypatch):
+        """When importlib.metadata.version() raises (e.g. editable install
+        without distribution metadata), _resolve_version returns "0.0.0"."""
+        import importlib.metadata
+
+        def boom(_name):
+            raise importlib.metadata.PackageNotFoundError("yt-dont-recommend")
+
+        monkeypatch.setattr(importlib.metadata, "version", boom)
+        assert cfg._resolve_version() == "0.0.0"
+
+
 class TestEnsureDataDir:
     def test_chmods_directory_when_permissions_too_open(self, tmp_path, monkeypatch):
         """If the data dir exists with overly-permissive mode, ensure_data_dir
