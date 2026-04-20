@@ -50,9 +50,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id || 'none' }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || 'none' }}
         run: |
+          # Read workflow_run fields directly from the event payload on disk.
+          # $GITHUB_EVENT_PATH is always set on GitHub-hosted runners.
+          # Going through jq -r avoids the ${{ }} expression surface entirely
+          # (which previously broke queue-time parsing on workflow_dispatch /
+          # push validation). jq is pre-installed on ubuntu-latest.
+          # Shell-injection safety: jq -r writes raw bytes into a shell
+          # variable via command substitution, and every subsequent use is
+          # double-quoted — same guarantee as the prior env: pattern.
+          RUN_ID=$(jq -r '.workflow_run.id // empty' "$GITHUB_EVENT_PATH")
+          HEAD_BRANCH=$(jq -r '.workflow_run.head_branch // empty' "$GITHUB_EVENT_PATH")
+
+          # Defensive: the job-level if: already filters to workflow_run
+          # events with a usable payload, but if somehow we land here with
+          # no RUN_ID (e.g. someone loosens the if: later), early-exit.
+          if [ -z "$RUN_ID" ]; then
+            echo "No workflow_run payload — exiting"
+            exit 0
+          fi
+
           # Look up the associated PR.
           # The API can 404 after a force-push (orphaned run).
           # Capture output only on success so 404 body doesn't leak into $PR.
@@ -61,9 +78,9 @@ jobs:
             --jq '.[0].number // empty' 2>&1) && PR="$API_OUT" || true
 
           # Fallback: pull_requests array is empty for dependabot PRs.
-          # Search by head branch instead. HEAD_BRANCH comes via env
-          # (not direct ${{ }} interpolation) because fork PR branch names
-          # are contributor-controlled and allow shell metacharacters.
+          # Search by head branch instead. HEAD_BRANCH came from jq (above),
+          # not direct ${{ }} interpolation — fork PR branch names are
+          # contributor-controlled and allow shell metacharacters.
           if [ -z "$PR" ]; then
             PR=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open \
               --json number --jq '.[0].number // empty' 2>/dev/null) || true
@@ -106,15 +123,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id || 'none' }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || 'none' }}
         run: |
+          # See on-ci-pass for the rationale behind reading workflow_run
+          # fields from $GITHUB_EVENT_PATH via jq rather than env: expressions.
+          RUN_ID=$(jq -r '.workflow_run.id // empty' "$GITHUB_EVENT_PATH")
+          HEAD_BRANCH=$(jq -r '.workflow_run.head_branch // empty' "$GITHUB_EVENT_PATH")
+
+          if [ -z "$RUN_ID" ]; then
+            echo "No workflow_run payload — exiting"
+            exit 0
+          fi
+
           PR=""
           API_OUT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/pull_requests" \
             --jq '.[0].number // empty' 2>&1) && PR="$API_OUT" || true
 
-          # HEAD_BRANCH comes via env (not direct ${{ }} interpolation)
-          # because fork PR branch names are contributor-controlled.
+          # HEAD_BRANCH came from jq (above), not direct ${{ }} interpolation —
+          # fork PR branch names are contributor-controlled.
           if [ -z "$PR" ]; then
             PR=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open \
               --json number --jq '.[0].number // empty' 2>/dev/null) || true
