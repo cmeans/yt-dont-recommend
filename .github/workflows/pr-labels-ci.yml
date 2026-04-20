@@ -53,9 +53,12 @@ jobs:
         run: |
           # Read workflow_run fields directly from the event payload on disk.
           # $GITHUB_EVENT_PATH is always set on GitHub-hosted runners.
-          # Going through jq -r avoids the ${{ }} expression surface entirely
-          # (which previously broke queue-time parsing on workflow_dispatch /
-          # push validation). jq is pre-installed on ubuntu-latest.
+          # Going through jq -r avoids the GitHub Actions expression surface
+          # entirely (which previously broke queue-time parsing on
+          # workflow_dispatch / push validation because GHA substitutes
+          # dollar-brace-brace sequences in run blocks *before* the shell
+          # sees them — including sequences inside shell comments).
+          # jq is pre-installed on ubuntu-latest.
           # Shell-injection safety: jq -r writes raw bytes into a shell
           # variable via command substitution, and every subsequent use is
           # double-quoted — same guarantee as the prior env: pattern.
@@ -79,7 +82,7 @@ jobs:
 
           # Fallback: pull_requests array is empty for dependabot PRs.
           # Search by head branch instead. HEAD_BRANCH came from jq (above),
-          # not direct ${{ }} interpolation — fork PR branch names are
+          # not a direct GHA expression — fork PR branch names are
           # contributor-controlled and allow shell metacharacters.
           if [ -z "$PR" ]; then
             PR=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open \
@@ -138,7 +141,7 @@ jobs:
           API_OUT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/pull_requests" \
             --jq '.[0].number // empty' 2>&1) && PR="$API_OUT" || true
 
-          # HEAD_BRANCH came from jq (above), not direct ${{ }} interpolation —
+          # HEAD_BRANCH came from jq (above), not a direct GHA expression —
           # fork PR branch names are contributor-controlled.
           if [ -z "$PR" ]; then
             PR=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open \
