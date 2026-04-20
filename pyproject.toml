@@ -21,6 +21,7 @@ Changelog = "https://github.com/cmeans/yt-dont-recommend/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-cov>=7.0",
     "pyyaml",
     "ruff",
 ]
@@ -61,3 +62,10 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["yt_dont_recommend"]
+
+[tool.coverage.run]
+source = ["yt_dont_recommend"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
