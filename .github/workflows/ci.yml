@@ -33,8 +33,16 @@ jobs:
       - name: Lint with ruff
         run: uv run ruff check src/ tests/
 
-      - name: Run tests
-        run: uv run pytest tests/ -v
+      - name: Run tests with coverage
+        run: uv run pytest --cov --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   smoke-macos:
     runs-on: macos-latest
