@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import yt_dont_recommend as ydr
+from yt_dont_recommend import blocklist as blocklist_mod
 
 # Canonical channel IDs used in tests (no leading /).
 # When a test needs to exercise the /@ or /channel/ prefix normalization path,
@@ -501,3 +502,100 @@ class TestExportState:
         assert "@alpha" in content
         assert "@beta" in content
         assert "# Total blocked channels: 2" in content
+
+
+# ---------------------------------------------------------------------------
+# _get_current_version_for_ua — fallback chain for UA string
+# ---------------------------------------------------------------------------
+
+class TestGetCurrentVersionForUA:
+    def test_uses_pkg_version_when_available(self):
+        with patch.object(ydr, "_get_current_version", return_value="1.2.3"):
+            assert blocklist_mod._get_current_version_for_ua() == "1.2.3"
+
+    def test_falls_back_to_config_version_on_primary_error(self):
+        with patch.object(ydr, "_get_current_version", side_effect=RuntimeError("boom")):
+            from yt_dont_recommend import config as cfg_mod
+            assert blocklist_mod._get_current_version_for_ua() == cfg_mod.__version__
+
+    def test_returns_unknown_when_all_lookups_fail(self, monkeypatch):
+        with patch.object(ydr, "_get_current_version", side_effect=RuntimeError("boom")):
+            # Make `from .config import __version__` fail by removing the attribute.
+            from yt_dont_recommend import config as cfg_mod
+            monkeypatch.delattr(cfg_mod, "__version__", raising=False)
+            assert blocklist_mod._get_current_version_for_ua() == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# parse_json_blocklist — list-of-strings URL-prefix normalization
+# ---------------------------------------------------------------------------
+
+class TestParseJsonListStringNormalization:
+    def test_slashed_handle_is_stripped(self):
+        raw = json.dumps(["/@slashedHandle"])
+        assert ydr.parse_json_blocklist(raw) == ["@slashedHandle"]
+
+    def test_slashed_channel_id_is_stripped(self):
+        raw = json.dumps(["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"])
+        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+
+
+# ---------------------------------------------------------------------------
+# parse_json_blocklist — dict entries with full http:// URLs
+# ---------------------------------------------------------------------------
+
+class TestParseJsonDictUrlBranches:
+    def test_dict_url_with_handle_path(self):
+        raw = json.dumps([{"url": "https://www.youtube.com/@someHandle"}])
+        assert ydr.parse_json_blocklist(raw) == ["@someHandle"]
+
+    def test_dict_url_with_channel_id_path(self):
+        raw = json.dumps([{"url": "https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"}])
+        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+
+    def test_dict_url_with_other_path_falls_back_to_path(self):
+        # Paths that are neither /@ nor /channel/ fall through and keep the path.
+        raw = json.dumps([{"url": "https://www.youtube.com/user/legacyName"}])
+        assert ydr.parse_json_blocklist(raw) == ["/user/legacyName"]
+
+
+# ---------------------------------------------------------------------------
+# fetch_remote — HTTP fetch and error path
+# ---------------------------------------------------------------------------
+
+class TestFetchRemote:
+    def test_success_returns_decoded_body(self, monkeypatch):
+        fake_body = b"@channel1\n@channel2\n"
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return fake_body
+
+        def fake_urlopen(req, timeout=30):
+            assert req.headers.get("User-agent", req.headers.get("User-Agent")).startswith("yt-dont-recommend/")
+            return FakeResponse()
+
+        monkeypatch.setattr(blocklist_mod, "urlopen", fake_urlopen)
+        assert blocklist_mod.fetch_remote("https://example.com/list.txt") == fake_body.decode("utf-8")
+
+    def test_failure_raises_runtime_error(self, monkeypatch):
+        def boom(req, timeout=30):
+            raise OSError("network down")
+
+        monkeypatch.setattr(blocklist_mod, "urlopen", boom)
+        with pytest.raises(RuntimeError, match=r"Failed to fetch https://example.com/list.txt: network down"):
+            blocklist_mod.fetch_remote("https://example.com/list.txt")
+
+
+# ---------------------------------------------------------------------------
+# channel_to_url — non-canonical fallback branch
+# ---------------------------------------------------------------------------
+
+class TestChannelToUrlFallback:
+    def test_bare_identifier_gets_youtube_prefix(self):
+        # channel doesn't start with http, @, or UC — fallback prepends youtube.com/
+        assert ydr.channel_to_url("LegacyName") == "https://www.youtube.com/LegacyName"

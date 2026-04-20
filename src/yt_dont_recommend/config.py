@@ -71,11 +71,21 @@ ATTENTION_FILE = Path.home() / ".yt-dont-recommend" / "needs-attention.txt"
 CONFIG_FILE = Path.home() / ".yt-dont-recommend" / "config.yaml"
 
 # Version — single source of truth is pyproject.toml; read at import time.
-try:
-    from importlib.metadata import version as _pkg_version
-    __version__: str = _pkg_version("yt-dont-recommend")
-except Exception:
-    __version__ = "0.0.0"  # fallback for editable installs without metadata
+def _resolve_version() -> str:
+    """Return the installed distribution version, or "0.0.0" when metadata is
+    unavailable (editable installs without `pip install -e .`).
+
+    Factored out so the fallback path is testable: the except branch is hit
+    by patching `importlib.metadata.version` to raise.
+    """
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("yt-dont-recommend")
+    except Exception:
+        return "0.0.0"
+
+
+__version__: str = _resolve_version()
 VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 
 # State schema version — bump this whenever the state file structure changes.

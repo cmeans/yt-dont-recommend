@@ -1,0 +1,304 @@
+"""
+Tests for yt_dont_recommend.config — covers areas not exercised elsewhere:
+ensure_data_dir permission correction, clear_profile_cache, pick_viewport,
+load_*_config loaders (yaml paths and fallbacks), setup_logging, and the
+non-selector branches of load_selectors_config / write_selector_overrides.
+"""
+
+import logging
+from unittest.mock import patch
+
+from yt_dont_recommend import config as cfg
+
+
+class TestPluralHelper:
+    def test_singular(self):
+        assert cfg._n(1, "channel") == "1 channel"
+
+    def test_plural(self):
+        assert cfg._n(0, "channel") == "0 channels"
+        assert cfg._n(2, "channel") == "2 channels"
+
+
+class TestResolveVersion:
+    def test_returns_installed_distribution_version(self):
+        """Happy path — the installed version string."""
+        v = cfg._resolve_version()
+        assert isinstance(v, str)
+        assert v  # non-empty
+
+    def test_falls_back_to_0_0_0_when_metadata_unavailable(self, monkeypatch):
+        """When importlib.metadata.version() raises (e.g. editable install
+        without distribution metadata), _resolve_version returns "0.0.0"."""
+        import importlib.metadata
+
+        def boom(_name):
+            raise importlib.metadata.PackageNotFoundError("yt-dont-recommend")
+
+        monkeypatch.setattr(importlib.metadata, "version", boom)
+        assert cfg._resolve_version() == "0.0.0"
+
+
+class TestEnsureDataDir:
+    def test_chmods_directory_when_permissions_too_open(self, tmp_path, monkeypatch):
+        """If the data dir exists with overly-permissive mode, ensure_data_dir
+        tightens it to 0o700."""
+        data = tmp_path / "data"
+        data.mkdir(mode=0o755)
+        profile = data / "browser-profile"
+        profile.mkdir(mode=0o755)
+        monkeypatch.setattr(cfg, "DATA_DIR", data)
+        monkeypatch.setattr(cfg, "PROFILE_DIR", profile)
+        cfg.ensure_data_dir()
+        import stat
+        assert stat.S_IMODE(data.stat().st_mode) == 0o700
+        assert stat.S_IMODE(profile.stat().st_mode) == 0o700
+
+
+class TestClearProfileCache:
+    def test_noop_when_profile_default_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cfg, "PROFILE_DIR", tmp_path / "profile")
+        cfg.clear_profile_cache()  # no error
+
+    def test_removes_known_cache_subdirs(self, tmp_path, monkeypatch):
+        profile = tmp_path / "profile"
+        default = profile / "Default"
+        (default / "Cache").mkdir(parents=True)
+        (default / "Code Cache").mkdir()
+        (default / "NonCache").mkdir()  # should be kept
+        monkeypatch.setattr(cfg, "PROFILE_DIR", profile)
+        cfg.clear_profile_cache()
+        assert not (default / "Cache").exists()
+        assert not (default / "Code Cache").exists()
+        assert (default / "NonCache").exists()
+
+
+class TestPickViewport:
+    def test_returns_a_pool_member_with_width_height(self):
+        vp = cfg.pick_viewport()
+        assert "width" in vp and "height" in vp
+        assert vp in cfg._VIEWPORT_POOL
+
+
+class TestLoadTimingConfig:
+    def test_no_file_returns_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cfg, "CONFIG_FILE", tmp_path / "config.yaml")
+        assert cfg.load_timing_config() == {}
+
+    def test_yaml_missing_returns_empty_and_warns(self, tmp_path, monkeypatch, caplog):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("timing:\n  min_delay: 5.0\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        with (
+            patch.dict("sys.modules", {"yaml": None}),
+            caplog.at_level(logging.WARNING, logger="yt_dont_recommend.config"),
+        ):
+            assert cfg.load_timing_config() == {}
+
+    def test_valid_file_returns_allowed_keys_only(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(
+            "timing:\n"
+            "  min_delay: 5.0\n"
+            "  max_delay: 9.0\n"
+            "  garbage: 1\n"
+        )
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        loaded = cfg.load_timing_config()
+        assert loaded == {"min_delay": 5.0, "max_delay": 9.0}
+
+    def test_non_dict_timing_section_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("timing: not-a-dict\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_timing_config() == {}
+
+    def test_unparseable_yaml_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("timing: : : : invalid\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_timing_config() == {}
+
+
+class TestLoadBrowserConfig:
+    def test_no_file_returns_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cfg, "CONFIG_FILE", tmp_path / "config.yaml")
+        assert cfg.load_browser_config() == {}
+
+    def test_yaml_missing_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("browser:\n  use_system_chrome: false\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        with patch.dict("sys.modules", {"yaml": None}):
+            assert cfg.load_browser_config() == {}
+
+    def test_valid_file_returns_use_system_chrome(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("browser:\n  use_system_chrome: false\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_browser_config() == {"use_system_chrome": False}
+
+    def test_non_dict_browser_section_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("browser: 'scalar'\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_browser_config() == {}
+
+    def test_unparseable_yaml_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("browser: : : invalid\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_browser_config() == {}
+
+
+class TestLoadScheduleConfig:
+    def test_no_file_returns_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cfg, "CONFIG_FILE", tmp_path / "config.yaml")
+        assert cfg.load_schedule_config() == {}
+
+    def test_yaml_missing_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("schedule:\n  blocklist_runs: 2\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        with patch.dict("sys.modules", {"yaml": None}):
+            assert cfg.load_schedule_config() == {}
+
+    def test_full_schedule_block_loaded(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(
+            "schedule:\n"
+            "  blocklist_runs: 2\n"
+            "  clickbait_runs: 4\n"
+            "  headless: false\n"
+        )
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        loaded = cfg.load_schedule_config()
+        assert loaded == {"blocklist_runs": 2, "clickbait_runs": 4, "headless": False}
+
+    def test_non_dict_schedule_section_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("schedule: 42\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_schedule_config() == {}
+
+    def test_unparseable_yaml_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("schedule: : :\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_schedule_config() == {}
+
+
+class TestLoadSelectorsConfigExtraBranches:
+    """Covers the selectors loader branches not exercised by test_selectors.py."""
+
+    def test_yaml_missing_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("selectors:\n  feed_card: foo\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        with patch.dict("sys.modules", {"yaml": None}):
+            assert cfg.load_selectors_config() == {}
+
+    def test_non_dict_selectors_section_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("selectors: 'scalar'\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_selectors_config() == {}
+
+    def test_invalid_type_for_list_key_is_skipped(self, tmp_path, monkeypatch):
+        """Integer provided for a list-typed key → silently skipped."""
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("selectors:\n  menu_buttons: 42\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_selectors_config() == {}
+
+    def test_list_value_for_string_key_joined_with_comma(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(
+            "selectors:\n"
+            "  feed_card:\n"
+            "    - one\n"
+            "    - two\n"
+        )
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        loaded = cfg.load_selectors_config()
+        assert loaded["feed_card"] == "one, two"
+
+    def test_invalid_type_for_string_key_skipped(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("selectors:\n  feed_card: 123\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_selectors_config() == {}
+
+    def test_unparseable_yaml_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("selectors: : :\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_selectors_config() == {}
+
+
+class TestWriteSelectorOverridesExistingNonDict:
+    def test_existing_selectors_non_dict_is_reset(self, tmp_path, monkeypatch):
+        """If config.yaml already has a `selectors:` key that is not a dict
+        (e.g. a list or scalar), write_selector_overrides resets it to a dict."""
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("selectors: broken_value\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        cfg.write_selector_overrides({"feed_card": "custom-card"})
+        # Re-read and verify it's a dict with our override present
+        import yaml
+        reloaded = yaml.safe_load(cfg_file.read_text())
+        assert isinstance(reloaded["selectors"], dict)
+        assert reloaded["selectors"]["feed_card"] == "custom-card"
+
+
+class TestSetupLogging:
+    def test_configures_root_handlers_and_sets_level(self, tmp_path, monkeypatch):
+        """setup_logging installs a rotating file handler + stream handler,
+        then suppresses httpx/httpcore."""
+        monkeypatch.setattr(cfg, "DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(cfg, "PROFILE_DIR", tmp_path / "data" / "browser-profile")
+        monkeypatch.setattr(cfg, "LOG_FILE", tmp_path / "data" / "run.log")
+
+        # Save and restore handlers to avoid polluting other tests.
+        root = logging.getLogger()
+        saved_handlers = list(root.handlers)
+        saved_level = root.level
+        try:
+            root.handlers.clear()
+            cfg.setup_logging(verbose=True)
+            # Both a RotatingFileHandler and a StreamHandler should be installed
+            assert any(isinstance(h, logging.handlers.RotatingFileHandler) for h in root.handlers)
+            assert any(isinstance(h, logging.StreamHandler) for h in root.handlers)
+            assert root.level == logging.DEBUG
+            # noisy modules muted
+            assert logging.getLogger("httpx").level == logging.WARNING
+            assert logging.getLogger("httpcore").level == logging.WARNING
+        finally:
+            # Close file handlers so tmp_path cleanup works on Windows-ish setups
+            for h in list(root.handlers):
+                try:
+                    h.close()
+                except Exception:
+                    pass
+            root.handlers = saved_handlers
+            root.setLevel(saved_level)
+
+    def test_non_verbose_sets_info_level(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cfg, "DATA_DIR", tmp_path / "data")
+        monkeypatch.setattr(cfg, "PROFILE_DIR", tmp_path / "data" / "browser-profile")
+        monkeypatch.setattr(cfg, "LOG_FILE", tmp_path / "data" / "run.log")
+        root = logging.getLogger()
+        saved_handlers = list(root.handlers)
+        saved_level = root.level
+        try:
+            root.handlers.clear()
+            cfg.setup_logging(verbose=False)
+            assert root.level == logging.INFO
+        finally:
+            for h in list(root.handlers):
+                try:
+                    h.close()
+                except Exception:
+                    pass
+            root.handlers = saved_handlers
+            root.setLevel(saved_level)

@@ -58,8 +58,6 @@ def parse_text_blocklist(raw: str) -> list[str]:
         # Strip inline comment: "@handle  # reason" → "@handle"
         if "#" in line:
             line = line[:line.index("#")].strip()
-        if not line:
-            continue
         # Strip leading slash: /@handle → @handle
         if line.startswith("/@"):
             line = line[1:]
