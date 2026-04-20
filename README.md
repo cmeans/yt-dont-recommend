@@ -1,5 +1,11 @@
 # YouTube "Don't Recommend Channel" Bulk Trainer
 
+[![PyPI version](https://img.shields.io/pypi/v/yt-dont-recommend)](https://pypi.org/project/yt-dont-recommend/)
+[![Python versions](https://img.shields.io/pypi/pyversions/yt-dont-recommend)](https://pypi.org/project/yt-dont-recommend/)
+[![License](https://img.shields.io/pypi/l/yt-dont-recommend)](https://github.com/cmeans/yt-dont-recommend/blob/main/LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/cmeans/yt-dont-recommend/ci.yml?label=CI)](https://github.com/cmeans/yt-dont-recommend/actions/workflows/ci.yml)
+[![Downloads](https://img.shields.io/pypi/dm/yt-dont-recommend)](https://pypi.org/project/yt-dont-recommend/)
+
 > **Early development / alpha:** This tool is functional and used daily by its author, but it is under active development with frequent releases. Breaking changes between versions are possible. **Auto-upgrade is not recommended** until the tool stabilises — enable it only if you are comfortable testing new features as they land and are willing to use `--revert` when something goes wrong.
 
 Automates YouTube's "Don't recommend channel" action in bulk, using any channel blocklist you provide. Because the signal is tied to your **Google account** (not the device), it trains the algorithm everywhere you're signed in — including Fire TV, mobile apps, smart TVs, and game consoles.
