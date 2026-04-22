@@ -76,7 +76,7 @@ If no target channels appear, watch and like 2–3 videos from a target channel 
 
 ### Step 3 — Block
 ```
-.venv/bin/python yt_dont_recommend.py --source /tmp/test-blocklist.txt
+.venv/bin/yt-dont-recommend --blocklist --source /tmp/test-blocklist.txt
 ```
 Watch the log output to confirm the channel was blocked. The script exits after exhausting the feed scroll.
 
@@ -87,7 +87,7 @@ Optionally, open `myactivity.google.com/page?page=youtube_user_feedback` in Chro
 Empty the blocklist file (or remove the channel from it) and re-run:
 ```
 echo "# empty" > /tmp/test-blocklist.txt
-.venv/bin/python yt_dont_recommend.py --source /tmp/test-blocklist.txt
+.venv/bin/yt-dont-recommend --blocklist --source /tmp/test-blocklist.txt
 ```
 The script will detect the removal, navigate to myactivity, and prompt for Google password verification in the browser window. Once verified, it finds and deletes the "Don't recommend" entry and dismisses the "Deletion complete" dialog automatically.
 
