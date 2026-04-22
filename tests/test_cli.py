@@ -188,8 +188,9 @@ class TestVersionHelpers:
 
         # Patch the importlib.metadata.version function at the source.
         monkeypatch.setattr(importlib.metadata, "version", boom)
+        from yt_dont_recommend import cli as cli_mod
         from yt_dont_recommend.cli import _get_current_version
-        assert isinstance(_get_current_version(), str)
+        assert _get_current_version() == cli_mod.__version__
 
     def test_version_tuple_valid(self):
         from yt_dont_recommend.cli import _version_tuple
