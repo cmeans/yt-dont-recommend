@@ -9,29 +9,29 @@ into the same Google account.
 
 Usage:
     # First run: will open browser for you to log into YouTube manually
-    python -m yt_dont_recommend --login
+    yt-dont-recommend --login
 
     # Subsequent runs: processes the blocklist
-    python -m yt_dont_recommend
+    yt-dont-recommend --blocklist
 
     # Dry run: just fetch and show the list without clicking anything
-    python -m yt_dont_recommend --dry-run
+    yt-dont-recommend --blocklist --dry-run
 
     # Use a built-in blocklist source
-    python -m yt_dont_recommend --source deslop
-    python -m yt_dont_recommend --source aislist
+    yt-dont-recommend --blocklist --source deslop
+    yt-dont-recommend --blocklist --source aislist
 
     # Use a local file
-    python -m yt_dont_recommend --source /path/to/my-blocklist.txt
+    yt-dont-recommend --blocklist --source /path/to/my-blocklist.txt
 
     # Use a remote URL
-    python -m yt_dont_recommend --source https://example.com/blocklist.txt
+    yt-dont-recommend --blocklist --source https://example.com/blocklist.txt
 
     # Limit number of channels to process (useful for testing)
-    python -m yt_dont_recommend --limit 10
+    yt-dont-recommend --blocklist --limit 10
 
     # Check whether current selectors still work against live YouTube
-    python -m yt_dont_recommend --check-selectors
+    yt-dont-recommend --check-selectors
 
 Requirements:
     pip install playwright --break-system-packages
@@ -46,7 +46,7 @@ Blocklist format (plain text):
     UCxxxxxxxxxxxxxxxxxxxxxxxx
 
 Author: Chris Means (generated with Claude)
-License: MIT
+License: Apache-2.0
 """
 
 import logging
