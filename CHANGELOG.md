@@ -20,6 +20,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Fixed
 
+- **Stale `python -m yt_dont_recommend` examples in the package module docstring** (closes #31): replaced every example in `src/yt_dont_recommend/__init__.py` with the `yt-dont-recommend` console-script form (the package has no `__main__.py`, so the `python -m` form never worked), and added the now-required `--blocklist` flag to each example. The same doc-drift affected `CLAUDE.md` § "End-to-End Test Cycle", which referenced a non-existent top-level `yt_dont_recommend.py` — updated to use the console-script form as well. Also corrected a stale `License: MIT` line in the module docstring to `License: Apache-2.0` to match the main-branch license switch.
 - **Scheduler catch-up spawn storm** (closes #17): after the host woke from sleep (or otherwise missed multiple consecutive scheduled slots), the heartbeat loop would spawn one full blocklist+clickbait run per missed slot back-to-back, resulting in three or more overlapping browser sessions fighting over the same Chromium profile. Stale missed slots are now coalesced into a single catch-up run.
 - PyPI badges for Python versions and License now render correctly. `pyproject.toml` now declares Trove classifiers (Python 3.10–3.13, `License :: OSI Approved :: Apache Software License`) and a string license field, which is what `shields.io/pypi/pyversions` and `shields.io/pypi/l` read.
 
