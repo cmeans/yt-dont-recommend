@@ -1,9 +1,6 @@
 # Virtual environment
 .venv/
 
-# Generated at publish time (strip TOC for PyPI)
-README-pypi.md
-
 # Python
 __pycache__/
 *.pyc
