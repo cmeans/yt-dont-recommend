@@ -4,10 +4,13 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+> **Note on pre-0.4.0 entries.** `CHANGELOG.md` was introduced in v0.4.0 (see that release's entry). Entries for v0.1.2 through v0.3.5 were written retroactively from project memory rather than from `git log` and do not always line up tag-for-tag with the commits actually included in each release. For authoritative history on those releases, consult `git log vX.Y.Z-1..vX.Y.Z` directly. Entries from v0.4.0 onward are release-time and intended to be accurate.
+
 ## [Unreleased]
 
 ### Added
 
+- **Test coverage push to 100% on pure-logic modules**: 188 new tests bring every pure-logic module (`__init__.py`, `blocklist.py`, `cli.py`, `clickbait.py`, `config.py`, `scheduler.py`, `state.py`) to 100% line coverage. Overall coverage rose from 44% to 64% — the gap is almost entirely `browser.py` / `diagnostics.py`, which are Playwright automation and are intentionally left at their natural (low) coverage. `pyproject.toml` now enforces `fail_under = 60` in `[tool.coverage.report]` as a regression guard, and `.coverage` / `coverage.xml` / `htmlcov/` are gitignored.
 - **Codecov coverage reporting** in CI: `pytest-cov>=7.0` added as a dev dependency, `[tool.coverage.*]` configuration added to `pyproject.toml`, and a `codecov/codecov-action@v5` upload step now runs on the Ubuntu CI job. A Codecov badge is displayed in the README.
 - README status badges (PyPI version, supported Python versions, license, CI, download count) and `.github/FUNDING.yml` for GitHub Sponsors — brings the project in line with the `cmeans/mcp-*` repo conventions.
 
@@ -30,6 +33,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **Ruff linting**: integrated ruff for code quality enforcement. Added to CI pipeline (runs before tests on every push/PR). All existing issues fixed.
 - Ruff config in `pyproject.toml` with per-file ignores for intentional patterns (late imports, re-exports).
 
+### Changed
+- **Data directory security**: `~/.yt-dont-recommend/` and the browser profile subdirectory are now created with mode `0o700` (owner-only), and existing installs with looser permissions are auto-tightened on startup. Browser cache subdirectories (Cache, Code Cache, GPUCache, Service Worker, and related) are cleared after every browser close — disk usage drops from ~470 MB to ~10 MB without affecting the persisted login session.
+- **`--check-selectors` summary** now labels the three contexts where "Don't recommend channel" is not expected to appear (search results, channel header, video watch page) as "expected (no option)" instead of "FAIL", so the report no longer looks alarming when the tool is working correctly. Only the home-feed test produces a real pass/fail.
+
 ### Fixed
 - Removed unused imports (`VIDEO_SELECTORS`, `MENU_BTN_SELECTORS`, `MENU_ITEM_SELECTOR`, `TARGET_PHRASES`) left over from the selector registry refactor in browser.py.
 - Fixed ambiguous variable names (`l` → `line`) in scheduler.py.
@@ -48,27 +55,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 - **Configurable selector registry**: all CSS selectors and text phrases used for YouTube DOM interaction are now overridable via the `selectors:` section in `config.yaml`. Enables users to fix selector breakage without waiting for a code update, and supports non-English YouTube via localized menu text phrases (`dont_recommend_phrases`, `not_interested_phrase`).
 - `get_selectors()` function merges code defaults with user overrides from config.
 - `config.example.yaml` documents all overridable selector keys.
+- **CHANGELOG.md** introduced at the project root.
 
 ### Fixed
 - First feed pass summary (`Pass: N cards, M with channel links`) is now always logged, even in blocklist-only mode with no matches. Provides selector health proof in every run's log.
+- **Clickbait classification accuracy and reliability** (PR #5): tightened few-shot examples, added prefilters for known-safe title patterns, and rewrote the prompt to reduce false positives on news, music, science, and movie clip titles.
+- **Feed pipeline correctness** (PR #6): UCxxx-to-handle upgrade, stale card handling, and `/channel/UCxxx` normalization so channels appearing in the feed under either handle form are matched consistently.
+- **Log clarity** (PR #7): removed duplicate dry-run lines, truncated Ollama response bodies in debug output, and trimmed per-card debug noise.
+- **UCxxx upgrade fallback and cache-hit logging** (PR #8): if the handle resolution network call fails, the tool now falls back cleanly instead of aborting the scan, and cache-hit paths log so you can confirm the resolver is short-circuiting correctly.
 
 ## [0.3.5] - 2026-03-12
 
 ### Added
-- **Batch clickbait classification**: titles are sent to the LLM in batches of 10 instead of one at a time (~5x throughput improvement).
-- **Cross-run classification cache**: video IDs are cached in state for 14 days, skipping re-evaluation on subsequent runs.
-- **Shadow-limit detection**: if YouTube keeps showing videos the tool already marked "Not interested", it warns and stops (possible account-level rate limiting).
-- **Heartbeat gate**: `--heartbeat` skips spawning a run if the previous one is still alive (PID check).
+- **Batch clickbait classification** (PR #3): titles are sent to the LLM in batches of 10 instead of one at a time (~5x throughput improvement).
+- **Cross-run classification cache** (PR #4): video IDs are cached in state for 14 days, skipping re-evaluation on subsequent runs.
+- **Shadow-limit detection** (PR #4): if YouTube keeps showing videos the tool already marked "Not interested", it warns and stops (possible account-level rate limiting).
+- **Heartbeat gate** (PR #4): `--heartbeat` skips spawning a run if the previous one is still alive (PID check).
+- **State schema v3** (PR #4): adds `clickbait_cache` and `clickbait_acted` keys to support the cross-run cache and shadow-limit detection; `STATE_VERSION` bumped from 2 to 3.
 - **JSON feed extraction** (PR #2): video titles and channel handles extracted from `window.ytInitialData` JSON and continuation responses, replacing fragile DOM scraping for initial page load and scrolled content.
 - Continuation response interception via `page.on("response")` for live JSON updates during scroll.
 - `lockupViewModel` support (YouTube 2026+ schema) with `videoRenderer` fallback.
 
 ### Fixed
 - Batch classification timeout increased from 300s to 600s default.
-- Clickbait few-shot examples, prefilters, and prompt improvements (PR #5): reduced false positives on news, music, science, and movie clip titles.
-- Feed pipeline correctness (PR #6): UCxxx-to-handle upgrade, stale card handling, `/channel/UCxxx` normalization.
-- Log clarity improvements (PR #7): duplicate dry-run lines, Ollama response truncation in logs, per-card debug noise reduction.
-- UCxxx upgrade fallback and cache-hit logging (PR #8).
 
 ## [0.3.4] - 2026-03-11
 
@@ -111,9 +120,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [0.2.9] - 2026-03-08
 
+### Added
+- `auto_pull` config option for clickbait Ollama models (pulls the configured model automatically when missing).
+- Per-pass DEBUG summary for the clickbait scan.
+
+### Changed
+- **State schema v2**: removed the redundant `state["processed"]` list; `blocked_by.keys()` is now the single source of truth for which channels have been handled. `load_state()` migrates older files in place and logs the migration.
+- Single-source version resolution via `importlib.metadata` with a fallback for editable installs; `plistlib` import moved to lazy so non-macOS runs avoid the cost.
+- First-run message now includes a YouTube Terms of Service note.
+
 ### Fixed
 - Login detection false negative.
-- `auto_pull` config option for Ollama models.
+- `--no-limit` flag was broken (the cap still applied).
+- Scroll jitter was not randomized.
+- Asymmetric jitter windows corrected.
+- Noqa placement fixes in `browser.py`.
 - Clickbait prompt improvements.
 
 ## [0.2.8] - 2026-03-07
@@ -214,9 +235,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [0.1.22] - 2026-03-03
 
+### Changed
+- **Package restructured into `src/yt_dont_recommend/` layout** (PR #1 and follow-up commit `Complete src layout`): state, blocklist, and scheduler code extracted into dedicated modules, tests split accordingly. `test_yt_dont_recommend.py` was replaced by per-module test files (`test_state.py`, `test_blocklist.py`, `test_scheduler.py`, etc.). No user-visible behavior change — preparatory groundwork for the later `clickbait.py`, `browser.py`, `unblock.py`, and `diagnostics.py` splits.
+
 ### Fixed
-- Multiple pending-unblock bugs: retry tracking, display-name lookup failures.
+- Multiple pending-unblock bugs: retry tracking, display-name lookup failures, double verification, infinite retry loop.
+- State clobbering in `_perform_browser_unblocks`.
 - Missing attention alerts on unblock failures.
+- CI: generate `README-pypi.md` before the package install step so the publish job doesn't see a stale README.
 
 ## [0.1.21] - 2026-03-03
 
