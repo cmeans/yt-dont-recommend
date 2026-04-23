@@ -411,6 +411,48 @@ class TestSaveStateBranches:
 
 
 # ---------------------------------------------------------------------------
+# _escape_applescript — pure-function AppleScript string escape
+# ---------------------------------------------------------------------------
+
+class TestEscapeAppleScript:
+    def test_plain_string_unchanged(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("hello world 123") == "hello world 123"
+
+    def test_escapes_double_quote(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript('he said "hi"') == 'he said \\"hi\\"'
+
+    def test_escapes_backslash(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("path\\foo") == "path\\\\foo"
+
+    def test_escapes_newline(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("line1\nline2") == "line1\\nline2"
+
+    def test_escapes_carriage_return(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("a\rb") == "a\\rb"
+
+    def test_escapes_tab(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("col1\tcol2") == "col1\\tcol2"
+
+    def test_backslash_before_quote_ordering(self):
+        # input: backslash then quote (2 chars)
+        # expected: escaped-backslash then escaped-quote (4 chars: \\\")
+        # regression guard: if backslash is escaped AFTER quote, the backslash
+        # we inserted to escape the quote would itself get re-escaped.
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript('\\"') == '\\\\\\"'
+
+    def test_empty_string(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("") == ""
+
+
+# ---------------------------------------------------------------------------
 # _desktop_notify — platform-specific subprocess calls
 # ---------------------------------------------------------------------------
 
