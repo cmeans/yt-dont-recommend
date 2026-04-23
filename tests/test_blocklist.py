@@ -731,3 +731,21 @@ class TestResolveSourceSchemes:
         monkeypatch.setattr(ydr, "fetch_remote", lambda url: "@HttpsChannel\n")
         result = ydr.resolve_source("https://example.com/list.txt")
         assert result == ["@HttpsChannel"]
+
+    def test_rejects_http_uppercase(self, caplog):
+        # Case-insensitive scheme check — HTTP:// must hit the friendly rejection
+        # path, not fall through to the local-file branch.
+        import logging
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SystemExit) as exc:
+                ydr.resolve_source("HTTP://example.com/list.txt")
+        assert exc.value.code == 1
+        assert any(
+            "http://" in r.message and "https://" in r.message
+            for r in caplog.records
+        ), f"expected an error mentioning http:// and https://; got: {[r.message for r in caplog.records]}"
+
+    def test_accepts_https_uppercase(self, monkeypatch):
+        monkeypatch.setattr(ydr, "fetch_remote", lambda url: "@HttpsChannel\n")
+        result = ydr.resolve_source("HTTPS://example.com/list.txt")
+        assert result == ["@HttpsChannel"]

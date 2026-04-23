@@ -187,7 +187,8 @@ def resolve_source(source: str, quiet: bool = False) -> list[str]:
         log.info(f"Fetched {len(channels)} channels from {info['name']}")
         return channels
 
-    if source.startswith("http://"):
+    scheme_lc = source[:8].lower()
+    if scheme_lc.startswith("http://"):
         log.error(
             "Refusing insecure http:// source: %s. Use https:// instead, "
             "or serve the file locally and pass a local file path.",
@@ -195,7 +196,7 @@ def resolve_source(source: str, quiet: bool = False) -> list[str]:
         )
         sys.exit(1)
 
-    if source.startswith("https://"):
+    if scheme_lc.startswith("https://"):
         if not quiet:
             log.info(f"Fetching remote blocklist: {source}")
         raw = _fetch(source)
