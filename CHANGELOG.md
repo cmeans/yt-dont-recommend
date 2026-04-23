@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-22
+
 ### Added
 
 - **QA workflow and PR label state machine** (PR #19): `.github/workflows/qa-gate.yml`, `pr-labels.yml`, `pr-labels-ci.yml`, `sync-labels.yml`, and `.github/labels.yml` define a full state machine for PR review — `Awaiting CI` → `Ready for QA` → `QA Active` → `Ready for QA Signoff` / `QA Failed` → `QA Approved` — with a required `QA Gate` status check that gates merge until the maintainer applies `QA Approved`. Documented in `CLAUDE.md` § "PR & Label Workflow". Brings this repo in line with the `cmeans/mcp-*` conventions.
