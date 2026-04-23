@@ -693,6 +693,23 @@ class TestParserValidation:
         result = ydr.parse_json_blocklist(raw_json)
         assert result == ["@valid-channel", "@also-valid"]
 
+    def test_json_parser_drops_invalid_dict_keys(self):
+        # Dict-keyed branch: keys start with @ or UC but fail structural validation.
+        # UC keys with wrong length and @ keys containing invalid characters must
+        # be dropped, exercising the dict-branch canonicalize failure path.
+        raw_json = json.dumps({
+            "@valid-channel": {},
+            "UCshort": {},                  # UC prefix but too short
+            "@bad space": {},               # @ prefix but contains space
+            "UC" + "A" * 22: {},            # valid 24-char ID
+        })
+        result = ydr.parse_json_blocklist(raw_json)
+        assert "@valid-channel" in result
+        assert "UC" + "A" * 22 in result
+        assert "UCshort" not in result
+        assert "@bad space" not in result
+        assert len(result) == 2
+
 
 # ---------------------------------------------------------------------------
 # resolve_source — scheme restrictions (#42)
