@@ -368,7 +368,7 @@ The interchange format is plain text:
 # Entries are YouTube channel paths:
 @SomeHandle
 @AnotherChannel
-UCxxxxxxxxxxxxxxxxxxxxxxxx
+UCxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 This matches the DeSlop format and is trivial to create, share, and parse.

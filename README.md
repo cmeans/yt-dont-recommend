@@ -315,7 +315,7 @@ Plain text, one channel per line. Full-line comments start with `#`. Inline `#` 
 # My custom blocklist
 @SomeHandle
 @AnotherChannel           # optional note about why this is here
-UCxxxxxxxxxxxxxxxxxxxxxxxx
+UCxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 This format is shared with the [DeSlop](https://github.com/NikoboiNFTB/DeSlop) project. You can point `--source` at any file or URL using this format, or at JSON files using common channel object schemas.
