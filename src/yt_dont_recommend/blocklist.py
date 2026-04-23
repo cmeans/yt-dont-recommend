@@ -10,6 +10,7 @@ patch("yt_dont_recommend.fetch_remote") works correctly in tests.
 
 import json
 import logging
+import re
 import sys
 
 log = logging.getLogger(__name__)
@@ -19,6 +20,16 @@ from urllib.request import Request, urlopen
 
 from .config import BUILTIN_SOURCES
 from .state import save_state
+
+_HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]+$")
+_CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+
+
+def _canonicalize_channel(raw: str) -> str | None:
+    s = raw.strip()
+    if _HANDLE_RE.match(s) or _CHANNEL_ID_RE.match(s):
+        return s
+    return None
 
 
 def _pkg():
@@ -44,13 +55,16 @@ def parse_text_blocklist(raw: str) -> list[str]:
 
     Supports # and ! comment prefixes (full-line and inline).
     Normalizes all variants to canonical form: @handle or UCxxx.
+    Invalid entries are silently dropped; a single WARNING is emitted
+    if any were dropped.
 
     Examples of valid lines:
         @SomeChannel
         @SomeChannel  # optional inline note
-        UCxxxxxxxxxxxxxxxxxxxxxxxx
+        UCxxxxxxxxxxxxxxxxxxxxxx
     """
     channels = []
+    dropped = 0
     for line in raw.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("!"):
@@ -64,7 +78,14 @@ def parse_text_blocklist(raw: str) -> list[str]:
         # Strip /channel/ prefix: /channel/UCxxx → UCxxx
         elif line.startswith("/channel/"):
             line = line[len("/channel/"):]
-        channels.append(line)
+        canonical = _canonicalize_channel(line)
+        if canonical is None:
+            dropped += 1
+        else:
+            channels.append(canonical)
+    if dropped:
+        log.warning("Dropped %d invalid channel %s from blocklist", dropped,
+                    "entry" if dropped == 1 else "entries")
     return channels
 
 
@@ -72,8 +93,11 @@ def parse_json_blocklist(raw: str) -> list[str]:
     """Parse JSON blocklist. Handles several common formats.
 
     All results are normalized to canonical form: @handle or UCxxx.
+    Invalid entries are silently dropped; a single WARNING is emitted
+    if any were dropped.
     """
     channels = []
+    dropped = 0
     try:
         data = json.loads(raw)
         if isinstance(data, list):
@@ -84,7 +108,11 @@ def parse_json_blocklist(raw: str) -> list[str]:
                         entry = entry[1:]
                     elif entry.startswith("/channel/"):
                         entry = entry[len("/channel/"):]
-                    channels.append(entry)
+                    canonical = _canonicalize_channel(entry)
+                    if canonical is None:
+                        dropped += 1
+                    else:
+                        channels.append(canonical)
                 elif isinstance(entry, dict):
                     for key in ("channelHandle", "handle", "channelId", "id", "url"):
                         if key in entry:
@@ -103,17 +131,26 @@ def parse_json_blocklist(raw: str) -> list[str]:
                                 pass  # already canonical
                             elif val.startswith("@"):
                                 pass  # already canonical
-                            channels.append(val)
+                            canonical = _canonicalize_channel(val)
+                            if canonical is None:
+                                dropped += 1
+                            else:
+                                channels.append(canonical)
                             break
         elif isinstance(data, dict):
             for key in data:
-                if key.startswith("UC"):
-                    channels.append(key)
-                elif key.startswith("@"):
-                    channels.append(key)
+                if key.startswith("UC") or key.startswith("@"):
+                    canonical = _canonicalize_channel(key)
+                    if canonical is None:
+                        dropped += 1
+                    else:
+                        channels.append(canonical)
     except json.JSONDecodeError:
         log.warning("Failed to parse as JSON; falling back to line-by-line text parsing")
         channels = parse_text_blocklist(raw)
+    if dropped:
+        log.warning("Dropped %d invalid channel %s from blocklist", dropped,
+                    "entry" if dropped == 1 else "entries")
     return channels
 
 
