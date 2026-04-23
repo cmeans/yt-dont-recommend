@@ -411,6 +411,48 @@ class TestSaveStateBranches:
 
 
 # ---------------------------------------------------------------------------
+# _escape_applescript — pure-function AppleScript string escape
+# ---------------------------------------------------------------------------
+
+class TestEscapeAppleScript:
+    def test_plain_string_unchanged(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("hello world 123") == "hello world 123"
+
+    def test_escapes_double_quote(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript('he said "hi"') == 'he said \\"hi\\"'
+
+    def test_escapes_backslash(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("path\\foo") == "path\\\\foo"
+
+    def test_escapes_newline(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("line1\nline2") == "line1\\nline2"
+
+    def test_escapes_carriage_return(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("a\rb") == "a\\rb"
+
+    def test_escapes_tab(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("col1\tcol2") == "col1\\tcol2"
+
+    def test_backslash_before_quote_ordering(self):
+        # input: backslash then quote (2 chars)
+        # expected: escaped-backslash then escaped-quote (4 chars: \\\")
+        # regression guard: if backslash is escaped AFTER quote, the backslash
+        # we inserted to escape the quote would itself get re-escaped.
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript('\\"') == '\\\\\\"'
+
+    def test_empty_string(self):
+        from yt_dont_recommend.state import _escape_applescript
+        assert _escape_applescript("") == ""
+
+
+# ---------------------------------------------------------------------------
 # _desktop_notify — platform-specific subprocess calls
 # ---------------------------------------------------------------------------
 
@@ -439,6 +481,54 @@ class TestDesktopNotify:
         with patch("yt_dont_recommend.state.subprocess.run",
                    side_effect=FileNotFoundError("notify-send missing")):
             _desktop_notify("hello")
+
+    def test_injection_payload_is_defanged(self, monkeypatch):
+        # The exact PoC from the security review awareness entry.
+        from yt_dont_recommend.state import _desktop_notify
+        monkeypatch.setattr("sys.platform", "darwin")
+        payload = '@evil"; do shell script "echo pwned"; display notification "'
+        with patch("yt_dont_recommend.state.subprocess.run") as m:
+            _desktop_notify(payload)
+        argv = m.call_args.args[0]
+        assert argv[0] == "osascript"
+        assert argv[1] == "-e"
+        script = argv[2]
+        # The outer template adds exactly 2 unescaped quotes (around the message)
+        # and 2 more around the title. Total unescaped = 4.
+        # Count by stripping every escaped \" first, then counting what's left.
+        unescaped_quotes = script.replace('\\"', "").count('"')
+        assert unescaped_quotes == 4, (
+            f"payload leaked unescaped quotes into AppleScript source: {script!r}"
+        )
+
+    def test_write_attention_with_malicious_channel_produces_safe_argv(
+        self, tmp_path, monkeypatch
+    ):
+        # End-to-end integration test: a crafted channel name travels through
+        # write_attention -> _desktop_notify and the resulting argv cannot
+        # break out of the AppleScript string literal.
+        import yt_dont_recommend as ydr
+        monkeypatch.setattr("sys.platform", "darwin")
+        monkeypatch.setattr(
+            "yt_dont_recommend.state.ATTENTION_FILE",
+            tmp_path / "needs-attention.txt",
+        )
+        # Mirror the shape of the unblock.py:237-243 message construction.
+        malicious_channel = '@evil"; do shell script "echo pwned"; x "'
+        msg = f"1 channel could not be unblocked automatically: {malicious_channel}. Visit myactivity…"
+        with patch("yt_dont_recommend.state.subprocess.run") as m:
+            with patch("yt_dont_recommend.state.urlopen") as _urlopen:
+                ydr.write_attention(msg)
+        # Filter to osascript calls since write_attention may also invoke ntfy.
+        osascript_calls = [
+            c for c in m.call_args_list if c.args and c.args[0] and c.args[0][0] == "osascript"
+        ]
+        assert osascript_calls, "expected an osascript call on darwin"
+        script = osascript_calls[0].args[0][2]
+        unescaped_quotes = script.replace('\\"', "").count('"')
+        assert unescaped_quotes == 4, (
+            f"malicious channel leaked unescaped quotes: {script!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

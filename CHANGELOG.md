@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Security
+
+- **AppleScript injection in `_desktop_notify` on macOS** (closes #40): `src/yt_dont_recommend/state.py` interpolated an untrusted `message` string directly into an `osascript -e` AppleScript argument. A double-quote in `message` closed the string literal and allowed arbitrary shell execution via `do shell script "…"`. Reachable on macOS via channel names in a blocklist because `parse_text_blocklist` / `parse_json_blocklist` did not validate entries — failure paths in `unblock.py` build attention messages that embed channel data verbatim. Fixed by adding a private `_escape_applescript` helper that escapes backslash, double-quote, newline, carriage return, and tab before interpolation. Linux (`notify-send`) was never affected — it takes the message as a separate argv element. Follow-up issue #41 adds parse-time validation as defense in depth.
+
 ### Fixed
 
 - **License badge rendering as "license missing"**: the README license badge pointed at `shields.io/pypi/l/yt-dont-recommend`, an endpoint whose PyPI license extractor is flaky and which GitHub's camo image proxy can cache in its failed state for hours. Switched to `shields.io/github/license/...`, which reads directly from the repository's detected license (the same "Apache-2.0 license" GitHub already shows in the sidebar) and is more reliable. Also corrected the stale `## License` body text in the README, which still read "MIT — see LICENSE" despite the v0.5.0 license switch.

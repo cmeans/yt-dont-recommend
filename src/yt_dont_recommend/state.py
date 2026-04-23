@@ -190,13 +190,27 @@ def save_state(state: AppState) -> None:
 
 # --- Attention notifications ---
 
+def _escape_applescript(s: str) -> str:
+    # Escape per the AppleScript Language Guide double-quoted-string rules.
+    # Backslash must be handled first so newly inserted backslashes from the
+    # other substitutions are not re-escaped.
+    return (
+        s.replace("\\", "\\\\")
+         .replace('"', '\\"')
+         .replace("\n", "\\n")
+         .replace("\r", "\\r")
+         .replace("\t", "\\t")
+    )
+
+
 def _desktop_notify(message: str) -> None:
     """Attempt a desktop notification. Fails silently if unavailable."""
     try:
         if sys.platform == "darwin":
+            safe = _escape_applescript(message)
             subprocess.run(
                 ["osascript", "-e",
-                 f'display notification "{message}" with title "yt-dont-recommend"'],
+                 f'display notification "{safe}" with title "yt-dont-recommend"'],
                 capture_output=True, timeout=5,
             )
         else:
