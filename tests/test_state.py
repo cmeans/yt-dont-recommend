@@ -509,7 +509,10 @@ class TestDesktopNotify:
         # break out of the AppleScript string literal.
         import yt_dont_recommend as ydr
         monkeypatch.setattr("sys.platform", "darwin")
-        monkeypatch.setattr(ydr, "ATTENTION_FILE", tmp_path / "needs-attention.txt")
+        monkeypatch.setattr(
+            "yt_dont_recommend.state.ATTENTION_FILE",
+            tmp_path / "needs-attention.txt",
+        )
         # Mirror the shape of the unblock.py:237-243 message construction.
         malicious_channel = '@evil"; do shell script "echo pwned"; x "'
         msg = f"1 channel could not be unblocked automatically: {malicious_channel}. Visit myactivity…"
