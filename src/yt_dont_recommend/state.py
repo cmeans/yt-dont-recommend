@@ -207,9 +207,10 @@ def _desktop_notify(message: str) -> None:
     """Attempt a desktop notification. Fails silently if unavailable."""
     try:
         if sys.platform == "darwin":
+            safe = _escape_applescript(message)
             subprocess.run(
                 ["osascript", "-e",
-                 f'display notification "{message}" with title "yt-dont-recommend"'],
+                 f'display notification "{safe}" with title "yt-dont-recommend"'],
                 capture_output=True, timeout=5,
             )
         else:

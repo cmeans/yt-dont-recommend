@@ -482,6 +482,51 @@ class TestDesktopNotify:
                    side_effect=FileNotFoundError("notify-send missing")):
             _desktop_notify("hello")
 
+    def test_injection_payload_is_defanged(self, monkeypatch):
+        # The exact PoC from the security review awareness entry.
+        from yt_dont_recommend.state import _desktop_notify
+        monkeypatch.setattr("sys.platform", "darwin")
+        payload = '@evil"; do shell script "echo pwned"; display notification "'
+        with patch("yt_dont_recommend.state.subprocess.run") as m:
+            _desktop_notify(payload)
+        argv = m.call_args.args[0]
+        assert argv[0] == "osascript"
+        assert argv[1] == "-e"
+        script = argv[2]
+        # The outer template adds exactly 2 unescaped quotes (around the message)
+        # and 2 more around the title. Total unescaped = 4.
+        # Count by stripping every escaped \" first, then counting what's left.
+        unescaped_quotes = script.replace('\\"', "").count('"')
+        assert unescaped_quotes == 4, (
+            f"payload leaked unescaped quotes into AppleScript source: {script!r}"
+        )
+
+    def test_write_attention_with_malicious_channel_produces_safe_argv(
+        self, tmp_path, monkeypatch
+    ):
+        # End-to-end integration test: a crafted channel name travels through
+        # write_attention -> _desktop_notify and the resulting argv cannot
+        # break out of the AppleScript string literal.
+        import yt_dont_recommend as ydr
+        monkeypatch.setattr("sys.platform", "darwin")
+        monkeypatch.setattr(ydr, "ATTENTION_FILE", tmp_path / "needs-attention.txt")
+        # Mirror the shape of the unblock.py:237-243 message construction.
+        malicious_channel = '@evil"; do shell script "echo pwned"; x "'
+        msg = f"1 channel could not be unblocked automatically: {malicious_channel}. Visit myactivity…"
+        with patch("yt_dont_recommend.state.subprocess.run") as m:
+            with patch("yt_dont_recommend.state.urlopen") as _urlopen:
+                ydr.write_attention(msg)
+        # Filter to osascript calls since write_attention may also invoke ntfy.
+        osascript_calls = [
+            c for c in m.call_args_list if c.args and c.args[0] and c.args[0][0] == "osascript"
+        ]
+        assert osascript_calls, "expected an osascript call on darwin"
+        script = osascript_calls[0].args[0][2]
+        unescaped_quotes = script.replace('\\"', "").count('"')
+        assert unescaped_quotes == 4, (
+            f"malicious channel leaked unescaped quotes: {script!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _ntfy_notify — success and failure
