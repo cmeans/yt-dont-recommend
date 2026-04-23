@@ -2,7 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/yt-dont-recommend)](https://pypi.org/project/yt-dont-recommend/)
 [![Python versions](https://img.shields.io/pypi/pyversions/yt-dont-recommend)](https://pypi.org/project/yt-dont-recommend/)
-[![License](https://img.shields.io/pypi/l/yt-dont-recommend)](https://github.com/cmeans/yt-dont-recommend/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/cmeans/yt-dont-recommend)](https://github.com/cmeans/yt-dont-recommend/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/cmeans/yt-dont-recommend/ci.yml?label=CI)](https://github.com/cmeans/yt-dont-recommend/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/cmeans/yt-dont-recommend/graph/badge.svg)](https://codecov.io/gh/cmeans/yt-dont-recommend)
 [![Downloads](https://img.shields.io/pypi/dm/yt-dont-recommend)](https://pypi.org/project/yt-dont-recommend/)
@@ -621,6 +621,8 @@ See [CHANGELOG.md](CHANGELOG.md) for a detailed history of all releases.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).
+
+Releases at or below v0.4.2 were published under MIT and remain MIT permanently.
 
 Copyright (c) 2026 Chris Means

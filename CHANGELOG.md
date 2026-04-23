@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Fixed
+
+- **License badge rendering as "license missing"**: the README license badge pointed at `shields.io/pypi/l/yt-dont-recommend`, an endpoint whose PyPI license extractor is flaky and which GitHub's camo image proxy can cache in its failed state for hours. Switched to `shields.io/github/license/...`, which reads directly from the repository's detected license (the same "Apache-2.0 license" GitHub already shows in the sidebar) and is more reliable. Also corrected the stale `## License` body text in the README, which still read "MIT — see LICENSE" despite the v0.5.0 license switch.
+
+### Changed
+
+- **Migrated `pyproject.toml` to PEP 639 SPDX license form**: `license = {text = "Apache-2.0"}` (deprecated) replaced with `license = "Apache-2.0"` and `license-files = ["LICENSE"]`. The redundant `License :: OSI Approved :: Apache Software License` classifier was removed per PEP 639 guidance — the SPDX expression is now the single source of truth for license metadata, and the classifier will be forbidden in a future setuptools release. Hatchling (the build backend used here) supports PEP 639 natively.
+
 ## [0.5.0] - 2026-04-22
 
 ### Added
