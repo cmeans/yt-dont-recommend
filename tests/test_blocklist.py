@@ -256,11 +256,11 @@ class TestResolveSource:
             result = ydr.resolve_source("https://example.com/channels.json")
         assert result == ["UCxxxxxxxxxxxxxxxxxxxxxx"]
 
-    def test_http_url_also_accepted(self):
-        with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = f"/{_C1}\n"
-            result = ydr.resolve_source("http://example.com/list.txt")
-        assert result == [_C1]
+    def test_http_url_rejected(self):
+        # http:// sources are refused — use https:// or a local file path instead.
+        with pytest.raises(SystemExit) as exc:
+            ydr.resolve_source("http://example.com/list.txt")
+        assert exc.value.code == 1
 
     def test_unknown_string_treated_as_file_path(self):
         # A string that's not a built-in key and not http(s):// should be
@@ -692,3 +692,25 @@ class TestParserValidation:
         raw_json = '["@valid-channel", "not-a-channel", "@also-valid"]'
         result = ydr.parse_json_blocklist(raw_json)
         assert result == ["@valid-channel", "@also-valid"]
+
+
+# ---------------------------------------------------------------------------
+# resolve_source — scheme restrictions (#42)
+# ---------------------------------------------------------------------------
+
+class TestResolveSourceSchemes:
+    def test_rejects_http(self, caplog):
+        import logging
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SystemExit) as exc:
+                ydr.resolve_source("http://example.com/list.txt")
+        assert exc.value.code == 1
+        assert any(
+            "http://" in r.message and "https://" in r.message
+            for r in caplog.records
+        ), f"expected an error mentioning http:// and https://; got: {[r.message for r in caplog.records]}"
+
+    def test_accepts_https(self, monkeypatch):
+        monkeypatch.setattr(ydr, "fetch_remote", lambda url: "@HttpsChannel\n")
+        result = ydr.resolve_source("https://example.com/list.txt")
+        assert result == ["@HttpsChannel"]
