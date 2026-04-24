@@ -20,7 +20,22 @@ from yt_dont_recommend import blocklist as blocklist_mod
 _C1 = "@channel1"
 _C2 = "@channel2"
 _HANDLE = "@HandleChannel"
-_UC = "UCxxxxxxxxxxxxxxxxxxxxxxxx"
+_UC = "UCxxxxxxxxxxxxxxxxxxxxxx"
+
+# Additional named constants for adversarial-input tests.
+_VALID = "@valid"
+_VALID_CH = "@valid-channel"
+_ANOTHER_VALID_CH = "@another-valid"
+_ALSO_VALID_CH = "@also-valid"
+
+# Distinct UC variants used by _canonicalize_channel validator tests.
+# Named by length so the test body can stay terse.
+_VALID_UC_A = "UC" + "A" * 22   # 24-char total — valid
+_SHORT_UC_A = "UC" + "A" * 21   # 23-char total — must reject
+_LONG_UC_A = "UC" + "A" * 23    # 25-char total — must reject
+
+# Lowercase-first-letter handle used only by the dict-mixed-keys test.
+_HANDLE_LC = "@handleChannel"
 
 
 # ---------------------------------------------------------------------------
@@ -33,24 +48,24 @@ class TestParseTextBlocklist:
         assert ydr.parse_text_blocklist(raw) == [_C1, _C2]
 
     def test_bare_at_handles(self):
-        raw = "@channel1\n@channel2\n"
-        assert ydr.parse_text_blocklist(raw) == ["@channel1", "@channel2"]
+        raw = f"{_C1}\n{_C2}\n"
+        assert ydr.parse_text_blocklist(raw) == [_C1, _C2]
 
     def test_channel_id_format(self):
-        raw = "/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx\n"
-        assert ydr.parse_text_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        raw = f"/channel/{_UC}\n"
+        assert ydr.parse_text_blocklist(raw) == [_UC]
 
     def test_bare_channel_id_format(self):
-        raw = "UCxxxxxxxxxxxxxxxxxxxxxxxx\n"
-        assert ydr.parse_text_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        raw = f"{_UC}\n"
+        assert ydr.parse_text_blocklist(raw) == [_UC]
 
     def test_comments_ignored(self):
         raw = f"# this is a comment\n/{_C1}\n# another comment\n"
         assert ydr.parse_text_blocklist(raw) == [_C1]
 
     def test_exclamation_comments_ignored(self):
-        raw = "! this is an aislist comment\n@channel1\n"
-        assert ydr.parse_text_blocklist(raw) == ["@channel1"]
+        raw = f"! this is an aislist comment\n{_C1}\n"
+        assert ydr.parse_text_blocklist(raw) == [_C1]
 
     def test_inline_comment_stripped(self):
         raw = f"{_C1}  # keeping this one\n{_C2}\n"
@@ -98,24 +113,24 @@ class TestParseTextBlocklist:
 
 class TestParseJsonBlocklist:
     def test_list_of_strings(self):
-        raw = json.dumps(["@channel1", "@channel2"])
-        assert ydr.parse_json_blocklist(raw) == ["@channel1", "@channel2"]
+        raw = json.dumps([_C1, _C2])
+        assert ydr.parse_json_blocklist(raw) == [_C1, _C2]
 
     def test_list_of_dicts_channel_handle_key(self):
-        raw = json.dumps([{"channelHandle": "@channel1"}])
-        assert ydr.parse_json_blocklist(raw) == ["@channel1"]
+        raw = json.dumps([{"channelHandle": _C1}])
+        assert ydr.parse_json_blocklist(raw) == [_C1]
 
     def test_list_of_dicts_handle_key(self):
-        raw = json.dumps([{"handle": "@channel2"}])
-        assert ydr.parse_json_blocklist(raw) == ["@channel2"]
+        raw = json.dumps([{"handle": _C2}])
+        assert ydr.parse_json_blocklist(raw) == [_C2]
 
     def test_list_of_dicts_channel_id_uc_prefix(self):
-        raw = json.dumps([{"channelId": "UCxxxxxxxxxxxxxxxxxxxxxxxx"}])
-        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        raw = json.dumps([{"channelId": _UC}])
+        assert ydr.parse_json_blocklist(raw) == [_UC]
 
     def test_list_of_dicts_full_youtube_url(self):
-        raw = json.dumps([{"url": "https://www.youtube.com/@channel1"}])
-        assert ydr.parse_json_blocklist(raw) == ["@channel1"]
+        raw = json.dumps([{"url": f"https://www.youtube.com/{_C1}"}])
+        assert ydr.parse_json_blocklist(raw) == [_C1]
 
     def test_list_of_dicts_key_priority_order(self):
         # channelHandle should be preferred over handle, id, etc.
@@ -124,22 +139,22 @@ class TestParseJsonBlocklist:
         assert result == ["@preferred"]
 
     def test_dict_keyed_by_channel_id(self):
-        raw = json.dumps({"UCxxxxxxxxxxxxxxxxxxxxxxxx": {"name": "Some Channel"}})
-        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        raw = json.dumps({_UC: {"name": "Some Channel"}})
+        assert ydr.parse_json_blocklist(raw) == [_UC]
 
     def test_dict_keyed_by_at_handle(self):
-        raw = json.dumps({"@channel1": {"name": "Channel One"}})
-        assert ydr.parse_json_blocklist(raw) == ["@channel1"]
+        raw = json.dumps({_C1: {"name": "Channel One"}})
+        assert ydr.parse_json_blocklist(raw) == [_C1]
 
     def test_dict_mixed_keys(self):
         raw = json.dumps({
-            "UCxxxxxxxxxxxxxxxxxxxxxxxx": {},
-            "@handleChannel": {},
+            _UC: {},
+            _HANDLE_LC: {},
             "unrelated-key": {},  # should be skipped
         })
         result = ydr.parse_json_blocklist(raw)
-        assert "UCxxxxxxxxxxxxxxxxxxxxxxxx" in result
-        assert "@handleChannel" in result
+        assert _UC in result
+        assert _HANDLE_LC in result
         assert len(result) == 2  # unrelated key skipped
 
     def test_invalid_json_falls_back_to_text_parse(self):
@@ -157,21 +172,21 @@ class TestParseJsonBlocklist:
     def test_list_mixed_strings_and_dicts(self):
         raw = json.dumps([
             "@string-channel",
-            {"channelId": "UCxxxxxxxxxxxxxxxxxxxxxxxx"},
+            {"channelId": _UC},
         ])
         result = ydr.parse_json_blocklist(raw)
         assert "@string-channel" in result
-        assert "UCxxxxxxxxxxxxxxxxxxxxxxxx" in result
+        assert _UC in result
 
     def test_null_value_in_dict_entry_skipped(self):
         # null channel values should be skipped without raising AttributeError
-        raw = json.dumps([{"channelHandle": None}, {"channelHandle": "@valid"}])
-        assert ydr.parse_json_blocklist(raw) == ["@valid"]
+        raw = json.dumps([{"channelHandle": None}, {"channelHandle": _VALID}])
+        assert ydr.parse_json_blocklist(raw) == [_VALID]
 
     def test_numeric_value_in_dict_entry_skipped(self):
         # numeric channel IDs should be skipped without raising AttributeError
-        raw = json.dumps([{"channelId": 12345}, {"channelHandle": "@valid"}])
-        assert ydr.parse_json_blocklist(raw) == ["@valid"]
+        raw = json.dumps([{"channelId": 12345}, {"channelHandle": _VALID}])
+        assert ydr.parse_json_blocklist(raw) == [_VALID]
 
 
 # ---------------------------------------------------------------------------
@@ -207,9 +222,9 @@ class TestResolveSource:
 
     def test_local_json_file(self, tmp_path):
         f = tmp_path / "list.json"
-        f.write_text(json.dumps(["@channel1", "@channel2"]))
+        f.write_text(json.dumps([_C1, _C2]))
         result = ydr.resolve_source(str(f))
-        assert result == ["@channel1", "@channel2"]
+        assert result == [_C1, _C2]
 
     def test_local_file_tilde_expansion(self, tmp_path, monkeypatch):
         # ~ should be expanded to home dir; fake it by using an absolute path
@@ -233,9 +248,9 @@ class TestResolveSource:
     def test_builtin_source_aislist_fetches_and_parses(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
             # AiSList uses plain text with ! comments and bare @handle entries
-            mock_fetch.return_value = "! comment\n@channel1\n@channel2\n"
+            mock_fetch.return_value = f"! comment\n{_C1}\n{_C2}\n"
             result = ydr.resolve_source("aislist")
-        assert result == ["@channel1", "@channel2"]
+        assert result == [_C1, _C2]
         mock_fetch.assert_called_once_with(ydr.BUILTIN_SOURCES["aislist"]["url"])
 
     def test_remote_url_text(self):
@@ -246,21 +261,21 @@ class TestResolveSource:
 
     def test_remote_url_json_sniffed_by_leading_bracket(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = json.dumps(["@channel1"])
+            mock_fetch.return_value = json.dumps([_C1])
             result = ydr.resolve_source("https://example.com/list.json")
-        assert result == ["@channel1"]
+        assert result == [_C1]
 
     def test_remote_url_json_sniffed_by_leading_brace(self):
         with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = json.dumps({"UCxxxxxxxxxxxxxxxxxxxxxxxx": {}})
+            mock_fetch.return_value = json.dumps({_UC: {}})
             result = ydr.resolve_source("https://example.com/channels.json")
-        assert result == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        assert result == [_UC]
 
-    def test_http_url_also_accepted(self):
-        with patch("yt_dont_recommend.fetch_remote") as mock_fetch:
-            mock_fetch.return_value = f"/{_C1}\n"
-            result = ydr.resolve_source("http://example.com/list.txt")
-        assert result == [_C1]
+    def test_http_url_rejected(self):
+        # http:// sources are refused — use https:// or a local file path instead.
+        with pytest.raises(SystemExit) as exc:
+            ydr.resolve_source("http://example.com/list.txt")
+        assert exc.value.code == 1
 
     def test_unknown_string_treated_as_file_path(self):
         # A string that's not a built-in key and not http(s):// should be
@@ -369,8 +384,8 @@ class TestExcludeFiltering:
         assert result == ["@a", "@b"]
 
     def test_exclude_channel_id_format(self):
-        channels = ["UCxxxxxxxxxxxxxxxxxxxxxxxx", "@keep"]
-        result = self._apply_exclude(channels, "UCxxxxxxxxxxxxxxxxxxxxxxxx\n")
+        channels = [_UC, "@keep"]
+        result = self._apply_exclude(channels, f"{_UC}\n")
         assert result == ["@keep"]
 
     def test_exclude_all_channels(self):
@@ -536,8 +551,8 @@ class TestParseJsonListStringNormalization:
         assert ydr.parse_json_blocklist(raw) == ["@slashedHandle"]
 
     def test_slashed_channel_id_is_stripped(self):
-        raw = json.dumps(["/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"])
-        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        raw = json.dumps([f"/channel/{_UC}"])
+        assert ydr.parse_json_blocklist(raw) == [_UC]
 
 
 # ---------------------------------------------------------------------------
@@ -550,13 +565,14 @@ class TestParseJsonDictUrlBranches:
         assert ydr.parse_json_blocklist(raw) == ["@someHandle"]
 
     def test_dict_url_with_channel_id_path(self):
-        raw = json.dumps([{"url": "https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxxxx"}])
-        assert ydr.parse_json_blocklist(raw) == ["UCxxxxxxxxxxxxxxxxxxxxxxxx"]
+        raw = json.dumps([{"url": f"https://www.youtube.com/channel/{_UC}"}])
+        assert ydr.parse_json_blocklist(raw) == [_UC]
 
-    def test_dict_url_with_other_path_falls_back_to_path(self):
-        # Paths that are neither /@ nor /channel/ fall through and keep the path.
+    def test_dict_url_with_other_path_is_dropped(self):
+        # Paths that are neither /@handle nor /channel/UCxxx are structurally
+        # invalid after normalization and must be dropped by _canonicalize_channel.
         raw = json.dumps([{"url": "https://www.youtube.com/user/legacyName"}])
-        assert ydr.parse_json_blocklist(raw) == ["/user/legacyName"]
+        assert ydr.parse_json_blocklist(raw) == []
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +581,7 @@ class TestParseJsonDictUrlBranches:
 
 class TestFetchRemote:
     def test_success_returns_decoded_body(self, monkeypatch):
-        fake_body = b"@channel1\n@channel2\n"
+        fake_body = f"{_C1}\n{_C2}\n".encode()
 
         class FakeResponse:
             def __enter__(self):
@@ -599,3 +615,152 @@ class TestChannelToUrlFallback:
     def test_bare_identifier_gets_youtube_prefix(self):
         # channel doesn't start with http, @, or UC — fallback prepends youtube.com/
         assert ydr.channel_to_url("LegacyName") == "https://www.youtube.com/LegacyName"
+
+
+# ---------------------------------------------------------------------------
+# _canonicalize_channel — regex-based structural validator
+# ---------------------------------------------------------------------------
+
+class TestCanonicalizeChannel:
+    def _call(self, raw):
+        from yt_dont_recommend.blocklist import _canonicalize_channel
+        return _canonicalize_channel(raw)
+
+    def test_valid_handle(self):
+        assert self._call("@SomeChannel") == "@SomeChannel"
+
+    def test_valid_channel_id(self):
+        assert self._call(_VALID_UC_A) == _VALID_UC_A
+
+    def test_handle_with_dot(self):
+        assert self._call("@foo.bar") == "@foo.bar"
+
+    def test_handle_with_underscore(self):
+        assert self._call("@foo_bar") == "@foo_bar"
+
+    def test_handle_with_hyphen(self):
+        assert self._call("@foo-bar") == "@foo-bar"
+
+    def test_handle_leading_whitespace_trimmed(self):
+        assert self._call("  @foo") == "@foo"
+
+    def test_handle_trailing_whitespace_trimmed(self):
+        assert self._call("@foo  ") == "@foo"
+
+    def test_uc_id_21_chars_rejected(self):
+        assert self._call(_SHORT_UC_A) is None
+
+    def test_uc_id_23_chars_rejected(self):
+        assert self._call(_LONG_UC_A) is None
+
+    def test_uc_id_wrong_prefix_rejected(self):
+        assert self._call("UX" + "A" * 22) is None
+        assert self._call("uc" + "A" * 22) is None
+
+    def test_handle_without_at_sign_rejected(self):
+        assert self._call("SomeChannel") is None
+
+    def test_empty_string_rejected(self):
+        assert self._call("") is None
+
+    def test_whitespace_only_rejected(self):
+        assert self._call("   ") is None
+
+    def test_injection_payload_rejected(self):
+        assert self._call('@evil"; do shell script "echo pwned"') is None
+
+    def test_newline_rejected(self):
+        assert self._call("@foo\nbar") is None
+
+    def test_path_traversal_rejected(self):
+        assert self._call("@../etc/passwd") is None
+
+    def test_query_string_rejected(self):
+        assert self._call("@foo?bar=baz") is None
+
+    def test_slash_in_handle_rejected(self):
+        assert self._call("@foo/path") is None
+
+
+# ---------------------------------------------------------------------------
+# Parser validation — invalid entries dropped, warning logged
+# ---------------------------------------------------------------------------
+
+class TestParserValidation:
+    """Both parsers must silently drop invalid channel identifiers."""
+
+    def test_text_parser_drops_invalid_entries(self):
+        # A bare word with no @ and no UC prefix is structurally invalid.
+        raw = "@valid-channel\ninvalid-bare-word\n@another-valid\n"
+        result = ydr.parse_text_blocklist(raw)
+        assert result == [_VALID_CH, _ANOTHER_VALID_CH]
+
+    def test_text_parser_logs_warning_on_invalid(self, caplog):
+        import logging
+        raw = "@valid\nbad-entry\n"
+        with caplog.at_level(logging.WARNING):
+            ydr.parse_text_blocklist(raw)
+        assert "Dropped" in caplog.text
+
+    def test_json_parser_drops_invalid_entries(self):
+        # A raw string list entry that looks like a bare word should be rejected.
+        raw_json = json.dumps([_VALID_CH, "not-a-channel", _ALSO_VALID_CH])
+        result = ydr.parse_json_blocklist(raw_json)
+        assert result == [_VALID_CH, _ALSO_VALID_CH]
+
+    def test_json_parser_drops_invalid_dict_keys(self):
+        # Dict-keyed branch: keys start with @ or UC but fail structural validation.
+        # UC keys with wrong length and @ keys containing invalid characters must
+        # be dropped, exercising the dict-branch canonicalize failure path.
+        raw_json = json.dumps({
+            _VALID_CH: {},
+            "UCshort": {},                  # UC prefix but too short
+            "@bad space": {},               # @ prefix but contains space
+            _VALID_UC_A: {},            # valid 24-char ID
+        })
+        result = ydr.parse_json_blocklist(raw_json)
+        assert _VALID_CH in result
+        assert _VALID_UC_A in result
+        assert "UCshort" not in result
+        assert "@bad space" not in result
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# resolve_source — scheme restrictions (#42)
+# ---------------------------------------------------------------------------
+
+class TestResolveSourceSchemes:
+    def test_rejects_http(self, caplog):
+        import logging
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SystemExit) as exc:
+                ydr.resolve_source("http://example.com/list.txt")
+        assert exc.value.code == 1
+        assert any(
+            "http://" in r.message and "https://" in r.message
+            for r in caplog.records
+        ), f"expected an error mentioning http:// and https://; got: {[r.message for r in caplog.records]}"
+
+    def test_accepts_https(self, monkeypatch):
+        monkeypatch.setattr(ydr, "fetch_remote", lambda url: "@HttpsChannel\n")
+        result = ydr.resolve_source("https://example.com/list.txt")
+        assert result == ["@HttpsChannel"]
+
+    def test_rejects_http_uppercase(self, caplog):
+        # Case-insensitive scheme check — HTTP:// must hit the friendly rejection
+        # path, not fall through to the local-file branch.
+        import logging
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SystemExit) as exc:
+                ydr.resolve_source("HTTP://example.com/list.txt")
+        assert exc.value.code == 1
+        assert any(
+            "http://" in r.message and "https://" in r.message
+            for r in caplog.records
+        ), f"expected an error mentioning http:// and https://; got: {[r.message for r in caplog.records]}"
+
+    def test_accepts_https_uppercase(self, monkeypatch):
+        monkeypatch.setattr(ydr, "fetch_remote", lambda url: "@HttpsChannel\n")
+        result = ydr.resolve_source("HTTPS://example.com/list.txt")
+        assert result == ["@HttpsChannel"]

@@ -43,7 +43,7 @@ Blocklist format (plain text):
     # Entries are YouTube channel handles or IDs:
     @SomeHandle
     @AnotherChannel
-    UCxxxxxxxxxxxxxxxxxxxxxxxx
+    UCxxxxxxxxxxxxxxxxxxxxxx
 
 Author: Chris Means (generated with Claude)
 License: Apache-2.0

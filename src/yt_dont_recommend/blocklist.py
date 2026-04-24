@@ -10,6 +10,7 @@ patch("yt_dont_recommend.fetch_remote") works correctly in tests.
 
 import json
 import logging
+import re
 import sys
 
 log = logging.getLogger(__name__)
@@ -19,6 +20,21 @@ from urllib.request import Request, urlopen
 
 from .config import BUILTIN_SOURCES
 from .state import save_state
+
+# YouTube URL-path markers — used by both parsers to strip leading forms like
+# "/@handle" or "/channel/UCxxx" down to their canonical identifier.
+_CHANNEL_PATH_PREFIX = "/channel/"
+_HANDLE_SLASH_PREFIX = "/@"
+
+_HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]+$")
+_CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+
+
+def _canonicalize_channel(raw: str) -> str | None:
+    s = raw.strip()
+    if _HANDLE_RE.match(s) or _CHANNEL_ID_RE.match(s):
+        return s
+    return None
 
 
 def _pkg():
@@ -44,13 +60,16 @@ def parse_text_blocklist(raw: str) -> list[str]:
 
     Supports # and ! comment prefixes (full-line and inline).
     Normalizes all variants to canonical form: @handle or UCxxx.
+    Invalid entries are silently dropped; a single WARNING is emitted
+    if any were dropped.
 
     Examples of valid lines:
         @SomeChannel
         @SomeChannel  # optional inline note
-        UCxxxxxxxxxxxxxxxxxxxxxxxx
+        UCxxxxxxxxxxxxxxxxxxxxxx
     """
     channels = []
+    dropped = 0
     for line in raw.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("!"):
@@ -59,12 +78,19 @@ def parse_text_blocklist(raw: str) -> list[str]:
         if "#" in line:
             line = line[:line.index("#")].strip()
         # Strip leading slash: /@handle → @handle
-        if line.startswith("/@"):
+        if line.startswith(_HANDLE_SLASH_PREFIX):
             line = line[1:]
         # Strip /channel/ prefix: /channel/UCxxx → UCxxx
-        elif line.startswith("/channel/"):
-            line = line[len("/channel/"):]
-        channels.append(line)
+        elif line.startswith(_CHANNEL_PATH_PREFIX):
+            line = line[len(_CHANNEL_PATH_PREFIX):]
+        canonical = _canonicalize_channel(line)
+        if canonical is None:
+            dropped += 1
+        else:
+            channels.append(canonical)
+    if dropped:
+        log.warning("Dropped %d invalid channel %s from blocklist", dropped,
+                    "entry" if dropped == 1 else "entries")
     return channels
 
 
@@ -72,19 +98,26 @@ def parse_json_blocklist(raw: str) -> list[str]:
     """Parse JSON blocklist. Handles several common formats.
 
     All results are normalized to canonical form: @handle or UCxxx.
+    Invalid entries are silently dropped; a single WARNING is emitted
+    if any were dropped.
     """
     channels = []
+    dropped = 0
     try:
         data = json.loads(raw)
         if isinstance(data, list):
             for entry in data:
                 if isinstance(entry, str):
                     # Normalize /@handle → @handle, /channel/UCxxx → UCxxx
-                    if entry.startswith("/@"):
+                    if entry.startswith(_HANDLE_SLASH_PREFIX):
                         entry = entry[1:]
-                    elif entry.startswith("/channel/"):
-                        entry = entry[len("/channel/"):]
-                    channels.append(entry)
+                    elif entry.startswith(_CHANNEL_PATH_PREFIX):
+                        entry = entry[len(_CHANNEL_PATH_PREFIX):]
+                    canonical = _canonicalize_channel(entry)
+                    if canonical is None:
+                        dropped += 1
+                    else:
+                        channels.append(canonical)
                 elif isinstance(entry, dict):
                     for key in ("channelHandle", "handle", "channelId", "id", "url"):
                         if key in entry:
@@ -93,27 +126,36 @@ def parse_json_blocklist(raw: str) -> list[str]:
                                 continue
                             if val.startswith("http"):
                                 path = urlparse(val).path  # e.g. /@handle
-                                if path.startswith("/@"):
+                                if path.startswith(_HANDLE_SLASH_PREFIX):
                                     val = path[1:]
-                                elif path.startswith("/channel/"):
-                                    val = path[len("/channel/"):]
+                                elif path.startswith(_CHANNEL_PATH_PREFIX):
+                                    val = path[len(_CHANNEL_PATH_PREFIX):]
                                 else:
                                     val = path
                             elif val.startswith("UC"):
                                 pass  # already canonical
                             elif val.startswith("@"):
                                 pass  # already canonical
-                            channels.append(val)
+                            canonical = _canonicalize_channel(val)
+                            if canonical is None:
+                                dropped += 1
+                            else:
+                                channels.append(canonical)
                             break
         elif isinstance(data, dict):
             for key in data:
-                if key.startswith("UC"):
-                    channels.append(key)
-                elif key.startswith("@"):
-                    channels.append(key)
+                if key.startswith("UC") or key.startswith("@"):
+                    canonical = _canonicalize_channel(key)
+                    if canonical is None:
+                        dropped += 1
+                    else:
+                        channels.append(canonical)
     except json.JSONDecodeError:
         log.warning("Failed to parse as JSON; falling back to line-by-line text parsing")
         channels = parse_text_blocklist(raw)
+    if dropped:
+        log.warning("Dropped %d invalid channel %s from blocklist", dropped,
+                    "entry" if dropped == 1 else "entries")
     return channels
 
 
@@ -150,7 +192,16 @@ def resolve_source(source: str, quiet: bool = False) -> list[str]:
         log.info(f"Fetched {len(channels)} channels from {info['name']}")
         return channels
 
-    if source.startswith("http://") or source.startswith("https://"):
+    scheme_lc = source[:8].lower()
+    if scheme_lc.startswith("http://"):
+        log.error(
+            "Refusing insecure http:// source: %s. Use https:// instead, "
+            "or serve the file locally and pass a local file path.",
+            source,
+        )
+        sys.exit(1)
+
+    if scheme_lc.startswith("https://"):
         if not quiet:
             log.info(f"Fetching remote blocklist: {source}")
         raw = _fetch(source)
