@@ -21,6 +21,11 @@ from urllib.request import Request, urlopen
 from .config import BUILTIN_SOURCES
 from .state import save_state
 
+# YouTube URL-path markers — used by both parsers to strip leading forms like
+# "/@handle" or "/channel/UCxxx" down to their canonical identifier.
+_CHANNEL_PATH_PREFIX = "/channel/"
+_HANDLE_SLASH_PREFIX = "/@"
+
 _HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]+$")
 _CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 
@@ -73,11 +78,11 @@ def parse_text_blocklist(raw: str) -> list[str]:
         if "#" in line:
             line = line[:line.index("#")].strip()
         # Strip leading slash: /@handle → @handle
-        if line.startswith("/@"):
+        if line.startswith(_HANDLE_SLASH_PREFIX):
             line = line[1:]
         # Strip /channel/ prefix: /channel/UCxxx → UCxxx
-        elif line.startswith("/channel/"):
-            line = line[len("/channel/"):]
+        elif line.startswith(_CHANNEL_PATH_PREFIX):
+            line = line[len(_CHANNEL_PATH_PREFIX):]
         canonical = _canonicalize_channel(line)
         if canonical is None:
             dropped += 1
@@ -104,10 +109,10 @@ def parse_json_blocklist(raw: str) -> list[str]:
             for entry in data:
                 if isinstance(entry, str):
                     # Normalize /@handle → @handle, /channel/UCxxx → UCxxx
-                    if entry.startswith("/@"):
+                    if entry.startswith(_HANDLE_SLASH_PREFIX):
                         entry = entry[1:]
-                    elif entry.startswith("/channel/"):
-                        entry = entry[len("/channel/"):]
+                    elif entry.startswith(_CHANNEL_PATH_PREFIX):
+                        entry = entry[len(_CHANNEL_PATH_PREFIX):]
                     canonical = _canonicalize_channel(entry)
                     if canonical is None:
                         dropped += 1
@@ -121,10 +126,10 @@ def parse_json_blocklist(raw: str) -> list[str]:
                                 continue
                             if val.startswith("http"):
                                 path = urlparse(val).path  # e.g. /@handle
-                                if path.startswith("/@"):
+                                if path.startswith(_HANDLE_SLASH_PREFIX):
                                     val = path[1:]
-                                elif path.startswith("/channel/"):
-                                    val = path[len("/channel/"):]
+                                elif path.startswith(_CHANNEL_PATH_PREFIX):
+                                    val = path[len(_CHANNEL_PATH_PREFIX):]
                                 else:
                                     val = path
                             elif val.startswith("UC"):
