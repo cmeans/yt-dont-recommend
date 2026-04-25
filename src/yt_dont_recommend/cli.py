@@ -139,7 +139,21 @@ def do_auto_upgrade(state: dict) -> bool:
     Saves the current version as previous_version before upgrading so
     --revert can restore it. Returns True if the upgrade succeeded.
     The new binary takes effect on the next invocation.
+
+    Auto-upgrade is interactive-only: when stdin is not a TTY (cron,
+    launchd, or any other non-interactive scheduler), the version
+    notification still fires upstream but the upgrade itself is skipped.
+    This narrows the supply-chain blast radius — a compromised release
+    on PyPI cannot install itself silently from a scheduled run; the
+    user must opt in by running the tool interactively.
     """
+    if not sys.stdin.isatty():
+        log.info(
+            "Auto-upgrade skipped — non-interactive session (cron/launchd). "
+            "Run yt-dont-recommend interactively to upgrade."
+        )
+        return False
+
     installer = _detect_installer()
     current = _get_current_version()
 

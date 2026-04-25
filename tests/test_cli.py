@@ -331,7 +331,13 @@ class TestCheckForUpdate:
 # ---------------------------------------------------------------------------
 
 class TestDoAutoUpgrade:
+    @staticmethod
+    def _force_tty(monkeypatch, value: bool = True) -> None:
+        """Pretend stdin is/is-not a TTY so the isatty() gate doesn't dominate the test."""
+        monkeypatch.setattr("sys.stdin.isatty", lambda: value)
+
     def test_uv_path_success(self, monkeypatch, tmp_path):
+        self._force_tty(monkeypatch)
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "state.json")
         monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
         monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "1.0.0")
@@ -349,6 +355,7 @@ class TestDoAutoUpgrade:
         assert state["previous_version"] == "1.0.0"
 
     def test_pipx_path_success(self, monkeypatch, tmp_path):
+        self._force_tty(monkeypatch)
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "state.json")
         monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "pipx")
         monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "1.0.0")
@@ -358,6 +365,7 @@ class TestDoAutoUpgrade:
         assert do_auto_upgrade({}) is True
 
     def test_unknown_installer_returns_false_and_warns(self, monkeypatch, caplog):
+        self._force_tty(monkeypatch)
         monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: None)
         monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "1.0.0")
         from yt_dont_recommend.cli import do_auto_upgrade
@@ -366,6 +374,7 @@ class TestDoAutoUpgrade:
         assert any("package manager" in r.message.lower() for r in caplog.records)
 
     def test_subprocess_failure_writes_attention(self, monkeypatch, tmp_path):
+        self._force_tty(monkeypatch)
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "state.json")
         monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
         monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "1.0.0")
@@ -376,6 +385,27 @@ class TestDoAutoUpgrade:
         from yt_dont_recommend.cli import do_auto_upgrade
         assert do_auto_upgrade({}) is False
         assert wa_calls and "install failed" in wa_calls[0]
+
+    def test_non_tty_session_skips_upgrade_without_invoking_subprocess(self, monkeypatch, caplog):
+        """Scheduled (cron/launchd) runs notify-only: subprocess is never called."""
+        self._force_tty(monkeypatch, value=False)
+        run_called = {"count": 0}
+
+        def fake_run(*a, **kw):
+            run_called["count"] += 1
+            return MagicMock(returncode=0)
+
+        monkeypatch.setattr("yt_dont_recommend.cli.subprocess.run", fake_run)
+        # _detect_installer / _get_current_version must not be reached either,
+        # but installing fakes is cheap insurance and avoids accidental network calls.
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "1.0.0")
+
+        from yt_dont_recommend.cli import do_auto_upgrade
+        with caplog.at_level(logging.INFO, logger="yt_dont_recommend.cli"):
+            assert do_auto_upgrade({}) is False
+        assert run_called["count"] == 0
+        assert any("non-interactive" in r.message.lower() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
