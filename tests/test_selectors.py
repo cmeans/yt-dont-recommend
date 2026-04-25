@@ -3,7 +3,7 @@ Tests for the selector registry: _SELECTOR_DEFAULTS, load_selectors_config,
 get_selectors, config override merging, and write_selector_overrides.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import yaml
 
@@ -208,3 +208,44 @@ class TestWriteSelectorOverrides:
             write_selector_overrides({"feed_card": "div.x"})
         assert not (tmp_path / "config.tmp").exists()
         assert cfg.exists()
+
+
+class TestDiscoverMenuButtonEscaping:
+    """`_discover_menu_button` writes its result into config.yaml. The aria-label
+    it captures from the live page may contain quotes or backslashes (especially
+    for non-English locales), so the returned CSS selector must escape those
+    characters or future runs would load a broken selector and silently fail."""
+
+    def _make_page_with_button_label(self, label: str):
+        """Build a minimal mock page where the matched card has one button
+        whose only aria-label is `label`."""
+        btn = MagicMock()
+        btn.get_attribute.return_value = label
+        card = MagicMock()
+        card.scroll_into_view_if_needed.return_value = None
+        card.hover.return_value = None
+        card.query_selector_all.return_value = [btn]
+        page = MagicMock()
+        page.query_selector.return_value = card
+        return page
+
+    def test_plain_label_unchanged(self):
+        from yt_dont_recommend.diagnostics import _discover_menu_button
+        page = self._make_page_with_button_label("More actions")
+        sel = _discover_menu_button(page, "ytd-rich-item-renderer")
+        assert sel == 'button[aria-label="More actions"]'
+
+    def test_quote_in_label_is_escaped(self):
+        """A localized aria-label with an embedded `"` must produce a selector
+        whose attribute value is still parseable."""
+        from yt_dont_recommend.diagnostics import _discover_menu_button
+        page = self._make_page_with_button_label('Action "menu"')
+        sel = _discover_menu_button(page, "ytd-rich-item-renderer")
+        # Embedded `"` must be backslash-escaped; outer quotes remain raw.
+        assert sel == 'button[aria-label="Action \\"menu\\""]'
+
+    def test_backslash_in_label_is_escaped(self):
+        from yt_dont_recommend.diagnostics import _discover_menu_button
+        page = self._make_page_with_button_label("a\\b menu")
+        sel = _discover_menu_button(page, "ytd-rich-item-renderer")
+        assert sel == 'button[aria-label="a\\\\b menu"]'

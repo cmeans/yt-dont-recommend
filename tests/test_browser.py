@@ -261,6 +261,66 @@ class TestPerformBrowserUnblocks:
         assert result == ["@alpha"]
         load_more.click.assert_called_once()
 
+    # --- selector reliability (display names with special characters) ---
+
+    def test_display_name_with_double_quote_produces_escaped_selector(self):
+        """Display names containing `"` are escaped before being interpolated
+        into the CSS attribute selector. Without escaping, the embedded quote
+        would close the attribute value and break the selector silently —
+        the unblock would fail and the retry counter would advance."""
+        state = _base_state(['@quoted'], {'@quoted': 'He said "hi"'})
+        page = _make_page()
+        captured_selectors: list[str] = []
+        delete_btn = MagicMock()
+        got_it_btn = MagicMock()
+
+        def query_selector_side_effect(sel):
+            captured_selectors.append(sel)
+            if 'Delete activity item' in sel:
+                return delete_btn
+            if 'Got it' in sel:
+                return got_it_btn
+            return None
+
+        page.query_selector.side_effect = query_selector_side_effect
+
+        result = _perform_browser_unblocks(page, ['@quoted'], state)
+
+        assert result == ['@quoted']
+        # The selector that probed for the delete button must have backslash-escaped
+        # the embedded double quote so the attribute value parses correctly.
+        delete_selectors = [s for s in captured_selectors if 'Delete activity item' in s]
+        assert delete_selectors
+        for sel in delete_selectors:
+            # Embedded `"` must be escaped to `\"` — the raw `"` only appears as the
+            # outer attribute-value delimiters.
+            assert 'He said \\"hi\\"' in sel, f"unescaped quote in selector: {sel!r}"
+
+    def test_display_name_with_backslash_produces_escaped_selector(self):
+        """Backslashes are doubled (CSS attribute-value escape rule)."""
+        state = _base_state(['@bs'], {'@bs': 'path\\foo'})
+        page = _make_page()
+        captured_selectors: list[str] = []
+        delete_btn = MagicMock()
+        got_it_btn = MagicMock()
+
+        def query_selector_side_effect(sel):
+            captured_selectors.append(sel)
+            if 'Delete activity item' in sel:
+                return delete_btn
+            if 'Got it' in sel:
+                return got_it_btn
+            return None
+
+        page.query_selector.side_effect = query_selector_side_effect
+
+        _perform_browser_unblocks(page, ['@bs'], state)
+
+        delete_selectors = [s for s in captured_selectors if 'Delete activity item' in s]
+        assert delete_selectors
+        for sel in delete_selectors:
+            assert 'path\\\\foo' in sel, f"backslash not doubled in selector: {sel!r}"
+
     # --- alerts ---
 
     def test_verification_timeout_triggers_write_attention(self):

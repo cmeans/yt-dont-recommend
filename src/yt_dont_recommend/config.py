@@ -475,6 +475,50 @@ def _n(count: int, word: str) -> str:
     return f"{count} {word if count == 1 else word + 's'}"
 
 
+def _escape_css_attr_value(s: str) -> str:
+    r"""Escape a string for use inside a double-quoted CSS attribute value.
+
+    Handles four characters that break a double-quoted CSS attribute value:
+
+    * ``\\`` — backslash gets backslash-escaped per CSS Syntax Module
+      Level 3 § 4.3.5 (must come first so the backslashes inserted by
+      the later replacements are not re-doubled).
+    * ``"`` — the matching quote character also gets backslash-escaped
+      per § 4.3.5.
+    * ``\n`` (LF, U+000A) — § 4.3.5 says an unescaped newline inside a
+      quoted string produces a ``<bad-string-token>``: the string ends
+      immediately and the rest of the selector becomes garbage. The
+      correct replacement is the CSS hex-escape ``\A `` (backslash, hex
+      digit, space terminator) per § 4.3.7. A naive port of
+      ``_escape_applescript``'s ``\\n`` shape would NOT work: § 4.3.7
+      says a backslash followed by a non-hex character resolves to the
+      literal character, so ``\n`` inside a CSS string is a literal
+      ``n``, not LF.
+    * ``\r`` (CR, U+000D) — same § 4.3.5 ``<bad-string-token>`` problem;
+      replaced with ``\D ``.
+
+    ``\t`` is intentionally not escaped — § 4.3.5 only flags newline /
+    carriage-return / form-feed as bad-string-tokens; horizontal tab
+    inside a quoted string is a literal tab.
+
+    Used by selectors that interpolate text harvested from the live page
+    (channel display names, discovered aria-labels) so the resulting
+    selector keeps parsing when those strings contain any of the four
+    handled characters.
+
+    Note: this helper assumes the CSS selector wraps the value in double
+    quotes (e.g. ``[aria-label="..."]``). Single-quote-delimited callers
+    are unsupported on purpose — both spots in this codebase use double
+    quotes.
+    """
+    return (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\A ")
+        .replace("\r", "\\D ")
+    )
+
+
 # --- Logging Setup ---
 
 def setup_logging(verbose: bool = False) -> None:
