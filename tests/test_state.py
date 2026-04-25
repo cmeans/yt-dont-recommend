@@ -409,6 +409,36 @@ class TestSaveStateBranches:
         written = json.loads(sf.read_text())
         assert "pending_unblock" not in written
 
+    def test_save_state_leaves_no_tmp_file_after_success(self, tmp_path, monkeypatch):
+        sf = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        state = ydr.load_state()
+        ydr.save_state(state)
+        # .tmp has been atomically renamed to .json — no leftover.
+        assert not sf.with_suffix(".tmp").exists()
+        assert sf.exists()
+        # File is valid JSON (round-trips through json.loads).
+        json.loads(sf.read_text())
+
+    def test_save_state_does_not_corrupt_original_when_rename_fails(self, tmp_path, monkeypatch):
+        """If the atomic rename raises mid-save, the existing state file is untouched."""
+        import pytest
+
+        sf = tmp_path / "processed.json"
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        state = ydr.load_state()
+        state["blocked_by"]["@first"] = {"sources": ["test"]}
+        ydr.save_state(state)
+        original_bytes = sf.read_bytes()
+
+        state["blocked_by"]["@second"] = {"sources": ["test"]}
+        with patch("pathlib.Path.replace", side_effect=OSError("rename failed")):
+            with pytest.raises(OSError):
+                ydr.save_state(state)
+
+        # Original on-disk state is byte-for-byte unchanged.
+        assert sf.read_bytes() == original_bytes
+
 
 # ---------------------------------------------------------------------------
 # _escape_applescript — pure-function AppleScript string escape
