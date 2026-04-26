@@ -1,0 +1,122 @@
+name: Bug Report
+description: Report something that isn't working correctly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill in as much as you can.
+
+        **Selector breakage?** Run `yt-dont-recommend --check-selectors`
+        first and attach the report + screenshots from
+        `~/.yt-dont-recommend/`. See also issue #13.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `yt-dont-recommend --version` or commit hash
+      placeholder: "0.5.0 or abc1234"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`
+      placeholder: "3.13.5"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Distro + release for Linux; macOS version otherwise
+      placeholder: "Fedora 43"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - uv tool install
+        - pipx install
+        - pip install (in a venv)
+        - Editable install from a clone
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode in use
+      options:
+        - "--blocklist"
+        - "--clickbait"
+        - "--blocklist + --clickbait"
+        - "--check-selectors"
+        - "--schedule (cron / launchd)"
+        - "--login or other one-shot"
+    validations:
+      required: true
+  - type: input
+    id: locale
+    attributes:
+      label: YouTube UI locale
+      description: |
+        The "Don't recommend channel" menu string is matched in English
+        only today. If you've configured YouTube in a different
+        language, mention it here — see issue #12.
+      placeholder: "en (default), de, fr, ja, ..."
+    validations:
+      required: false
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected to happen instead.
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Blocklist source (if relevant)
+      description: |
+        For `--blocklist` issues. Built-in name (`deslop`, `aislist`),
+        local file path, or URL. Redact anything sensitive.
+      placeholder: "deslop, /path/to/list.txt, https://example.com/list.txt"
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Run `yt-dont-recommend --blocklist --source deslop --dry-run`
+        2. Observe ...
+        3. Expected ... but saw ...
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      description: |
+        Re-run with `--verbose` and paste any error messages, stack
+        traces, or the relevant slice of `~/.yt-dont-recommend/run.log`.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: selectors
+    attributes:
+      label: --check-selectors report (selector breakage only)
+      description: |
+        If this is a selector failure, run
+        `yt-dont-recommend --check-selectors` and paste the summary.
+        Screenshot files in `~/.yt-dont-recommend/` are usually the
+        most useful artifact — drag them in.
+      render: text
+    validations:
+      required: false

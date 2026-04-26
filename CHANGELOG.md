@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ## [Unreleased]
 
+### Added
+
+- **Community-health files**: `CONTRIBUTING.md` (inbound = outbound Apache-2.0, no-bounty policy, dev setup, PR requirements, review process), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, private reporting via GitHub Security Advisory), `SECURITY.md` (private vulnerability reporting, in-scope / out-of-scope boundaries covering page-derived-string injection, blocklist source trust, state file integrity, auto-upgrade safety, data-dir permissions, subscription protection, and selector self-healing), and three GitHub issue templates under `.github/ISSUE_TEMPLATE/` (`bug_report.yml`, `feature_request.yml`, `config.yml`). Mirrors the community-health pass on `cmeans/pypi-winnow-downloads` and brings the repo in line with the rest of the `cmeans/*` projects.
+
 ### Security
 
 - **AppleScript injection in `_desktop_notify` on macOS** (closes #40): `src/yt_dont_recommend/state.py` interpolated an untrusted `message` string directly into an `osascript -e` AppleScript argument. A double-quote in `message` closed the string literal and allowed arbitrary shell execution via `do shell script "…"`. Reachable on macOS via channel names in a blocklist because `parse_text_blocklist` / `parse_json_blocklist` did not validate entries — failure paths in `unblock.py` build attention messages that embed channel data verbatim. Fixed by adding a private `_escape_applescript` helper that escapes backslash, double-quote, newline, carriage return, and tab before interpolation. Linux (`notify-send`) was never affected — it takes the message as a separate argv element. Follow-up issue #41 adds parse-time validation as defense in depth.
