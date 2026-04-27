@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 from .config import (
     PAGE_LOAD_WAIT,
     PROFILE_DIR,
+    _escape_css_attr_value,
     get_selectors,
 )
 
@@ -111,7 +112,7 @@ def _discover_menu_button(page: Any, card_sel: str) -> str | None:
         if not label:
             continue
         if any(w in label.lower() for w in ("action", "menu", "more")):
-            return f"button[aria-label='{label}']"
+            return f'button[aria-label="{_escape_css_attr_value(label)}"]'
     return None
 
 

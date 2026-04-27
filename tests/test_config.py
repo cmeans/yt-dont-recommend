@@ -20,6 +20,56 @@ class TestPluralHelper:
         assert cfg._n(2, "channel") == "2 channels"
 
 
+class TestEscapeCssAttrValue:
+    def test_plain_string_unchanged(self):
+        assert cfg._escape_css_attr_value("Cooking with Joe") == "Cooking with Joe"
+
+    def test_escapes_double_quote(self):
+        assert cfg._escape_css_attr_value('he said "hi"') == 'he said \\"hi\\"'
+
+    def test_escapes_backslash(self):
+        # Single backslash in input becomes double backslash in output.
+        assert cfg._escape_css_attr_value("path\\foo") == "path\\\\foo"
+
+    def test_backslash_before_quote_ordering(self):
+        # If quote were escaped first then backslash, the inserted \\ would be
+        # re-doubled. Backslash must run first.
+        # Input: a, \, ", b → expected: a, \\, \", b (6 chars total).
+        input_s = "a" + "\\" + '"' + "b"
+        expected = "a" + "\\\\" + '\\"' + "b"
+        assert cfg._escape_css_attr_value(input_s) == expected
+
+    def test_empty_string(self):
+        assert cfg._escape_css_attr_value("") == ""
+
+    def test_escapes_newline_to_css_hex_escape(self):
+        # CSS Syntax Module Level 3 § 4.3.5: an unescaped LF inside a quoted
+        # string produces a <bad-string-token>. § 4.3.7: \n in a CSS string
+        # is the literal char "n", not LF — so the AppleScript-style \\n
+        # port does NOT work for CSS. Use the hex form \A with trailing
+        # space terminator.
+        assert cfg._escape_css_attr_value("line one\nline two") == "line one\\A line two"
+
+    def test_escapes_carriage_return_to_css_hex_escape(self):
+        # § 4.3.5 also flags CR; correct form per § 4.3.7 is \D plus space.
+        assert cfg._escape_css_attr_value("line one\rline two") == "line one\\D line two"
+
+    def test_combined_special_characters_ordering(self):
+        # All four handled chars in one input. Order of replacement matters:
+        # backslash MUST be doubled first so the backslashes that \A and \D
+        # introduce later are not re-doubled.
+        # Input: \, ", \n, \r — expected: \\, \", \A<sp>, \D<sp>.
+        input_s = "\\" + '"' + "\n" + "\r"
+        expected = "\\\\" + '\\"' + "\\A " + "\\D "
+        assert cfg._escape_css_attr_value(input_s) == expected
+
+    def test_tab_is_not_escaped(self):
+        # § 4.3.5 only flags newline / CR / form-feed as bad-string-tokens.
+        # Horizontal tab inside a quoted string is a literal tab — pass it
+        # through verbatim.
+        assert cfg._escape_css_attr_value("a\tb") == "a\tb"
+
+
 class TestResolveVersion:
     def test_returns_installed_distribution_version(self):
         """Happy path — the installed version string."""

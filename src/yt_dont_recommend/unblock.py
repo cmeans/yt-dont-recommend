@@ -12,7 +12,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-from .config import PAGE_LOAD_WAIT, _n
+from .config import PAGE_LOAD_WAIT, _escape_css_attr_value, _n
 
 # Channels whose unblock was attempted in the current Python process run.
 # Prevents retrying the same channels for every source in one invocation,
@@ -188,7 +188,8 @@ def _perform_browser_unblocks(page: Any, channels: list[str], state: dict, *, se
     # Step 3: Find and click delete buttons for each channel.
     unblocked_channels: list[str] = []
     for channel, display_name in display_names.items():
-        delete_btn = page.query_selector(f'button[aria-label="Delete activity item {display_name}"]')
+        delete_btn_sel = f'button[aria-label="Delete activity item {_escape_css_attr_value(display_name)}"]'
+        delete_btn = page.query_selector(delete_btn_sel)
 
         # Entry might be beyond initial load — try "Load more" once
         if not delete_btn:
@@ -196,7 +197,7 @@ def _perform_browser_unblocks(page: Any, channels: list[str], state: dict, *, se
             if load_more:
                 load_more.click()
                 time.sleep(2)
-                delete_btn = page.query_selector(f'button[aria-label="Delete activity item {display_name}"]')
+                delete_btn = page.query_selector(delete_btn_sel)
 
         if not delete_btn:
             # Entry absent from myactivity — either it was never created (channel
