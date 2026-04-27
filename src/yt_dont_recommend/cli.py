@@ -9,6 +9,7 @@ to avoid circular imports with __init__.py.
 import argparse
 import json
 import logging
+import re
 import secrets
 import shutil
 import subprocess
@@ -55,8 +56,19 @@ def _get_current_version() -> str:
         return __version__
 
 
+# Match only X.Y.Z stable releases. Prereleases (rc/dev/a/b/post), local
+# segments (+build), and other PEP 440 forms are filtered out so the upgrade
+# path never prompts users on a pre-release that PyPI happens to report as
+# `info.version`.
+_STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
 def _get_latest_pypi_version() -> str | None:
-    """Fetch the latest version from PyPI. Returns None on any failure."""
+    """Fetch the latest stable version from PyPI. Returns None on any failure
+    or when PyPI reports a non-stable release (rc/dev/post/local-segment).
+    Filtering at this single point keeps cache writes and comparison logic
+    free of prerelease awareness.
+    """
     try:
         req = Request(
             "https://pypi.org/pypi/yt-dont-recommend/json",
@@ -64,7 +76,10 @@ def _get_latest_pypi_version() -> str | None:
         )
         with urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
-        return data["info"]["version"]
+        version = data["info"]["version"]
+        if not _STABLE_VERSION_RE.match(version):
+            return None
+        return version
     except Exception:
         return None
 

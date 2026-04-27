@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/cmeans/yt-dont-recommend)](https://github.com/cmeans/yt-dont-recommend/blob/main/LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/cmeans/yt-dont-recommend/ci.yml?label=CI)](https://github.com/cmeans/yt-dont-recommend/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/cmeans/yt-dont-recommend/graph/badge.svg)](https://codecov.io/gh/cmeans/yt-dont-recommend)
-[![Downloads](https://img.shields.io/pypi/dm/yt-dont-recommend)](https://pypi.org/project/yt-dont-recommend/)
+[![pip*/uv/poetry/pdm downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fpypi-badges.intfar.com%2Fyt-dont-recommend%2Fdownloads-30d-non-ci.json)](https://pypi.org/project/yt-dont-recommend/)
 
 > **Early development / alpha:** This tool is functional and used daily by its author, but it is under active development with frequent releases. Breaking changes between versions are possible. **Auto-upgrade is not recommended** until the tool stabilises — enable it only if you are comfortable testing new features as they land and are willing to use `--revert` when something goes wrong.
 
