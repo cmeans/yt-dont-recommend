@@ -173,6 +173,7 @@ def load_state() -> AppState:
 
 
 def save_state(state: AppState) -> None:
+    """Write state.json atomically (write to .tmp, then rename)."""
     STATE_FILE = _state_file()
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -184,8 +185,9 @@ def save_state(state: AppState) -> None:
     # Don't leave empty pending_unblock in the state file
     if "pending_unblock" in state and not state["pending_unblock"]:
         del state["pending_unblock"]
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp.replace(STATE_FILE)
 
 
 # --- Attention notifications ---
