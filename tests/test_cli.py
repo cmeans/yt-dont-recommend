@@ -383,6 +383,20 @@ class TestDoAutoUpgrade:
         """Pretend stdin is/is-not a TTY so the isatty() gate doesn't dominate the test."""
         monkeypatch.setattr("sys.stdin.isatty", lambda: value)
 
+    @staticmethod
+    def _aged_pending(version: str = "9.9.9", days_ago: int = 30) -> dict:
+        """Build a pending_upgrade dict whose first_seen_at is days_ago days
+        in the past. Use 30 days by default so any reasonable AUTO_UPGRADE_DELAY_DAYS
+        override (the constant default is 3) lets the upgrade through cleanly.
+        """
+        from datetime import datetime, timedelta
+        return {
+            "pending_upgrade": {
+                "version": version,
+                "first_seen_at": (datetime.now() - timedelta(days=days_ago)).isoformat(),
+            }
+        }
+
     def test_uv_path_success(self, monkeypatch, tmp_path):
         self._force_tty(monkeypatch)
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "state.json")
@@ -396,10 +410,12 @@ class TestDoAutoUpgrade:
 
         monkeypatch.setattr("yt_dont_recommend.cli.subprocess.run", fake_run)
         from yt_dont_recommend.cli import do_auto_upgrade
-        state = {}
+        state = self._aged_pending()
         assert do_auto_upgrade(state) is True
         assert captured["cmd"] == ["uv", "tool", "install", "yt-dont-recommend@latest"]
         assert state["previous_version"] == "1.0.0"
+        # Successful upgrade clears pending_upgrade so the next run doesn't loop.
+        assert state["pending_upgrade"] is None
 
     def test_pipx_path_success(self, monkeypatch, tmp_path):
         self._force_tty(monkeypatch)
@@ -409,7 +425,7 @@ class TestDoAutoUpgrade:
         monkeypatch.setattr("yt_dont_recommend.cli.subprocess.run",
                             lambda *a, **kw: MagicMock(returncode=0))
         from yt_dont_recommend.cli import do_auto_upgrade
-        assert do_auto_upgrade({}) is True
+        assert do_auto_upgrade(self._aged_pending()) is True
 
     def test_unknown_installer_returns_false_and_warns(self, monkeypatch, caplog):
         self._force_tty(monkeypatch)
@@ -417,7 +433,7 @@ class TestDoAutoUpgrade:
         monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "1.0.0")
         from yt_dont_recommend.cli import do_auto_upgrade
         with caplog.at_level(logging.WARNING, logger="yt_dont_recommend.cli"):
-            assert do_auto_upgrade({}) is False
+            assert do_auto_upgrade(self._aged_pending()) is False
         assert any("package manager" in r.message.lower() for r in caplog.records)
 
     def test_subprocess_failure_writes_attention(self, monkeypatch, tmp_path):
@@ -430,8 +446,11 @@ class TestDoAutoUpgrade:
         wa_calls = []
         monkeypatch.setattr("yt_dont_recommend.cli.write_attention", lambda msg: wa_calls.append(msg))
         from yt_dont_recommend.cli import do_auto_upgrade
-        assert do_auto_upgrade({}) is False
+        state = self._aged_pending()
+        assert do_auto_upgrade(state) is False
         assert wa_calls and "install failed" in wa_calls[0]
+        # Failed upgrade does NOT clear pending_upgrade — next run can retry.
+        assert state["pending_upgrade"] is not None
 
     def test_non_tty_session_skips_upgrade_without_invoking_subprocess(self, monkeypatch, caplog):
         """Scheduled (cron/launchd) runs notify-only: subprocess is never called."""
@@ -450,9 +469,183 @@ class TestDoAutoUpgrade:
 
         from yt_dont_recommend.cli import do_auto_upgrade
         with caplog.at_level(logging.INFO, logger="yt_dont_recommend.cli"):
-            assert do_auto_upgrade({}) is False
+            assert do_auto_upgrade(self._aged_pending()) is False
         assert run_called["count"] == 0
         assert any("non-interactive" in r.message.lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Auto-upgrade delay window (#55 — defense-in-depth follow-up to #43)
+# ---------------------------------------------------------------------------
+
+class TestAutoUpgradeDelayWindow:
+    """The N-day delay window between first detection of a PyPI release and
+    actually installing it. Defense in depth on top of trusted-publisher OIDC
+    + the isatty gate from #50."""
+
+    @staticmethod
+    def _force_tty(monkeypatch, value: bool = True) -> None:
+        monkeypatch.setattr("sys.stdin.isatty", lambda: value)
+
+    def test_check_for_update_records_pending_on_first_detection(self, monkeypatch):
+        """When PyPI reports a newer version, check_for_update records
+        pending_upgrade with the version + a fresh first_seen_at timestamp."""
+        monkeypatch.setattr("yt_dont_recommend.cli._get_latest_pypi_version", lambda: "9.9.9")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+        from yt_dont_recommend.cli import check_for_update
+        state = {"last_version_check": None}
+        assert check_for_update(state) == "9.9.9"
+        assert state["pending_upgrade"]["version"] == "9.9.9"
+        # first_seen_at parses as a recent ISO timestamp.
+        from datetime import datetime, timedelta
+        first_seen = datetime.fromisoformat(state["pending_upgrade"]["first_seen_at"])
+        assert datetime.now() - first_seen < timedelta(seconds=5)
+
+    def test_check_for_update_preserves_clock_when_same_version_redetected(self, monkeypatch):
+        """Repeated detection of the same pending version must not reset
+        first_seen_at — the delay clock has to keep running."""
+        monkeypatch.setattr("yt_dont_recommend.cli._get_latest_pypi_version", lambda: "9.9.9")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+        from datetime import datetime, timedelta
+
+        from yt_dont_recommend.cli import check_for_update
+        original_seen = (datetime.now() - timedelta(days=2)).isoformat()
+        state = {
+            "last_version_check": None,
+            "pending_upgrade": {"version": "9.9.9", "first_seen_at": original_seen},
+        }
+        check_for_update(state)
+        assert state["pending_upgrade"]["first_seen_at"] == original_seen
+
+    def test_check_for_update_resets_clock_when_newer_version_supersedes(self, monkeypatch):
+        """A new version superseding the pending one resets first_seen_at —
+        the full delay window applies to the new release."""
+        monkeypatch.setattr("yt_dont_recommend.cli._get_latest_pypi_version", lambda: "9.9.10")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+        from datetime import datetime, timedelta
+
+        from yt_dont_recommend.cli import check_for_update
+        old_seen = (datetime.now() - timedelta(days=2)).isoformat()
+        state = {
+            "last_version_check": None,
+            "pending_upgrade": {"version": "9.9.9", "first_seen_at": old_seen},
+        }
+        check_for_update(state)
+        assert state["pending_upgrade"]["version"] == "9.9.10"
+        assert state["pending_upgrade"]["first_seen_at"] != old_seen
+        first_seen = datetime.fromisoformat(state["pending_upgrade"]["first_seen_at"])
+        assert datetime.now() - first_seen < timedelta(seconds=5)
+
+    def test_check_for_update_clears_stale_pending_when_release_yanked(self, monkeypatch):
+        """When PyPI's latest is no longer newer than current (e.g. release
+        was yanked, user upgraded out-of-band), any leftover pending_upgrade
+        is cleared so a stale first_seen_at can't drive a future install."""
+        monkeypatch.setattr("yt_dont_recommend.cli._get_latest_pypi_version", lambda: "0.5.0")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+        from yt_dont_recommend.cli import check_for_update
+        state = {
+            "last_version_check": None,
+            "pending_upgrade": {"version": "9.9.9", "first_seen_at": "2026-01-01T00:00:00"},
+        }
+        assert check_for_update(state) is None
+        assert state["pending_upgrade"] is None
+
+    def test_do_auto_upgrade_blocks_within_delay_window(self, monkeypatch, caplog):
+        """An upgrade detected less than AUTO_UPGRADE_DELAY_DAYS ago must not
+        install. Subprocess never runs; pending_upgrade is preserved."""
+        from datetime import datetime
+        self._force_tty(monkeypatch)
+        run_called = {"count": 0}
+        monkeypatch.setattr("yt_dont_recommend.cli.subprocess.run",
+                            lambda *a, **kw: run_called.update(count=run_called["count"] + 1) or MagicMock())
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+        # Force a 3-day default delay window for the assertion regardless of
+        # any future AUTO_UPGRADE_DELAY_DAYS bump.
+        monkeypatch.setattr("yt_dont_recommend.cli.AUTO_UPGRADE_DELAY_DAYS", 3)
+        monkeypatch.setattr("yt_dont_recommend.cli.load_auto_upgrade_config", lambda: {})
+
+        state = {
+            "pending_upgrade": {
+                "version": "9.9.9",
+                "first_seen_at": datetime.now().isoformat(),  # detected just now
+            }
+        }
+        from yt_dont_recommend.cli import do_auto_upgrade
+        with caplog.at_level(logging.INFO, logger="yt_dont_recommend.cli"):
+            assert do_auto_upgrade(state) is False
+        assert run_called["count"] == 0
+        assert any("delay window" in r.message.lower() for r in caplog.records)
+        # Pending_upgrade preserved so the clock keeps running.
+        assert state["pending_upgrade"]["version"] == "9.9.9"
+
+    def test_do_auto_upgrade_proceeds_after_delay_window(self, monkeypatch, tmp_path):
+        """An upgrade detected more than AUTO_UPGRADE_DELAY_DAYS ago must
+        install (assuming the other gates pass)."""
+        from datetime import datetime, timedelta
+        self._force_tty(monkeypatch)
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "state.json")
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+        monkeypatch.setattr("yt_dont_recommend.cli.subprocess.run",
+                            lambda *a, **kw: MagicMock(returncode=0))
+        monkeypatch.setattr("yt_dont_recommend.cli.AUTO_UPGRADE_DELAY_DAYS", 3)
+        monkeypatch.setattr("yt_dont_recommend.cli.load_auto_upgrade_config", lambda: {})
+
+        state = {
+            "pending_upgrade": {
+                "version": "9.9.9",
+                "first_seen_at": (datetime.now() - timedelta(days=4)).isoformat(),
+            }
+        }
+        from yt_dont_recommend.cli import do_auto_upgrade
+        assert do_auto_upgrade(state) is True
+
+    def test_do_auto_upgrade_yaml_override_delay_days(self, monkeypatch, caplog):
+        """auto_upgrade.delay_days from config.yaml overrides the constant —
+        a larger override blocks an upgrade that would have been allowed by
+        the default."""
+        from datetime import datetime, timedelta
+        self._force_tty(monkeypatch)
+        monkeypatch.setattr("yt_dont_recommend.cli.AUTO_UPGRADE_DELAY_DAYS", 3)
+        monkeypatch.setattr("yt_dont_recommend.cli.load_auto_upgrade_config",
+                            lambda: {"delay_days": 7})
+        run_called = {"count": 0}
+        monkeypatch.setattr("yt_dont_recommend.cli.subprocess.run",
+                            lambda *a, **kw: run_called.update(count=run_called["count"] + 1) or MagicMock())
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+
+        state = {
+            "pending_upgrade": {
+                "version": "9.9.9",
+                "first_seen_at": (datetime.now() - timedelta(days=4)).isoformat(),
+            }
+        }
+        from yt_dont_recommend.cli import do_auto_upgrade
+        with caplog.at_level(logging.INFO, logger="yt_dont_recommend.cli"):
+            assert do_auto_upgrade(state) is False
+        assert run_called["count"] == 0
+        assert any("7-day" in r.message for r in caplog.records)
+
+    def test_do_auto_upgrade_initializes_pending_when_missing(self, monkeypatch, caplog):
+        """If state has latest_known_version but no pending_upgrade (older
+        state files written before STATE_VERSION 4), do_auto_upgrade
+        initializes pending_upgrade and skips this run so the clock starts."""
+        self._force_tty(monkeypatch)
+        run_called = {"count": 0}
+        monkeypatch.setattr("yt_dont_recommend.cli.subprocess.run",
+                            lambda *a, **kw: run_called.update(count=run_called["count"] + 1) or MagicMock())
+        monkeypatch.setattr("yt_dont_recommend.cli._detect_installer", lambda: "uv")
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+
+        state = {"latest_known_version": "9.9.9", "pending_upgrade": None}
+        from yt_dont_recommend.cli import do_auto_upgrade
+        with caplog.at_level(logging.INFO, logger="yt_dont_recommend.cli"):
+            assert do_auto_upgrade(state) is False
+        assert run_called["count"] == 0
+        assert state["pending_upgrade"] is not None
+        assert state["pending_upgrade"]["version"] == "9.9.9"
 
 
 # ---------------------------------------------------------------------------

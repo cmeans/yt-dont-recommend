@@ -270,7 +270,8 @@ Key behaviours:
   "clickbait_acted": {
     "<video_id>": {"acted_at": "2026-03-12T...", "title": "...", "channel": "@handle"}
   },
-  "state_version": 3
+  "pending_upgrade": {"version": "0.5.1", "first_seen_at": "2026-04-27T21:30:00"},
+  "state_version": 4
 }
 ```
 
@@ -281,6 +282,9 @@ Key behaviours:
 **v3 additions**: `clickbait_cache` and `clickbait_acted` (both default to `{}`).
 - `clickbait_cache`: cross-run classification cache keyed by video_id. Entries expire after `CLICKBAIT_CACHE_TTL_DAYS` (14 days). Loaded into `_title_cache` at the start of each run to skip re-evaluation of recently seen videos.
 - `clickbait_acted`: videos successfully marked "Not interested", keyed by video_id. Used for shadow-limiting detection — if a previously-acted video reappears more than `SHADOW_LIMIT_GRACE_HOURS` (48h) later, it counts as a suspicious re-encounter. After `SHADOW_LIMIT_WARN_AFTER` (2) such hits in a run, the tool stops and calls `write_attention()`. Entries older than `CLICKBAIT_ACTED_PRUNE_DAYS` (90 days) are pruned on load.
+
+**v4 additions**: `pending_upgrade` (defaults to `None`).
+- `pending_upgrade`: tracks the auto-upgrade delay window introduced for #55. When `check_for_update` detects a new PyPI release, it records `{"version": "X.Y.Z", "first_seen_at": "<ISO timestamp>"}`. `do_auto_upgrade` then refuses to install until `now - first_seen_at >= AUTO_UPGRADE_DELAY_DAYS` (default 3, override via `auto_upgrade.delay_days` in `config.yaml`). The clock resets when a different version supersedes the pending one (the full window applies to each new release). `pending_upgrade` is cleared on successful upgrade and on a "yanked" detection (PyPI's latest is no longer newer than current). The delay is defense in depth on top of trusted-publisher OIDC + the `isatty` gate from #50 — covers the "compromised tag-push, fast exploit" channel that trusted-publishers don't address.
 
 `pending_unblock` entries carry an internal `_retry_count` sub-key (prefixed `_` to indicate it is not part of the public schema). It tracks consecutive display-name lookup failures for that channel. After `_MAX_DISPLAY_NAME_RETRIES` (3) failures the channel is removed from `pending_unblock` automatically. This key does not require a `STATE_VERSION` bump — old binaries ignore it.
 

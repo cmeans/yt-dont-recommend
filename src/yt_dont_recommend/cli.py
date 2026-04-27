@@ -14,7 +14,7 @@ import secrets
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -22,6 +22,7 @@ from .blocklist import check_removals, resolve_source
 from .config import (
     _LEGACY_EXCLUDE_FILE,
     ATTENTION_FILE,
+    AUTO_UPGRADE_DELAY_DAYS,
     BUILTIN_SOURCES,
     DEFAULT_BLOCKLIST_EXCLUDE_FILE,
     DEFAULT_CLICKBAIT_EXCLUDE_FILE,
@@ -31,6 +32,7 @@ from .config import (
     VERSION_CHECK_INTERVAL,
     __version__,
     _n,
+    load_auto_upgrade_config,
     setup_logging,
 )
 from .scheduler import _find_installed_binary, schedule_cmd
@@ -101,11 +103,30 @@ def _detect_installer() -> str | None:
     return None
 
 
+def _record_pending_upgrade(state: dict, version: str) -> None:
+    """Record `version` as a pending upgrade so do_auto_upgrade can enforce
+    the AUTO_UPGRADE_DELAY_DAYS window. Idempotent: when the same version
+    is already pending, the existing first_seen_at is preserved (the clock
+    keeps running). When a different version supersedes the pending one,
+    first_seen_at is reset so the full delay window applies to the new
+    release.
+    """
+    pending = state.get("pending_upgrade")
+    if pending and pending.get("version") == version:
+        return
+    state["pending_upgrade"] = {
+        "version": version,
+        "first_seen_at": datetime.now().isoformat(),
+    }
+
+
 def check_for_update(state: dict, force: bool = False) -> str | None:
     """Check PyPI for a newer version. Returns the latest version string if newer, else None.
 
     Runs at most once per VERSION_CHECK_INTERVAL seconds unless force=True.
     Sends an ntfy notification the first time a new version is detected.
+    Records `pending_upgrade` in state on detection so do_auto_upgrade can
+    enforce the N-day delay window.
     Updates state in-place (caller must save_state if desired).
     """
     now = datetime.now().timestamp()
@@ -119,6 +140,9 @@ def check_for_update(state: dict, force: bool = False) -> str | None:
                     latest = state.get("latest_known_version")
                     current = _get_current_version()
                     if latest and _version_tuple(latest) > _version_tuple(current):
+                        # Ensure pending_upgrade reflects the cached detection
+                        # (handles state files written before this key existed).
+                        _record_pending_upgrade(state, latest)
                         return latest
                     return None
             except Exception:
@@ -133,6 +157,7 @@ def check_for_update(state: dict, force: bool = False) -> str | None:
     current = _get_current_version()
 
     if _version_tuple(latest) > _version_tuple(current):
+        _record_pending_upgrade(state, latest)
         # Only notify via ntfy once per new version
         if state.get("notified_version") != latest:
             topic = state.get("notify_topic")
@@ -145,6 +170,10 @@ def check_for_update(state: dict, force: bool = False) -> str | None:
             state["notified_version"] = latest
         return latest
 
+    # Latest is not newer than current — clear any stale pending_upgrade
+    # left over from a previous run (e.g. release was yanked).
+    if state.get("pending_upgrade") is not None:
+        state["pending_upgrade"] = None
     return None
 
 
@@ -155,13 +184,59 @@ def do_auto_upgrade(state: dict) -> bool:
     --revert can restore it. Returns True if the upgrade succeeded.
     The new binary takes effect on the next invocation.
 
-    Auto-upgrade is interactive-only: when stdin is not a TTY (cron,
-    launchd, or any other non-interactive scheduler), the version
-    notification still fires upstream but the upgrade itself is skipped.
-    This narrows the supply-chain blast radius — a compromised release
-    on PyPI cannot install itself silently from a scheduled run; the
-    user must opt in by running the tool interactively.
+    Three layered gates run before the install actually fires:
+
+    1. **Delay window** (AUTO_UPGRADE_DELAY_DAYS, override via
+       config.yaml `auto_upgrade.delay_days`) — a newly detected release
+       must sit pending for N days before installing. Gives the
+       maintainer time to yank a compromised release before users
+       auto-install. The first run after detection initializes the
+       pending_upgrade clock and skips this run; the upgrade fires on
+       the first run after the window elapses.
+    2. **Interactive-only** — when stdin is not a TTY (cron, launchd,
+       any non-interactive scheduler), the install is skipped and the
+       user must opt in by running the tool interactively. Narrows the
+       supply-chain blast radius for the scheduled-run path.
+    3. **Installer detection** — bails if neither uv nor pipx is
+       detected (e.g. system pip, in-tree dev install).
+
+    Defense in depth: trusted-publisher OIDC in publish.yml eliminates
+    the leaked-API-token attack channel; this delay window covers the
+    remaining "compromised tag-push, fast exploit" channel.
     """
+    delay_days = load_auto_upgrade_config().get("delay_days", AUTO_UPGRADE_DELAY_DAYS)
+
+    pending = state.get("pending_upgrade")
+    if not pending:
+        # check_for_update should have set this. Defensive: initialize from
+        # latest_known_version so older state files (pre-pending_upgrade)
+        # still get the delay window. Skip this run so the clock starts.
+        latest = state.get("latest_known_version")
+        if latest:
+            _record_pending_upgrade(state, latest)
+            log.info(
+                f"Auto-upgrade pending — version {latest} just observed; "
+                f"{delay_days}-day delay window starts now (set "
+                f"auto_upgrade.delay_days in config.yaml to override)."
+            )
+        return False
+
+    first_seen = datetime.fromisoformat(pending["first_seen_at"])
+    age = datetime.now() - first_seen
+    window = timedelta(days=delay_days)
+    if age < window:
+        remaining = window - age
+        rem_days = remaining.days
+        rem_hours = remaining.seconds // 3600
+        log.info(
+            f"Auto-upgrade pending — {pending['version']} first seen "
+            f"{pending['first_seen_at']}; {rem_days}d {rem_hours}h remaining "
+            f"of the {delay_days}-day delay window. Use --check-update "
+            f"to see release notes; the upgrade will fire on the next run "
+            f"after the window elapses."
+        )
+        return False
+
     if not sys.stdin.isatty():
         log.info(
             "Auto-upgrade skipped — non-interactive session (cron/launchd). "
@@ -189,6 +264,9 @@ def do_auto_upgrade(state: dict) -> bool:
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
         state["previous_version"] = current
+        # Clear so a subsequent re-detection of the same version (cached
+        # latest_known_version still set) doesn't loop the delay window.
+        state["pending_upgrade"] = None
         save_state(state)
         log.info("Upgrade complete — new version takes effect on next run.")
         return True

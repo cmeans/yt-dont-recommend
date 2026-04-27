@@ -91,7 +91,15 @@ VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 # State schema version — bump this whenever the state file structure changes.
 # Policy: only ADD new keys (never rename/remove/reinterpret existing ones).
 # load_state() warns when it reads a state file written by a newer version.
-STATE_VERSION = 3
+STATE_VERSION = 4
+
+# Auto-upgrade delay window: number of days a newly detected PyPI release
+# must sit pending before do_auto_upgrade is allowed to install it. Defense
+# in depth on top of the trusted-publisher OIDC + isatty gates — gives the
+# maintainer N days to yank a compromised release before users auto-install.
+# Override via the `auto_upgrade.delay_days` key in config.yaml. Set to 0
+# to disable the delay (not recommended).
+AUTO_UPGRADE_DELAY_DAYS = 3
 
 # Clickbait cross-run cache TTL: cached classification results expire after
 # this many days and are re-evaluated on the next encounter.
@@ -321,6 +329,41 @@ def load_browser_config() -> dict:
             return {}
         allowed = {"use_system_chrome"}
         return {k: v for k, v in browser.items() if k in allowed}
+    except Exception:
+        return {}
+
+
+def load_auto_upgrade_config() -> dict:
+    """Load auto-upgrade overrides from the ``auto_upgrade:`` section of config.yaml.
+
+    Returns a dict with whichever of these keys are present in the file:
+        delay_days (int) — N-day delay window between first detection of a
+            PyPI release and actually installing it. Falls back to
+            AUTO_UPGRADE_DELAY_DAYS when missing or invalid.
+
+    Returns an empty dict if config.yaml is absent, unparseable, pyyaml is not
+    installed, or the ``auto_upgrade:`` section is missing.
+    """
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        au = data.get("auto_upgrade", {})
+        if not isinstance(au, dict):
+            return {}
+        result: dict = {}
+        if "delay_days" in au:
+            try:
+                delay = int(au["delay_days"])
+                if delay >= 0:
+                    result["delay_days"] = delay
+            except (TypeError, ValueError):
+                pass
+        return result
     except Exception:
         return {}
 
