@@ -1,0 +1,62 @@
+name: Feature Request
+description: Suggest an idea or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea? We'd love to hear it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or pain point.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you think this should work?
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Blocklist parsing / source resolution
+        - Browser automation (`--blocklist` feed scan)
+        - Unblock / auto-unblock flow
+        - Clickbait detection (`--clickbait`)
+        - Selector registry / `--check-selectors`
+        - Scheduler (`--schedule`, cron / launchd)
+        - State or config schema
+        - CLI flags / `yt-dont-recommend` UX
+        - Notifications (desktop / ntfy.sh)
+        - Auto-upgrade / `--revert`
+        - Documentation
+        - CI / release / packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you've thought about?
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope check
+      description: |
+        v0.x deliberately excludes a database, web framework, browser
+        extension, GUI, and any approach that bypasses
+        `youtube.com/`'s logged-in DOM. The scope is "automate the
+        UI action a logged-in user could perform manually." If your
+        idea touches any of those exclusions, briefly note why it's
+        still in scope or what scope expansion you're proposing.
+    validations:
+      required: false

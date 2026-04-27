@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: README / Install Guide
+    url: https://github.com/cmeans/yt-dont-recommend#install
+    about: Installation, login, and quick-start instructions
+  - name: Selector check
+    url: https://github.com/cmeans/yt-dont-recommend#checking-and-updating-selectors
+    about: Run `yt-dont-recommend --check-selectors` before reporting selector breakage
