@@ -535,6 +535,8 @@ The new binary takes effect on the next run. Disable at any time:
 yt-dont-recommend --auto-upgrade disable
 ```
 
+> **Trust model — auto-upgrade is interactive-only.** When `auto_upgrade` is enabled, the upgrade only runs in interactive sessions (`stdin` is a TTY). Scheduled runs (cron / launchd / `--heartbeat`) still notify you of a new release but do not install it: a compromised PyPI release would otherwise be picked up silently the next time the scheduler fires, with immediate access to your YouTube session cookies in the local browser profile. Run `yt-dont-recommend --check-update` interactively when you're ready to upgrade. If a release does turn out to be bad, `yt-dont-recommend --revert` rolls back to the previously recorded version (and disables auto-upgrade so it does not immediately re-upgrade).
+
 ### Reverting an upgrade
 
 If something goes wrong after an upgrade, revert to the previous version:
