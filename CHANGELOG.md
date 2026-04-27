@@ -28,6 +28,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 ### Changed
 
+- **Bump github-actions group: actions/checkout 4→6, astral-sh/setup-uv 5→7, codecov/codecov-action 5→6, actions/upload-artifact 4→7, actions/download-artifact 4→8** (#56)
 - **Migrated `pyproject.toml` to PEP 639 SPDX license form**: `license = {text = "Apache-2.0"}` (deprecated) replaced with `license = "Apache-2.0"` and `license-files = ["LICENSE"]`. The redundant `License :: OSI Approved :: Apache Software License` classifier was removed per PEP 639 guidance — the SPDX expression is now the single source of truth for license metadata, and the classifier will be forbidden in a future setuptools release. Hatchling (the build backend used here) supports PEP 639 natively.
 
 ## [0.5.0] - 2026-04-22
