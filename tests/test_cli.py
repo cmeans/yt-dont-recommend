@@ -220,6 +220,53 @@ class TestVersionHelpers:
         from yt_dont_recommend.cli import _get_latest_pypi_version
         assert _get_latest_pypi_version() is None
 
+    @pytest.mark.parametrize("non_stable", [
+        "0.5.0rc1",       # release candidate
+        "0.5.0.dev1",     # dev release
+        "0.5.0a1",        # alpha
+        "0.5.0b2",        # beta
+        "0.5.0.post1",    # post-release
+        "0.5.0+local",    # local version segment
+        "0.5",            # too few components
+        "0.5.0.0",        # too many components
+    ])
+    def test_get_latest_pypi_version_filters_non_stable(self, monkeypatch, non_stable):
+        """PyPI prereleases / non-X.Y.Z forms must not trigger upgrade prompts.
+
+        Regression for #45: int("0rc1") raises, _version_tuple degraded to (0,),
+        and downstream comparison was unreliable. Filtering at the source point
+        keeps cache writes and comparison logic free of prerelease awareness.
+        """
+        import json as _json
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return _json.dumps({"info": {"version": non_stable}}).encode()
+
+        monkeypatch.setattr("yt_dont_recommend.cli.urlopen", lambda req, timeout=5: FakeResp())
+        from yt_dont_recommend.cli import _get_latest_pypi_version
+        assert _get_latest_pypi_version() is None
+
+    def test_check_for_update_does_not_prompt_on_prerelease(self, monkeypatch):
+        """End-to-end: check_for_update returns None when PyPI reports a prerelease,
+        even if the prerelease string would parse to a higher tuple than current.
+        """
+        import json as _json
+
+        class FakeResp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return _json.dumps({"info": {"version": "99.0.0rc1"}}).encode()
+
+        monkeypatch.setattr("yt_dont_recommend.cli.urlopen", lambda req, timeout=5: FakeResp())
+        monkeypatch.setattr("yt_dont_recommend.cli._get_current_version", lambda: "0.5.0")
+        from yt_dont_recommend.cli import check_for_update
+        state = {"last_version_check": None}
+        assert check_for_update(state) is None
+        # Cache must remain unset so a subsequent run also doesn't prompt.
+        assert state.get("latest_known_version") is None
+
 
 class TestDetectInstaller:
     def test_uv_installer(self, monkeypatch):

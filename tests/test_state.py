@@ -387,6 +387,35 @@ class TestLoadStateMigrations:
         loaded = ydr.load_state()
         assert "processed" not in loaded
 
+    def test_v2_migration_does_not_corrupt_original_when_rename_fails(self, tmp_path, monkeypatch):
+        """If the atomic rename raises mid-migration, the original v1 file is
+        byte-for-byte unchanged on disk. Mirrors the
+        test_save_state_does_not_corrupt_original_when_rename_fails pattern.
+
+        Regression for #51: prior implementation used open("w") + json.dump
+        which truncated the destination immediately, so a SIGKILL between
+        the open and the dump completing left a partial JSON file the next
+        launch could not parse.
+        """
+        sf = tmp_path / "processed.json"
+        self._write(sf, {
+            "blocked_by": {"@a": {"sources": ["deslop"]}},
+            "processed": ["@a", "@b", "@c"],
+        })
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        original_bytes = sf.read_bytes()
+
+        with patch("pathlib.Path.replace", side_effect=OSError("rename failed")):
+            loaded = ydr.load_state()
+
+        # In-memory migration still happened — caller sees a v2-shaped state.
+        assert "processed" not in loaded
+        # On-disk file is byte-for-byte unchanged because the rename failed
+        # before it could replace the v1 file. Next run will retry the
+        # migration cleanly. (The .tmp file may linger; same as save_state's
+        # behavior on rename failure — next save overwrites it.)
+        assert sf.read_bytes() == original_bytes
+
 
 # ---------------------------------------------------------------------------
 # save_state — ensure_data_dir failure and empty-pending_unblock cleanup

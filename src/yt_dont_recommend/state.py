@@ -146,10 +146,13 @@ def load_state() -> AppState:
                 f"({len(s['processed'])} entries); blocked_by is now authoritative."
             )
             del s["processed"]
-            # Persist immediately so repeated load_state() calls don't re-trigger.
+            # Persist atomically (write tmp then rename) so a crash mid-write
+            # leaves the original v1 file intact rather than a truncated one
+            # that the next launch can't parse. Mirrors save_state's pattern.
             try:
-                with open(STATE_FILE, "w") as f:
-                    json.dump(s, f, indent=2)
+                tmp = STATE_FILE.with_suffix(".tmp")
+                tmp.write_text(json.dumps(s, indent=2), encoding="utf-8")
+                tmp.replace(STATE_FILE)
             except Exception:
                 pass  # non-critical; will persist on next save_state()
         return s
