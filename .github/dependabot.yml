@@ -1,0 +1,78 @@
+# Dependabot version-update configuration for yt-dont-recommend.
+#
+# Two ecosystems are tracked:
+#   - pip:            runtime + dev dependencies declared in
+#                     pyproject.toml (also picks up the [clickbait]
+#                     extras: ollama, pyyaml, youtube-transcript-api)
+#   - github-actions: workflow files under .github/workflows/
+#                     (CI, publish, label automation, qa-gate,
+#                     sync-labels, dependabot-changelog)
+#
+# No docker ecosystem because this repo has no Dockerfile.
+#
+# Schedule is weekly (Monday 06:00 America/Chicago) so PRs don't pile
+# up faster than they can be reviewed solo. Each ecosystem groups its
+# updates into a single PR per week to reduce notification noise.
+#
+# Labels named here are applied only if they already exist on the
+# repo; Dependabot does not auto-create labels. The QA-workflow
+# labels (Awaiting CI / Ready for QA / etc.) are applied separately
+# by .github/workflows/pr-labels*.yml.
+#
+# commit-message uses `prefix: chore` plus `include: scope` (NOT
+# `prefix: chore(deps)`) — Dependabot auto-appends the (deps) scope
+# when include: scope is set, so the canonical title shape is
+# `chore(deps): bump foo from X to Y`. Doubling the prefix produces
+# `chore(deps)(deps): bump foo`.
+#
+# Dependabot PRs are augmented by .github/workflows/dependabot-changelog.yml
+# which prepends a CHANGELOG entry under [Unreleased] / Changed using
+# a GitHub App installation token so the bot's commit re-fires the
+# QA-Gate-required CI checks.
+#
+# Docs:
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Python deps: pyproject.toml at the repo root. Covers Playwright
+  # (runtime), the [dev] extras (pytest, pytest-cov, ruff), and the
+  # optional [clickbait] extras (ollama, pyyaml, youtube-transcript-api).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # GitHub Actions used by .github/workflows/*.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore"
+      include: "scope"

@@ -124,6 +124,12 @@
 - name: dependencies
   color: "0075ca"
   description: Dependency updates
+- name: python
+  color: "3572A5"
+  description: Python ecosystem (pyproject.toml / runtime / dev deps)
+- name: github-actions
+  color: "2088FF"
+  description: GitHub Actions workflows
 - name: testing
   color: "0E8A16"
   description: Platform and integration testing
