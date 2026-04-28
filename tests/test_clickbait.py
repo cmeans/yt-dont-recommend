@@ -1291,3 +1291,119 @@ class TestTranscriptBatchRemainingBranches:
         assert len(results) == 2
         # 1 batch + 1 per-item for the missing slot
         assert len(individual_calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Shadow-limit detection
+# ---------------------------------------------------------------------------
+
+class TestShadowLimitUnion:
+    """_check_shadow_reencounter uses the union of clickbait_acted | keyword_acted."""
+
+    def _old_ts(self) -> str:
+        """ISO timestamp older than SHADOW_LIMIT_GRACE_HOURS."""
+        from datetime import datetime as _dt
+        from datetime import timedelta, timezone
+
+        from yt_dont_recommend.config import SHADOW_LIMIT_GRACE_HOURS
+        return (_dt.now(tz=timezone.utc) - timedelta(hours=SHADOW_LIMIT_GRACE_HOURS + 1)).isoformat()
+
+    def _recent_ts(self) -> str:
+        """ISO timestamp within the grace window."""
+        from datetime import datetime as _dt
+        from datetime import timezone
+        return _dt.now(tz=timezone.utc).isoformat()
+
+    def test_no_trigger_when_video_not_acted(self):
+        """Video never acted on — never triggers shadow-limit."""
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+
+        state = {"clickbait_acted": {}, "keyword_acted": {}}
+        run_hits: dict = {"count": 0}
+        for _ in range(5):
+            result = _check_shadow_reencounter(state, "vid_new", run_hits)
+            assert result is False
+        assert run_hits["count"] == 0
+
+    def test_no_trigger_within_grace_window(self):
+        """Re-encounter within SHADOW_LIMIT_GRACE_HOURS does not count."""
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+
+        state = {
+            "clickbait_acted": {
+                "vid_recent": {"acted_at": self._recent_ts(), "title": "x", "channel": "@a"},
+            },
+            "keyword_acted": {},
+        }
+        run_hits: dict = {"count": 0}
+        result = _check_shadow_reencounter(state, "vid_recent", run_hits)
+        assert result is False
+        assert run_hits["count"] == 0
+
+    def test_trigger_from_clickbait_acted(self):
+        """Old clickbait_acted entry triggers shadow-limit after WARN_AFTER hits."""
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+        from yt_dont_recommend.config import SHADOW_LIMIT_WARN_AFTER
+
+        state = {
+            "clickbait_acted": {
+                "vid_old": {"acted_at": self._old_ts(), "title": "x", "channel": "@a"},
+            },
+            "keyword_acted": {},
+        }
+        run_hits: dict = {"count": 0}
+        # First WARN_AFTER-1 calls increment counter but return False
+        for _ in range(SHADOW_LIMIT_WARN_AFTER - 1):
+            assert _check_shadow_reencounter(state, "vid_old", run_hits) is False
+        # The WARN_AFTER-th call returns True
+        assert _check_shadow_reencounter(state, "vid_old", run_hits) is True
+        assert run_hits["count"] == SHADOW_LIMIT_WARN_AFTER
+
+    def test_shadow_limit_check_sees_keyword_acted(self, tmp_path, monkeypatch):
+        """A previously keyword-acted video re-encountered triggers the
+        shadow-limit detection just like a previously clickbait-acted one."""
+        import yt_dont_recommend as ydr
+
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+        from yt_dont_recommend.config import SHADOW_LIMIT_WARN_AFTER
+
+        state = ydr.load_state()
+        state["keyword_acted"]["vid_old"] = {
+            "acted_at": self._old_ts(),
+            "title": "x",
+            "channel": "@a",
+            "matched_pattern": "p",
+            "matched_mode": "substring",
+            "matched_line": 1,
+        }
+
+        run_hits: dict = {"count": 0}
+        # Drive hit count up to the threshold
+        for _ in range(SHADOW_LIMIT_WARN_AFTER - 1):
+            assert _check_shadow_reencounter(state, "vid_old", run_hits) is False
+        # Threshold hit
+        assert _check_shadow_reencounter(state, "vid_old", run_hits) is True
+        assert run_hits["count"] == SHADOW_LIMIT_WARN_AFTER
+
+    def test_keyword_acted_ignored_within_grace(self):
+        """keyword_acted entry within the grace window does not trigger."""
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+
+        state = {
+            "clickbait_acted": {},
+            "keyword_acted": {
+                "vid_recent": {
+                    "acted_at": self._recent_ts(),
+                    "title": "x",
+                    "channel": "@a",
+                    "matched_pattern": "p",
+                    "matched_mode": "substring",
+                    "matched_line": 1,
+                },
+            },
+        }
+        run_hits: dict = {"count": 0}
+        assert _check_shadow_reencounter(state, "vid_recent", run_hits) is False
+        assert run_hits["count"] == 0
