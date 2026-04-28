@@ -59,6 +59,7 @@ class AppState(TypedDict, total=False):
     pending_unblock: dict[str, dict]
     clickbait_cache: dict[str, dict]
     clickbait_acted: dict[str, dict]
+    pending_upgrade: dict[str, str] | None
 
 from .config import (
     ATTENTION_FILE,

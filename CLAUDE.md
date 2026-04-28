@@ -300,6 +300,7 @@ Key behaviours:
 4. **Bump `STATE_VERSION`** in `src/yt_dont_recommend/config.py` (the integer constant near the bottom)
 5. **Update the State Schema** block above in this file
 6. **Add a test** covering the new key's default value
+7. **Declare the new field on the `AppState` TypedDict** in `src/yt_dont_recommend/state.py`. The TypedDict is the canonical "what's in state" reference for readers; every state key must appear there or future readers are misled. Use `total=False` semantics (all fields optional at the type level), but include the field with its accurate type — `dict | None` for the new `pending_upgrade` entry, `dict[str, X]` for collection-shaped entries, etc. Mirrors the pattern already used for every pre-existing state key.
 
 This ensures old binaries (post-revert) can always read state written by newer ones — they ignore unknown keys and log a warning if `state_version` in the file exceeds what they expect.
 
