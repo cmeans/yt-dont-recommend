@@ -47,6 +47,8 @@ LOG_FILE = Path.home() / ".yt-dont-recommend" / "run.log"
 # Legacy name (exclude.txt) is accepted for blocklist exclusions with a deprecation warning.
 DEFAULT_BLOCKLIST_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "blocklist-exclude.txt"
 DEFAULT_CLICKBAIT_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "clickbait-exclude.txt"
+DEFAULT_KEYWORD_FILE = Path.home() / ".yt-dont-recommend" / "keyword-block.txt"
+DEFAULT_KEYWORD_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "keyword-exclude.txt"
 _LEGACY_EXCLUDE_FILE = Path.home() / ".yt-dont-recommend" / "exclude.txt"
 
 # Delays (seconds) — be respectful to avoid rate limiting
@@ -91,7 +93,7 @@ VERSION_CHECK_INTERVAL = 86400  # seconds between automatic checks (24 h)
 # State schema version — bump this whenever the state file structure changes.
 # Policy: only ADD new keys (never rename/remove/reinterpret existing ones).
 # load_state() warns when it reads a state file written by a newer version.
-STATE_VERSION = 4
+STATE_VERSION = 5
 
 # Auto-upgrade delay window: number of days a newly detected PyPI release
 # must sit pending before do_auto_upgrade is allowed to install it. Defense
@@ -108,6 +110,7 @@ CLICKBAIT_CACHE_TTL_DAYS = 14
 # Clickbait acted pruning: entries older than this many days are removed from
 # clickbait_acted on load (keeps the set from growing indefinitely).
 CLICKBAIT_ACTED_PRUNE_DAYS = 90
+KEYWORD_ACTED_PRUNE_DAYS = 90
 
 # Shadow-limiting detection: stop the run after this many re-encounters of
 # videos previously acted on with "Not interested" (time-gated; see below).
