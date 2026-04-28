@@ -537,6 +537,8 @@ yt-dont-recommend --auto-upgrade disable
 
 > **Trust model — auto-upgrade is interactive-only.** When `auto_upgrade` is enabled, the upgrade only runs in interactive sessions (`stdin` is a TTY). Scheduled runs (cron / launchd / `--heartbeat`) still notify you of a new release but do not install it: a compromised PyPI release would otherwise be picked up silently the next time the scheduler fires, with immediate access to your YouTube session cookies in the local browser profile. Run `yt-dont-recommend --check-update` interactively when you're ready to upgrade. If a release does turn out to be bad, `yt-dont-recommend --revert` rolls back to the previously recorded version (and disables auto-upgrade so it does not immediately re-upgrade).
 
+> **Trust model — N-day delay window before installing.** As additional defense in depth on top of the interactive-only gate, every newly detected release sits pending for 3 days before `auto_upgrade` will install it. The first run that detects a new version records `pending_upgrade.first_seen_at` in state and skips the install; subsequent runs check whether the window has elapsed, log how much time is left, and only install once it has. The maintainer therefore has 3 days to yank a compromised release on PyPI before users on `auto_upgrade` are exposed to it. The ntfy notification still fires on first detection (so you know what's coming), and `--check-update` still works at any time for an ad-hoc release-notes view — `--check-update` does not shorten or bypass the window. Override the default with the `auto_upgrade.delay_days` key in `~/.yt-dont-recommend/config.yaml` (set to `0` to disable, not recommended).
+
 ### Reverting an upgrade
 
 If something goes wrong after an upgrade, revert to the previous version:

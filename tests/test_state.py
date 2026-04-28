@@ -302,10 +302,28 @@ class TestClickbaitStateKeys:
         state = ydr.load_state()
         assert "vid1" in state["clickbait_acted"]
 
-    def test_state_version_is_3(self, tmp_path, monkeypatch):
+    def test_state_version_is_4(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
-        assert state["state_version"] == 3
+        assert state["state_version"] == 4
+
+    def test_pending_upgrade_defaults_to_none_in_fresh_state(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["pending_upgrade"] is None
+
+    def test_pending_upgrade_populated_on_load_when_missing(self, tmp_path, monkeypatch):
+        """Older state files written before STATE_VERSION 4 (no pending_upgrade
+        key) should round-trip through load_state with pending_upgrade=None,
+        not KeyError on first access."""
+        sf = tmp_path / "processed.json"
+        sf.write_text(json.dumps({
+            "blocked_by": {},
+            "state_version": 3,
+        }))
+        monkeypatch.setattr(ydr, "STATE_FILE", sf)
+        state = ydr.load_state()
+        assert state["pending_upgrade"] is None
 
 
 # ---------------------------------------------------------------------------

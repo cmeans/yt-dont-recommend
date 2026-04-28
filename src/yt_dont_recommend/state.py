@@ -59,6 +59,7 @@ class AppState(TypedDict, total=False):
     pending_unblock: dict[str, dict]
     clickbait_cache: dict[str, dict]
     clickbait_acted: dict[str, dict]
+    pending_upgrade: dict[str, str] | None
 
 from .config import (
     ATTENTION_FILE,
@@ -124,6 +125,7 @@ def load_state() -> AppState:
         s.setdefault("source_sizes", {})
         s.setdefault("clickbait_cache", {})
         s.setdefault("clickbait_acted", {})
+        s.setdefault("pending_upgrade", None)
         # Prune clickbait_acted entries older than CLICKBAIT_ACTED_PRUNE_DAYS
         _prune_cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=CLICKBAIT_ACTED_PRUNE_DAYS)).isoformat()
         s["clickbait_acted"] = {
@@ -171,6 +173,7 @@ def load_state() -> AppState:
         "source_sizes": {},
         "clickbait_cache": {},
         "clickbait_acted": {},
+        "pending_upgrade": None,
         "state_version": STATE_VERSION,
     }
 

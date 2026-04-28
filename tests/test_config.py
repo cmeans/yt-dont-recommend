@@ -238,6 +238,86 @@ class TestLoadScheduleConfig:
         assert cfg.load_schedule_config() == {}
 
 
+class TestLoadAutoUpgradeConfig:
+    """Covers every branch of load_auto_upgrade_config() — Codecov on PR #58
+    flagged 20 missing lines in this loader. New for STATE_VERSION 4 / #55."""
+
+    def test_no_file_returns_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cfg, "CONFIG_FILE", tmp_path / "config.yaml")
+        assert cfg.load_auto_upgrade_config() == {}
+
+    def test_yaml_missing_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade:\n  delay_days: 7\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        with patch.dict("sys.modules", {"yaml": None}):
+            assert cfg.load_auto_upgrade_config() == {}
+
+    def test_delay_days_loaded(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade:\n  delay_days: 7\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_auto_upgrade_config() == {"delay_days": 7}
+
+    def test_zero_delay_days_accepted(self, tmp_path, monkeypatch):
+        """delay_days=0 is the documented "disable the delay" knob — must be
+        accepted, not silently dropped by the >= 0 guard."""
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade:\n  delay_days: 0\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_auto_upgrade_config() == {"delay_days": 0}
+
+    def test_negative_delay_days_rejected(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade:\n  delay_days: -3\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        # Negative gets silently dropped — caller falls back to AUTO_UPGRADE_DELAY_DAYS.
+        assert cfg.load_auto_upgrade_config() == {}
+
+    def test_non_int_delay_days_rejected(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade:\n  delay_days: 'three'\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        # Non-coercible string gets silently dropped via try/except (TypeError, ValueError).
+        assert cfg.load_auto_upgrade_config() == {}
+
+    def test_string_int_delay_days_coerced(self, tmp_path, monkeypatch):
+        """YAML quotes coerce to string; if it's still a valid int(), accept it."""
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade:\n  delay_days: '5'\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_auto_upgrade_config() == {"delay_days": 5}
+
+    def test_non_dict_auto_upgrade_section_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade: 42\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_auto_upgrade_config() == {}
+
+    def test_missing_auto_upgrade_section_returns_empty(self, tmp_path, monkeypatch):
+        """A config.yaml that exists but has no auto_upgrade: section must
+        return {} (caller falls back to AUTO_UPGRADE_DELAY_DAYS)."""
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("timing:\n  min_delay: 1.0\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_auto_upgrade_config() == {}
+
+    def test_missing_delay_days_key_returns_empty(self, tmp_path, monkeypatch):
+        """auto_upgrade: section present but no delay_days key — return {}
+        rather than {"delay_days": <some default>}, so the call site's own
+        fallback to AUTO_UPGRADE_DELAY_DAYS is the single source of default."""
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade:\n  some_other_key: foo\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_auto_upgrade_config() == {}
+
+    def test_unparseable_yaml_returns_empty(self, tmp_path, monkeypatch):
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("auto_upgrade: : :\n")
+        monkeypatch.setattr(cfg, "CONFIG_FILE", cfg_file)
+        assert cfg.load_auto_upgrade_config() == {}
+
+
 class TestLoadSelectorsConfigExtraBranches:
     """Covers the selectors loader branches not exercised by test_selectors.py."""
 
