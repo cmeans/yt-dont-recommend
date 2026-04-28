@@ -482,3 +482,195 @@ class TestProcessChannels:
                 "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
             })
             mock_open.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by TestKeywordPhase3
+# ---------------------------------------------------------------------------
+
+_MINIMAL_STATE = {
+    "blocked_by": {},
+    "would_have_blocked": {},
+    "pending_unblock": {},
+    "ucxxx_to_handle": {},
+    "stats": {"total_blocked": 0, "total_skipped": 0, "total_failed": 0},
+    "keyword_acted": {},
+    "keyword_stats": {
+        "total_matched": 0,
+        "by_pattern": {},
+        "by_mode": {"substring": 0, "word": 0, "regex": 0},
+    },
+}
+
+
+_KW_VIDEO_ID = "StarTrekXxY"  # exactly 11 chars — matches YouTube video ID regex [A-Za-z0-9_-]{11}
+
+
+def _make_kw_page(video_id: str, channel_handle: str, title: str):
+    """Return a minimal mock Playwright page for keyword Phase 3 tests.
+
+    The page has one feed card on the first query_selector_all call and an
+    empty card list on the second (simulates feed exhaustion after one pass).
+    Video metadata is pre-loaded into the JSON cache so no DOM title extraction
+    is attempted.
+    """
+    page = MagicMock()
+    page.goto.return_value = None
+    page.wait_for_load_state.return_value = None
+    # Scroll evaluate calls: return None to avoid issues
+    page.evaluate.return_value = None
+    # login_check: return truthy so exhaustion path logs cleanly
+    page.query_selector.return_value = MagicMock()
+
+    # Feed card mock
+    card = MagicMock()
+
+    channel_link_mock = MagicMock()
+    channel_link_mock.get_attribute.return_value = f"/{channel_handle}"
+    channel_link_mock.inner_text.return_value = channel_handle
+
+    watch_link_mock = MagicMock()
+    watch_link_mock.get_attribute.return_value = f"/watch?v={video_id}"
+
+    def card_query_selector(sel):
+        if "href*='/watch?v='" in sel:
+            return watch_link_mock
+        return channel_link_mock
+
+    card.query_selector.side_effect = card_query_selector
+
+    # First call returns one card; subsequent calls return [] to exhaust feed
+    _calls = [0]
+
+    def query_selector_all_side_effect(sel):
+        _calls[0] += 1
+        if _calls[0] == 1:
+            return [card]
+        return []
+
+    page.query_selector_all.side_effect = query_selector_all_side_effect
+
+    return page, card, {video_id: {"title": title, "channel_handle": channel_handle}}
+
+
+# ---------------------------------------------------------------------------
+# TestKeywordPhase3
+# ---------------------------------------------------------------------------
+
+class TestKeywordPhase3:
+    """process_channels Phase 3 — keyword matching before clickbait."""
+
+    def setup_method(self):
+        unblock_mod._pending_attempted_this_run.clear()
+        # Stub out _pkg() so save_state / write_attention don't hit the filesystem.
+        self._pkg_patch = patch("yt_dont_recommend.browser._pkg")
+        self._mock_pkg = self._pkg_patch.start()
+        self._mock_pkg.return_value.save_state = MagicMock()
+        self._mock_pkg.return_value.write_attention = MagicMock()
+        self._mock_pkg.return_value.load_state = MagicMock()
+
+    def teardown_method(self):
+        self._pkg_patch.stop()
+        unblock_mod._pending_attempted_this_run.clear()
+
+    def test_keyword_match_acts_and_records_state(self):
+        """A card whose title matches a keyword rule is acted on; state is updated."""
+        import copy
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Star Trek")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page, _card, json_videos = _make_kw_page(
+            video_id=_KW_VIDEO_ID,
+            channel_handle="@trekfan",
+            title="Star Trek finale spoilers",
+        )
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value=set()),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value=json_videos),
+            patch("yt_dont_recommend.browser._click_not_interested", return_value=True) as mock_ni,
+            patch("yt_dont_recommend.browser.time") as mock_time,
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                keyword_compiled=compiled,
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        assert _KW_VIDEO_ID in state["keyword_acted"], "keyword_acted should record the match"
+        assert state["keyword_acted"][_KW_VIDEO_ID]["channel"] == "@trekfan"
+        assert state["keyword_acted"][_KW_VIDEO_ID]["matched_pattern"] == "Star Trek"
+        assert state["keyword_stats"]["total_matched"] == 1
+        mock_ni.assert_called_once()
+
+    def test_keyword_excluded_channel_skipped(self):
+        """A channel in keyword_excludes is not acted on even if the title matches."""
+        import copy
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Star Trek")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page, _card, json_videos = _make_kw_page(
+            video_id=_KW_VIDEO_ID,
+            channel_handle="@trekfan",
+            title="Star Trek finale spoilers",
+        )
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value=set()),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value=json_videos),
+            patch("yt_dont_recommend.browser._click_not_interested", return_value=True) as mock_ni,
+            patch("yt_dont_recommend.browser.time") as mock_time,
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                keyword_compiled=compiled,
+                keyword_excludes={"@trekfan"},
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        assert _KW_VIDEO_ID not in state["keyword_acted"], "excluded channel must not be acted on"
+        mock_ni.assert_not_called()
+
+    def test_subscribed_channel_keyword_acts_anyway(self):
+        """A subscribed channel is not in the blocklist, so keyword matching still fires."""
+        import copy
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Star Trek")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page, _card, json_videos = _make_kw_page(
+            video_id=_KW_VIDEO_ID,
+            channel_handle="@trekfan",
+            title="Star Trek finale spoilers",
+        )
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value={"@trekfan"}),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value=json_videos),
+            patch("yt_dont_recommend.browser._click_not_interested", return_value=True) as mock_ni,
+            patch("yt_dont_recommend.browser.time") as mock_time,
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                keyword_compiled=compiled,
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        # @trekfan is subscribed but not on the blocklist — keyword mode is not
+        # gated by subscriptions, so the match should still fire.
+        assert _KW_VIDEO_ID in state["keyword_acted"], "subscribed channel keyword match should fire"
+        mock_ni.assert_called_once()

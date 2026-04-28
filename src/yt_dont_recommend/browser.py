@@ -654,6 +654,26 @@ def close_browser(handle: tuple) -> None:
     clear_profile_cache()
 
 
+def _record_keyword_match(state: dict, video_id: str, title: str, channel: str, result: Any) -> None:
+    """Append the keyword match to state['keyword_acted'] and bump state['keyword_stats']."""
+    from datetime import timezone
+    state.setdefault("keyword_acted", {})
+    state["keyword_acted"][video_id] = {
+        "acted_at": datetime.now(tz=timezone.utc).isoformat(),
+        "title": title,
+        "channel": channel,
+        "matched_pattern": result.pattern,
+        "matched_mode": result.mode,
+        "matched_line": result.line,
+    }
+    stats = state.setdefault("keyword_stats", {})
+    stats["total_matched"] = stats.get("total_matched", 0) + 1
+    bp = stats.setdefault("by_pattern", {})
+    bp[result.pattern] = bp.get(result.pattern, 0) + 1
+    bm = stats.setdefault("by_mode", {})
+    bm[result.mode] = bm.get(result.mode, 0) + 1
+
+
 def process_channels(channel_sources: dict[str, str],
                      to_unblock: list[str] | None = None,
                      state: dict | None = None,
@@ -662,6 +682,8 @@ def process_channels(channel_sources: dict[str, str],
                      headless: bool = False,
                      clickbait_cfg: dict | None = None,
                      exclude_set: set[str] | None = None,
+                     keyword_compiled: list | None = None,
+                     keyword_excludes: set[str] | None = None,
                      _browser: tuple | None = None) -> None:
     """
     Scan the YouTube home feed once and click 'Don't recommend channel' for
@@ -699,7 +721,9 @@ def process_channels(channel_sources: dict[str, str],
     # Filter to_unblock against channels already attempted in this process run.
     to_unblock = [ch for ch in to_unblock if ch not in _pending_attempted_this_run]
 
-    if not channel_sources and not to_unblock and clickbait_cfg is None:
+    if (not channel_sources and not to_unblock
+            and clickbait_cfg is None
+            and not keyword_compiled):
         log.info("Nothing to do.")
         return
 
@@ -728,7 +752,7 @@ def process_channels(channel_sources: dict[str, str],
         elif to_unblock and dry_run:
             log.info(f"DRY RUN — would reverse YouTube block for: {', '.join(to_unblock)}")
 
-        if not channel_sources and clickbait_cfg is None:
+        if not channel_sources and clickbait_cfg is None and not keyword_compiled:
             return
 
         subscriptions = fetch_subscriptions(page, sels=sels) if channel_sources else set()
@@ -780,18 +804,20 @@ def process_channels(channel_sources: dict[str, str],
         _title_cache: dict[str, dict] = {}      # video_id → title-stage result (persists across passes)
         processed_set_lower = {c.lower() for c in processed_set}
 
-        _prefix = "DRY RUN — " if dry_run else ""
-        if channel_lookup and clickbait_cfg is not None:
-            _scan_desc = (f"{_n(len(channel_lookup), 'channel')} across {_n(n_sources, 'source')}"
-                          f" + clickbait detection")
-        elif channel_lookup:
-            _scan_desc = f"{_n(len(channel_lookup), 'channel')} across {_n(n_sources, 'source')}"
-        else:
-            _scan_desc = "clickbait detection"
-        log.info(f"{_prefix}Scanning home feed for {_scan_desc}...")
-
         _run_blocklist = bool(channel_lookup)
         _run_clickbait = clickbait_cfg is not None
+        _run_keyword = bool(keyword_compiled)
+
+        _prefix = "DRY RUN — " if dry_run else ""
+        _scan_parts = []
+        if channel_lookup:
+            _scan_parts.append(f"{_n(len(channel_lookup), 'channel')} across {_n(n_sources, 'source')}")
+        if _run_keyword:
+            _scan_parts.append(f"keyword matching ({_n(len(keyword_compiled), 'rule')})")
+        if _run_clickbait:
+            _scan_parts.append("clickbait detection")
+        _scan_desc = " + ".join(_scan_parts) if _scan_parts else "keyword matching"
+        log.info(f"{_prefix}Scanning home feed for {_scan_desc}...")
         # Extract video metadata from ytInitialData (initial load) and continuation responses.
         # Used as title source for clickbait and channel-handle fallback for
         # blocklist when the DOM channel link selector returns nothing.
@@ -823,6 +849,7 @@ def process_channels(channel_sources: dict[str, str],
         page.on("response", _on_browse_response)
         blocked_count = 0
         clickbait_count = 0
+        keyword_count = 0
         no_progress_scrolls = 0
         zero_parse_passes = 0
         selector_confirmed = False
@@ -830,7 +857,7 @@ def process_channels(channel_sources: dict[str, str],
         seen_paths: set[str] = set()
 
         while True:
-            if limit and (blocked_count + clickbait_count) >= limit:
+            if limit and (blocked_count + clickbait_count + keyword_count) >= limit:
                 log.info(f"Reached limit of {limit} actions.")
                 break
             if no_progress_scrolls >= MAX_NO_PROGRESS_SCROLLS:
@@ -851,13 +878,14 @@ def process_channels(channel_sources: dict[str, str],
             found_match_this_pass = False
             pass_parseable = 0
 
-            # ---- Phase 1: walk cards — collect blocklist match + clickbait candidates ----
+            # ---- Phase 1: walk cards — collect blocklist match + clickbait/keyword candidates ----
             _blocklist_match: tuple | None = None  # (card, canonical, source, display_name)
+            _kw_match: tuple | None = None         # (card, path, video_id, title, result) — first match
             _cb_candidates: list[tuple] = []       # (card, path, video_id, title) — unclassified
             _cb_flagged: list[tuple] = []          # (card, path, video_id) — cached flagged results
 
             for card in cards:
-                if limit and (blocked_count + clickbait_count) >= limit:
+                if limit and (blocked_count + clickbait_count + keyword_count) >= limit:
                     break
 
                 channel_link = card.query_selector(sels["channel_link"])
@@ -938,12 +966,18 @@ def process_channels(channel_sources: dict[str, str],
                         display_name = (channel_link.inner_text() or "").strip() or None if channel_link else None
                         _blocklist_match = (card, canonical, source, display_name)
                 else:
-                    # Not on blocklist — collect as clickbait candidate if enabled
-                    if clickbait_cfg is None or path.lower() in _clickbait_evaluated:
+                    # Not on blocklist — evaluate for keyword matching and/or clickbait.
+                    # Need title/video_id for either; skip early only if both are inactive.
+                    # Note: _video_id_for_json is used here; video_id is set below after
+                    # any ID-fallback resolution. The already-acted check uses the same ID.
+                    _kw_eligible = (_run_keyword
+                                    and _video_id_for_json not in (state.get("keyword_acted") or {})
+                                    and not (keyword_excludes and path.lower() in keyword_excludes))
+                    _cb_eligible = (_run_clickbait and path.lower() not in _clickbait_evaluated
+                                    and not (exclude_set and path.lower() in exclude_set))
+                    if not _kw_eligible and not _cb_eligible:
                         continue
-                    if exclude_set and path.lower() in exclude_set:
-                        log.debug(f"clickbait: {path} — in exclude list, skipping")
-                        continue
+
                     # Get video title. Try stable text-element selectors first,
                     # then fall back to the link element directly.
                     # Note: a[href*='/watch?v='] matches a#thumbnail first whose
@@ -963,7 +997,7 @@ def process_channels(channel_sources: dict[str, str],
                             if _vm:
                                 video_id = _vm.group(1)
                     if not video_id:
-                        log.debug(f"clickbait: {path} — no video ID (Shorts or shelf card?), skipping")
+                        log.debug(f"keyword/clickbait: {path} — no video ID (Shorts or shelf card?), skipping")
                         continue
 
                     # Prefer title from feed JSON cache (clean, no duration suffix).
@@ -971,10 +1005,10 @@ def process_channels(channel_sources: dict[str, str],
                     json_meta = _json_videos.get(video_id)
                     if json_meta and json_meta.get("title"):
                         video_title: str | None = json_meta["title"]
-                        log.debug(f"clickbait: {path}/{video_id} — title from feed JSON cache")
+                        log.debug(f"keyword/clickbait: {path}/{video_id} — title from feed JSON cache")
                     else:
                         if _json_videos:
-                            log.debug(f"clickbait: {path}/{video_id} — not in feed JSON cache, falling back to DOM")
+                            log.debug(f"keyword/clickbait: {path}/{video_id} — not in feed JSON cache, falling back to DOM")
                         _title_el = None
                         for _tl_sel in sels["title_link"]:
                             _title_el = card.query_selector(_tl_sel)
@@ -994,21 +1028,32 @@ def process_channels(channel_sources: dict[str, str],
                                     "", aria
                                 ).strip() or None
                     if not video_title:
-                        log.debug(f"clickbait: {path}/{video_id} — could not extract title, skipping")
+                        log.debug(f"keyword/clickbait: {path}/{video_id} — could not extract title, skipping")
                         continue
-                    if video_id in _title_cache:
-                        # Already classified — use cached result
-                        cached = _title_cache[video_id]
-                        if cached.get("flagged"):
-                            _cb_flagged.append((card, path, video_id))
+
+                    # Phase 3 candidate: keyword matching (higher priority than clickbait)
+                    if _kw_eligible and _kw_match is None:
+                        from .keywords import match_title as _match_title
+                        _kw_result = _match_title(video_title, keyword_compiled)  # type: ignore[arg-type]
+                        if _kw_result is not None:
+                            _kw_match = (card, path, video_id, video_title, _kw_result)
+                            continue  # keyword wins; don't also queue for clickbait
+
+                    # Clickbait candidate collection (Phase 4 classify + Phase 5 act)
+                    if _cb_eligible:
+                        if video_id in _title_cache:
+                            # Already classified — use cached result
+                            cached = _title_cache[video_id]
+                            if cached.get("flagged"):
+                                _cb_flagged.append((card, path, video_id))
+                            else:
+                                log.debug(
+                                    f"clickbait: {path}/{video_id} — "
+                                    f"cache hit not flagged (score={cached.get('confidence', 0.0):.2f})"
+                                )
+                                _clickbait_evaluated.add(path.lower())
                         else:
-                            log.debug(
-                                f"clickbait: {path}/{video_id} — "
-                                f"cache hit not flagged (score={cached.get('confidence', 0.0):.2f})"
-                            )
-                            _clickbait_evaluated.add(path.lower())
-                    else:
-                        _cb_candidates.append((card, path, video_id, video_title))
+                            _cb_candidates.append((card, path, video_id, video_title))
 
             # ---- Phase 2: handle blocklist match (highest priority) ----
             if _blocklist_match is not None:
@@ -1060,7 +1105,36 @@ def process_channels(channel_sources: dict[str, str],
                         log.warning(f"SKIP {canonical} (appeared in feed but couldn't block)")
                         pkg.save_state(state)
 
-            # ---- Phase 3: batch-classify clickbait candidates ----
+            # ---- Phase 3: act on keyword match ----
+            if _kw_match is not None and not found_match_this_pass:
+                _kw_card, _kw_path, _kw_vid, _kw_title, _kw_result = _kw_match
+                if dry_run:
+                    log.info(
+                        "WOULD MATCH (keyword): %s — line %d %s:%s",
+                        _kw_title, _kw_result.line, _kw_result.mode, _kw_result.pattern,
+                    )
+                    keyword_count += 1
+                    found_match_this_pass = True
+                else:
+                    try:
+                        _kw_success = _click_not_interested(page, _kw_card, sels)
+                    except Exception as _kw_exc:
+                        log.error("FAIL keyword match %s: %s", _kw_path, _kw_exc)
+                        _kw_success = False
+                    if _kw_success:
+                        _record_keyword_match(state, _kw_vid, _kw_title, _kw_path, _kw_result)
+                        log.info(
+                            "Keyword match: %s — line %d %s:%s",
+                            _kw_title, _kw_result.line, _kw_result.mode, _kw_result.pattern,
+                        )
+                        keyword_count += 1
+                        found_match_this_pass = True
+                        pkg.save_state(state)
+                        time.sleep(random.uniform(_min_delay, _max_delay))
+                    else:
+                        log.warning("SKIP keyword match %s (Not interested not found in menu)", _kw_path)
+
+            # ---- Phase 4: batch-classify clickbait candidates ----
             evaluated_clickbait_this_pass = 0
             if _cb_candidates and _run_clickbait and not found_match_this_pass:
                 title_cfg = clickbait_cfg["video"]["title"]  # type: ignore[index]
@@ -1109,7 +1183,7 @@ def process_channels(channel_sources: dict[str, str],
                         )
                         _clickbait_evaluated.add(path.lower())
 
-            # ---- Phase 4: act on first flagged clickbait card ----
+            # ---- Phase 5: act on first flagged clickbait card ----
             # _cb_flagged entries may be stale if the card scrolled out of the DOM
             # between Phase 3 and now. is_connected() detects this. Stale cards are
             # skipped but NOT added to _clickbait_evaluated — the cache entry
@@ -1222,6 +1296,8 @@ def process_channels(channel_sources: dict[str, str],
         parts = []
         if _run_blocklist:
             parts.append(f"{_n(blocked_count, 'channel')} blocked")
+        if _run_keyword:
+            parts.append(f"{_n(keyword_count, 'video')} keyword-matched")
         if _run_clickbait:
             parts.append(f"{_n(clickbait_count, 'video')} marked Not interested")
         log.info(f"DRY RUN complete. Would have: {', '.join(parts)}.")
@@ -1229,6 +1305,8 @@ def process_channels(channel_sources: dict[str, str],
         parts = []
         if _run_blocklist:
             parts.append(f"{_n(blocked_count, 'channel')} blocked")
+        if _run_keyword:
+            parts.append(f"{_n(keyword_count, 'video')} keyword-matched")
         if _run_clickbait:
             parts.append(f"{_n(clickbait_count, 'video')} marked Not interested")
         log.info(f"Done. {', '.join(parts)} this run. Stats: {state['stats']}")
