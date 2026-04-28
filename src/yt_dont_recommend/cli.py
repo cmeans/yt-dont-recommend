@@ -26,6 +26,8 @@ from .config import (
     BUILTIN_SOURCES,
     DEFAULT_BLOCKLIST_EXCLUDE_FILE,
     DEFAULT_CLICKBAIT_EXCLUDE_FILE,
+    DEFAULT_KEYWORD_EXCLUDE_FILE,
+    DEFAULT_KEYWORD_FILE,
     DEFAULT_SOURCES,
     LOG_FILE,
     STATE_FILE,
@@ -503,6 +505,36 @@ def main() -> None:
             f"Channels to never evaluate for clickbait, regardless of title framing. "
             f"Accepts a local file path or HTTP/HTTPS URL in the same plain-text format as --source. "
             f"If not specified, {DEFAULT_CLICKBAIT_EXCLUDE_FILE} is loaded automatically if it exists."
+        ),
+    )
+    parser.add_argument(
+        "--keyword-block",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable keyword-blocking mode: scan video titles in the home feed "
+            "against the keyword list and click 'Not interested' on matches. "
+            "Independent of --clickbait (no LLM dependency)."
+        ),
+    )
+    parser.add_argument(
+        "--keyword-source",
+        default=None,
+        metavar="PATH-OR-URL",
+        help=(
+            f"Keyword list source. Local file path or https:// URL. "
+            f"Defaults to {DEFAULT_KEYWORD_FILE} if it exists. "
+            f"http:// is rejected (insecure)."
+        ),
+    )
+    parser.add_argument(
+        "--keyword-exclude",
+        default=None,
+        metavar="PATH-OR-URL",
+        help=(
+            f"Channels to never evaluate for keyword matches. Local file path or "
+            f"https:// URL. Defaults to {DEFAULT_KEYWORD_EXCLUDE_FILE} (auto-loaded "
+            f"if present, silent if absent)."
         ),
     )
     parser.add_argument("--headless", action="store_true",
