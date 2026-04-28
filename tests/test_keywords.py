@@ -209,6 +209,14 @@ class TestResolveKeywordSource:
         with patch("yt_dont_recommend.keywords.urlopen", return_value=fake_resp):
             assert resolve_keyword_source("https://example.com/list.txt") == "foo\nword:bar\n"
 
+    def test_https_url_fetch_failure_exits(self):
+        from urllib.error import URLError
+        def boom(req, timeout=15):
+            raise URLError("network down")
+        with patch("yt_dont_recommend.keywords.urlopen", side_effect=boom):
+            with pytest.raises(SystemExit):
+                resolve_keyword_source("https://example.com/list.txt")
+
 
 class TestLoadKeywordExcludes:
     def test_missing_file_returns_empty_set(self, tmp_path):

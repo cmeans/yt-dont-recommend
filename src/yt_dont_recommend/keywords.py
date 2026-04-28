@@ -138,15 +138,15 @@ def resolve_keyword_source(source: str) -> str:
         raise SystemExit(1)
 
     if source.lower().startswith("https://"):
+        from .blocklist import _get_current_version_for_ua
         try:
-            req = Request(source, headers={"User-Agent": "yt-dont-recommend/keywords"})
+            req = Request(source, headers={"User-Agent": f"yt-dont-recommend/{_get_current_version_for_ua()}"})
             with urlopen(req, timeout=15) as resp:
                 return resp.read().decode("utf-8", errors="replace")
         except (URLError, OSError, TimeoutError) as exc:
             log.error("Failed to fetch keyword source %s: %s", source, exc)
             raise SystemExit(1) from exc
 
-    # Local path
     p = Path(source)
     if not p.exists():
         log.error("Keyword source not found: %s", source)
