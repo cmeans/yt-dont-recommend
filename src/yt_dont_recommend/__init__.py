@@ -121,6 +121,17 @@ from .config import (
     write_selector_overrides,
 )
 
+# --- Re-exports from keywords ---
+from .keywords import (
+    CompiledKeyword,
+    MatchResult,
+    compile_keywords,
+    load_keyword_excludes,
+    match_title,
+    parse_keyword_file,
+    resolve_keyword_source,
+)
+
 # --- Re-exports from scheduler ---
 from .scheduler import (
     _compute_daily_plan,

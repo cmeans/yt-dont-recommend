@@ -248,3 +248,27 @@ class TestLoadKeywordExcludes:
         f = tmp_path / "ex.txt"
         f.write_text("\n# c\n\n@a\n   \n@b\n")
         assert load_keyword_excludes(f) == {"@a", "@b"}
+
+
+class TestPackageReExports:
+    """Names from keywords.py are re-exported at yt_dont_recommend root."""
+
+    def test_compile_keywords_importable_from_root(self):
+        import yt_dont_recommend
+        assert hasattr(yt_dont_recommend, "compile_keywords")
+
+    def test_match_title_importable_from_root(self):
+        import yt_dont_recommend
+        assert hasattr(yt_dont_recommend, "match_title")
+
+    def test_parse_keyword_file_importable_from_root(self):
+        import yt_dont_recommend
+        assert hasattr(yt_dont_recommend, "parse_keyword_file")
+
+    def test_resolve_keyword_source_importable_from_root(self):
+        import yt_dont_recommend
+        assert hasattr(yt_dont_recommend, "resolve_keyword_source")
+
+    def test_load_keyword_excludes_importable_from_root(self):
+        import yt_dont_recommend
+        assert hasattr(yt_dont_recommend, "load_keyword_excludes")
