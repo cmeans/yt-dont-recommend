@@ -37,6 +37,12 @@ from .config import (
     load_auto_upgrade_config,
     setup_logging,
 )
+from .keywords import (
+    compile_keywords,
+    load_keyword_excludes,
+    parse_keyword_file,
+    resolve_keyword_source,
+)
 from .scheduler import _find_installed_binary, schedule_cmd
 from .state import (
     _ntfy_notify,
@@ -827,11 +833,12 @@ def main() -> None:
         ok = check_selectors(args.test_channel, repair=args.repair)
         sys.exit(0 if ok else 1)
 
-    # Determine operating mode. Running without --blocklist or --clickbait shows help.
+    # Determine operating mode. Running without any recognized mode flag shows help.
     run_blocklist = args.blocklist or (args.source is not None)
     run_clickbait = args.clickbait
+    run_keyword = args.keyword_block
 
-    if not run_blocklist and not run_clickbait:
+    if not run_blocklist and not run_clickbait and not run_keyword:
         parser.print_help()
         return
 
@@ -1015,7 +1022,58 @@ def main() -> None:
         clickbait_exclude_set = {c.lower() for c in resolve_source(clickbait_exclude_source, quiet=True)}
         log.info(f"Loaded {_n(len(clickbait_exclude_set), 'clickbait exclusion')} via {clickbait_exclude_label}")
 
-    if not channel_sources and not all_unblocks and clickbait_cfg is None:
+    # ---- Keyword blocking setup ----
+    keyword_compiled = None
+    keyword_excludes_set: set[str] = set()
+    if args.keyword_block:
+        # Resolve source (explicit --keyword-source or default file if present)
+        if args.keyword_source:
+            keyword_source = args.keyword_source
+            keyword_label = "--keyword-source"
+        elif DEFAULT_KEYWORD_FILE.exists():
+            keyword_source = str(DEFAULT_KEYWORD_FILE)
+            keyword_label = f"default keyword file ({DEFAULT_KEYWORD_FILE})"
+        else:
+            log.error(
+                "--keyword-block was specified but no keyword source was provided "
+                "and the default file %s does not exist.",
+                DEFAULT_KEYWORD_FILE,
+            )
+            sys.exit(1)
+
+        text = resolve_keyword_source(keyword_source)
+        raw = parse_keyword_file(text)
+        keyword_compiled = compile_keywords(raw)
+        if not keyword_compiled:
+            log.info("keyword-block file is empty, no keyword matching active")
+        else:
+            log.info(
+                "Loaded %s via %s",
+                _n(len(keyword_compiled), "keyword rule"),
+                keyword_label,
+            )
+
+        # Resolve excludes (explicit path required; default auto-loaded if present)
+        if args.keyword_exclude:
+            kw_ex_path = Path(args.keyword_exclude)
+            if not kw_ex_path.exists():
+                log.error("Keyword exclude path not found: %s", args.keyword_exclude)
+                sys.exit(1)
+            keyword_excludes_set = load_keyword_excludes(kw_ex_path)
+            log.info(
+                "Loaded %s via --keyword-exclude",
+                _n(len(keyword_excludes_set), "keyword exclusion"),
+            )
+        elif DEFAULT_KEYWORD_EXCLUDE_FILE.exists():
+            keyword_excludes_set = load_keyword_excludes(DEFAULT_KEYWORD_EXCLUDE_FILE)
+            if keyword_excludes_set:
+                log.info(
+                    "Loaded %s via default keyword exclude file (%s)",
+                    _n(len(keyword_excludes_set), "keyword exclusion"),
+                    DEFAULT_KEYWORD_EXCLUDE_FILE,
+                )
+
+    if not channel_sources and not all_unblocks and clickbait_cfg is None and not keyword_compiled:
         log.info("Nothing to do.")
     else:
         from .browser import close_browser, open_browser, process_channels
@@ -1032,6 +1090,8 @@ def main() -> None:
                 headless=args.headless,
                 clickbait_cfg=clickbait_cfg,
                 exclude_set=clickbait_exclude_set or None,
+                keyword_compiled=keyword_compiled,
+                keyword_excludes=keyword_excludes_set or None,
                 _browser=browser_handle,
             )
         finally:
