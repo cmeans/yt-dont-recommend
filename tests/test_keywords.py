@@ -6,12 +6,18 @@ or via the re-export at yt_dont_recommend (added in __init__.py).
 """
 
 import logging
+from io import BytesIO
+from unittest.mock import patch
+
+import pytest
 
 from yt_dont_recommend.keywords import (
     MatchResult,
     compile_keywords,
+    load_keyword_excludes,
     match_title,
     parse_keyword_file,
+    resolve_keyword_source,
 )
 
 
@@ -174,3 +180,63 @@ class TestMatchTitle:
     def test_unicode_title_substring(self):
         compiled = compile_keywords([(1, "café")])
         assert match_title("Best CAFÉ in Paris", compiled) is not None
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — resolve_keyword_source and load_keyword_excludes
+# ---------------------------------------------------------------------------
+
+
+class TestResolveKeywordSource:
+    def test_local_path_returns_text(self, tmp_path):
+        f = tmp_path / "kw.txt"
+        f.write_text("Trump\nword:trek\n")
+        assert resolve_keyword_source(str(f)) == "Trump\nword:trek\n"
+
+    def test_missing_local_path_raises(self, tmp_path):
+        missing = tmp_path / "nope.txt"
+        with pytest.raises(SystemExit):
+            resolve_keyword_source(str(missing))
+
+    def test_http_url_rejected(self):
+        with pytest.raises(SystemExit):
+            resolve_keyword_source("http://example.com/list.txt")
+
+    def test_https_url_returns_body(self):
+        # Fake the urlopen call. Mirrors blocklist.resolve_source's network shape.
+        body = b"foo\nword:bar\n"
+        fake_resp = BytesIO(body)
+        with patch("yt_dont_recommend.keywords.urlopen", return_value=fake_resp):
+            assert resolve_keyword_source("https://example.com/list.txt") == "foo\nword:bar\n"
+
+
+class TestLoadKeywordExcludes:
+    def test_missing_file_returns_empty_set(self, tmp_path):
+        missing = tmp_path / "nope.txt"
+        assert load_keyword_excludes(missing) == set()
+
+    def test_loads_handles_lowercased(self, tmp_path):
+        f = tmp_path / "ex.txt"
+        f.write_text("# header\n@FooBar\n@bazQUX\n")
+        assert load_keyword_excludes(f) == {"@foobar", "@bazqux"}
+
+    def test_invalid_entries_dropped(self, tmp_path):
+        f = tmp_path / "ex.txt"
+        # @bad spaces is invalid per blocklist._canonicalize_channel
+        f.write_text("@valid\nbad spaces\n@another\n")
+        excludes = load_keyword_excludes(f)
+        assert "@valid" in excludes
+        assert "@another" in excludes
+        assert "bad spaces" not in excludes
+
+    def test_uc_channel_id_canonicalized(self, tmp_path):
+        f = tmp_path / "ex.txt"
+        # Real-shape UCxxx... ID (24 chars total: UC + 22 base64url-ish)
+        valid_uc = "UC" + "a" * 22
+        f.write_text(f"{valid_uc}\n")
+        assert load_keyword_excludes(f) == {valid_uc.lower()}
+
+    def test_blank_and_comment_lines_ignored(self, tmp_path):
+        f = tmp_path / "ex.txt"
+        f.write_text("\n# c\n\n@a\n   \n@b\n")
+        assert load_keyword_excludes(f) == {"@a", "@b"}

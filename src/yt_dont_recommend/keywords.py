@@ -18,7 +18,10 @@ Public API (all re-exported from yt_dont_recommend.__init__):
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 log = logging.getLogger(__name__)
 
@@ -115,3 +118,65 @@ def match_title(title: str, compiled: list[CompiledKeyword]) -> MatchResult | No
             if kw.matcher.search(title):
                 return MatchResult(pattern=kw.pattern, mode=kw.mode, line=kw.line)
     return None
+
+
+def resolve_keyword_source(source: str) -> str:
+    """Resolve a keyword source spec into raw text content.
+
+    Accepted forms:
+        /local/path/keyword.txt    — read from disk
+        https://...                — HTTPS fetch
+        http://...                 — REJECTED (insecure; mirrors blocklist hardening)
+
+    Exits with code 1 on missing file or fetch failure.
+    """
+    if source.lower().startswith("http://"):
+        log.error(
+            "Refusing insecure http:// keyword source; use https:// instead. "
+            "If you need a local override, serve the file locally and use a file path."
+        )
+        raise SystemExit(1)
+
+    if source.lower().startswith("https://"):
+        try:
+            req = Request(source, headers={"User-Agent": "yt-dont-recommend/keywords"})
+            with urlopen(req, timeout=15) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except (URLError, OSError, TimeoutError) as exc:
+            log.error("Failed to fetch keyword source %s: %s", source, exc)
+            raise SystemExit(1) from exc
+
+    # Local path
+    p = Path(source)
+    if not p.exists():
+        log.error("Keyword source not found: %s", source)
+        raise SystemExit(1)
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def load_keyword_excludes(path: Path) -> set[str]:
+    """Load a keyword-exclude file into a set of canonicalized handles.
+
+    Mirrors how cli.py loads the blocklist exclude file: reads one entry
+    per non-comment, non-blank line, validates each via the existing
+    blocklist._canonicalize_channel routine, lowercases for matching.
+    Returns empty set if the file does not exist (auto-load semantics).
+    """
+    if not path.exists():
+        return set()
+
+    # Late import to avoid circular dep with blocklist.
+    from .blocklist import _canonicalize_channel
+
+    out: set[str] = set()
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if text.startswith("﻿"):
+        text = text[1:]
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not s or s.startswith("#"):
+            continue
+        canonical = _canonicalize_channel(s)
+        if canonical:
+            out.add(canonical.lower())
+    return out
