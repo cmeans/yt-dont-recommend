@@ -14,7 +14,7 @@ import logging
 import random
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,7 @@ from .config import (
     load_timing_config,
     pick_viewport,
 )
+from .keywords import match_title
 from .unblock import _pending_attempted_this_run, _perform_browser_unblocks
 
 log = logging.getLogger(__name__)
@@ -656,7 +657,6 @@ def close_browser(handle: tuple) -> None:
 
 def _record_keyword_match(state: dict, video_id: str, title: str, channel: str, result: Any) -> None:
     """Append the keyword match to state['keyword_acted'] and bump state['keyword_stats']."""
-    from datetime import timezone
     state.setdefault("keyword_acted", {})
     state["keyword_acted"][video_id] = {
         "acted_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -816,7 +816,8 @@ def process_channels(channel_sources: dict[str, str],
             _scan_parts.append(f"keyword matching ({_n(len(keyword_compiled), 'rule')})")
         if _run_clickbait:
             _scan_parts.append("clickbait detection")
-        _scan_desc = " + ".join(_scan_parts) if _scan_parts else "keyword matching"
+        assert _scan_parts, "scan-desc reached without any active mode — invariant violated"
+        _scan_desc = " + ".join(_scan_parts)
         log.info(f"{_prefix}Scanning home feed for {_scan_desc}...")
         # Extract video metadata from ytInitialData (initial load) and continuation responses.
         # Used as title source for clickbait and channel-handle fallback for
@@ -968,10 +969,10 @@ def process_channels(channel_sources: dict[str, str],
                 else:
                     # Not on blocklist — evaluate for keyword matching and/or clickbait.
                     # Need title/video_id for either; skip early only if both are inactive.
-                    # Note: _video_id_for_json is used here; video_id is set below after
-                    # any ID-fallback resolution. The already-acted check uses the same ID.
+                    # _kw_eligible captures channel-level eligibility only; the already-acted
+                    # check is deferred until video_id is fully resolved (watch-link or
+                    # title-link fallback), so cards with only a title link can't slip past.
                     _kw_eligible = (_run_keyword
-                                    and _video_id_for_json not in (state.get("keyword_acted") or {})
                                     and not (keyword_excludes and path.lower() in keyword_excludes))
                     _cb_eligible = (_run_clickbait and path.lower() not in _clickbait_evaluated
                                     and not (exclude_set and path.lower() in exclude_set))
@@ -999,6 +1000,12 @@ def process_channels(channel_sources: dict[str, str],
                     if not video_id:
                         log.debug(f"keyword/clickbait: {path} — no video ID (Shorts or shelf card?), skipping")
                         continue
+
+                    # Late already-acted gate: now that video_id is fully resolved
+                    # (watch-link or title-link fallback), suppress keyword matching if
+                    # this exact video was already acted on in a previous run.
+                    if _kw_eligible and video_id in (state.get("keyword_acted") or {}):
+                        _kw_eligible = False
 
                     # Prefer title from feed JSON cache (clean, no duration suffix).
                     # Falls back to DOM extraction when the card isn't in the cache.
@@ -1033,8 +1040,7 @@ def process_channels(channel_sources: dict[str, str],
 
                     # Phase 3 candidate: keyword matching (higher priority than clickbait)
                     if _kw_eligible and _kw_match is None:
-                        from .keywords import match_title as _match_title
-                        _kw_result = _match_title(video_title, keyword_compiled)  # type: ignore[arg-type]
+                        _kw_result = match_title(video_title, keyword_compiled)  # type: ignore[arg-type]
                         if _kw_result is not None:
                             _kw_match = (card, path, video_id, video_title, _kw_result)
                             continue  # keyword wins; don't also queue for clickbait
