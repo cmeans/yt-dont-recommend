@@ -1688,11 +1688,10 @@ class TestKeywordSetupBlock:
     """End-to-end CLI behavior for keyword setup: file resolution, compile,
     excludes, and mode-gate."""
 
-    def test_keyword_block_alone_with_no_other_mode_shows_help(
+    def test_no_modes_shows_help(
         self, capsys, monkeypatch
     ):
-        # Without --blocklist or --clickbait, --keyword-block alone is
-        # a usable mode. But running with NO modes at all should show help.
+        # Running with NO modes at all should show help.
         # The existing pattern is: print help, return (no SystemExit raised).
         monkeypatch.setattr("sys.argv", ["ydr"])
         from yt_dont_recommend.cli import main
@@ -1724,7 +1723,7 @@ class TestKeywordSetupBlock:
         assert excinfo.value.code == 1
         assert any("http://" in r.message for r in caplog.records)
 
-    def test_keyword_default_file_auto_loaded(self, tmp_path, monkeypatch):
+    def test_keyword_default_file_auto_loaded(self, tmp_path, monkeypatch, caplog):
         from yt_dont_recommend import cli, config
         monkeypatch.setattr(config, "DEFAULT_KEYWORD_FILE", tmp_path / "keyword-block.txt")
         # Reload constant in cli (it imported by name from config).
@@ -1732,9 +1731,10 @@ class TestKeywordSetupBlock:
         (tmp_path / "keyword-block.txt").write_text("Trump\n")
         # Run --keyword-block --dry-run; stub open_browser to avoid Playwright.
         monkeypatch.setattr("sys.argv", ["ydr", "--keyword-block", "--dry-run"])
+        caplog.set_level("INFO", logger="yt_dont_recommend")
         with patch("yt_dont_recommend.browser.open_browser", return_value=None):
             cli.main()
-        # If we got here, the auto-load of the default file did not error.
+        assert any("keyword rule" in r.message.lower() for r in caplog.records)
 
     def test_keyword_exclude_explicit_missing_path_errors(
         self, tmp_path, monkeypatch, caplog
@@ -1755,3 +1755,44 @@ class TestKeywordSetupBlock:
         with pytest.raises(SystemExit) as excinfo:
             cli.main()
         assert excinfo.value.code == 1
+
+
+class TestKeywordStats:
+    """--stats output includes a 'Keyword matches' section."""
+
+    def _patch_stats_prereqs(self, monkeypatch, tmp_path):
+        """Patch the minimum set of side-effects that --stats triggers."""
+        import yt_dont_recommend as ydr
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr("yt_dont_recommend.cli.STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr("yt_dont_recommend.cli.setup_logging", lambda verbose=False: None)
+
+    def test_stats_shows_zero_keyword_section_when_empty(
+        self, capsys, tmp_path, monkeypatch
+    ):
+        from yt_dont_recommend import cli
+        self._patch_stats_prereqs(monkeypatch, tmp_path)
+        monkeypatch.setattr("sys.argv", ["ydr", "--stats"])
+        cli.main()
+        out = capsys.readouterr().out
+        assert "Keyword matches" in out
+        assert "Total: 0" in out
+
+    def test_stats_shows_top_patterns(self, capsys, tmp_path, monkeypatch):
+        import yt_dont_recommend as ydr
+        from yt_dont_recommend import cli
+        self._patch_stats_prereqs(monkeypatch, tmp_path)
+        state = ydr.load_state()
+        state["keyword_stats"] = {
+            "total_matched": 15,
+            "by_pattern": {"Trump": 10, "Star Trek": 3, "regex:^foo": 2},
+            "by_mode": {"substring": 13, "word": 0, "regex": 2},
+        }
+        ydr.save_state(state)
+        monkeypatch.setattr("sys.argv", ["ydr", "--stats"])
+        cli.main()
+        out = capsys.readouterr().out
+        assert "Total: 15" in out
+        assert "Trump" in out
+        assert "10" in out
+        assert "Star Trek" in out

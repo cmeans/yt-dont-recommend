@@ -791,6 +791,23 @@ def main() -> None:
             print("\nSubscribed channels in blocklist (skipped, notified once):")
             for ch, info in whb.items():
                 print(f"  {ch}  (sources: {info.get('sources', [])}, first seen: {info.get('first_seen', '?')[:10]})")
+        # Keyword matches section
+        kw_stats = state.get("keyword_stats", {})
+        kw_total = kw_stats.get("total_matched", 0)
+        print()
+        print("Keyword matches")
+        print(f"  Total: {kw_total}")
+        by_pattern = kw_stats.get("by_pattern", {})
+        if by_pattern:
+            top = sorted(by_pattern.items(), key=lambda kv: kv[1], reverse=True)[:10]
+            print("  Top patterns:")
+            for pat, count in top:
+                print(f"    {pat}: {count}")
+        by_mode = kw_stats.get("by_mode", {})
+        if any(by_mode.values()):
+            print("  By mode:")
+            for mode in ("substring", "word", "regex"):
+                print(f"    {mode}: {by_mode.get(mode, 0)}")
         print(f"\nState file         : {STATE_FILE}")
         print(f"Log file           : {LOG_FILE}")
         return
@@ -1025,7 +1042,7 @@ def main() -> None:
     # ---- Keyword blocking setup ----
     keyword_compiled = None
     keyword_excludes_set: set[str] = set()
-    if args.keyword_block:
+    if run_keyword:
         # Resolve source (explicit --keyword-source or default file if present)
         if args.keyword_source:
             keyword_source = args.keyword_source
@@ -1066,12 +1083,11 @@ def main() -> None:
             )
         elif DEFAULT_KEYWORD_EXCLUDE_FILE.exists():
             keyword_excludes_set = load_keyword_excludes(DEFAULT_KEYWORD_EXCLUDE_FILE)
-            if keyword_excludes_set:
-                log.info(
-                    "Loaded %s via default keyword exclude file (%s)",
-                    _n(len(keyword_excludes_set), "keyword exclusion"),
-                    DEFAULT_KEYWORD_EXCLUDE_FILE,
-                )
+            log.info(
+                "Loaded %s via default keyword exclude file (%s)",
+                _n(len(keyword_excludes_set), "keyword exclusion"),
+                DEFAULT_KEYWORD_EXCLUDE_FILE,
+            )
 
     if not channel_sources and not all_unblocks and clickbait_cfg is None and not keyword_compiled:
         log.info("Nothing to do.")
