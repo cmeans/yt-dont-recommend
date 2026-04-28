@@ -21,7 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: EndBug/label-sync@v2
+      # Pinned to a SHA on upstream main because the latest tagged release
+      # (v2.3.3, Feb 2024) still runs on Node 20. Upstream's Node 24 update
+      # merged 2026-04-10 (EndBug/label-sync#316) but no v2.3.4 tag has been
+      # cut yet. Re-evaluate to a release tag once upstream cuts one.
+      - uses: EndBug/label-sync@1cd399a63f3d27e0a890cec8d1c29efad3e5db3d # main 2026-04-25 (Node 24)
         with:
           config-file: .github/labels.yml
           delete-other-labels: false
