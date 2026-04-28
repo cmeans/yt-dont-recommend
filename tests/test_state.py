@@ -8,6 +8,7 @@ as they did in the original test_yt_dont_recommend.py.
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import yt_dont_recommend as ydr
@@ -302,10 +303,10 @@ class TestClickbaitStateKeys:
         state = ydr.load_state()
         assert "vid1" in state["clickbait_acted"]
 
-    def test_state_version_is_4(self, tmp_path, monkeypatch):
+    def test_state_version_is_5(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
         state = ydr.load_state()
-        assert state["state_version"] == 4
+        assert state["state_version"] == 5
 
     def test_pending_upgrade_defaults_to_none_in_fresh_state(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
@@ -731,3 +732,113 @@ class TestCheckAttentionFlag:
         with patch("builtins.input", return_value="") as mock_input:
             ydr.check_attention_flag()
         mock_input.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# keyword_acted + keyword_stats (v5 state keys)
+# ---------------------------------------------------------------------------
+
+
+class TestKeywordStateAdditions:
+    """v4 -> v5 migration: keyword_acted, keyword_stats, _acted_video_ids."""
+
+    def test_load_state_adds_keyword_acted_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["keyword_acted"] == {}
+
+    def test_load_state_adds_keyword_stats_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["keyword_stats"] == {
+            "total_matched": 0,
+            "by_pattern": {},
+            "by_mode": {"substring": 0, "word": 0, "regex": 0},
+        }
+
+    def test_load_state_state_version_is_5(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert state["state_version"] == 5
+
+    def test_load_state_v4_to_v5_migration_preserves_existing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        v4 = {
+            "state_version": 4,
+            "blocked_by": {"@a": {"sources": ["x"], "blocked_at": "now"}},
+            "stats": {"total_blocked": 1, "total_skipped": 0, "total_failed": 0},
+            "clickbait_acted": {"vid1": {"acted_at": "2026-04-28T00:00:00+00:00"}},
+        }
+        (tmp_path / "processed.json").write_text(json.dumps(v4))
+        state = ydr.load_state()
+        assert state["blocked_by"] == {"@a": {"sources": ["x"], "blocked_at": "now"}}
+        assert state["clickbait_acted"] == {"vid1": {"acted_at": "2026-04-28T00:00:00+00:00"}}
+        assert state["keyword_acted"] == {}
+        assert state["keyword_stats"]["total_matched"] == 0
+
+    def test_keyword_acted_prunes_old_entries(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        old = (datetime.now(tz=timezone.utc) - timedelta(days=91)).isoformat()
+        recent = (datetime.now(tz=timezone.utc) - timedelta(days=1)).isoformat()
+        existing = {
+            "state_version": 5,
+            "keyword_acted": {
+                "old_vid": {"acted_at": old, "title": "x", "channel": "@a",
+                            "matched_pattern": "p", "matched_mode": "substring", "matched_line": 1},
+                "fresh_vid": {"acted_at": recent, "title": "y", "channel": "@b",
+                              "matched_pattern": "p", "matched_mode": "substring", "matched_line": 1},
+            },
+        }
+        (tmp_path / "processed.json").write_text(json.dumps(existing))
+        state = ydr.load_state()
+        assert "old_vid" not in state["keyword_acted"]
+        assert "fresh_vid" in state["keyword_acted"]
+
+    def test_keyword_stats_not_pruned(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        existing = {
+            "state_version": 5,
+            "keyword_stats": {
+                "total_matched": 999,
+                "by_pattern": {"old": 100, "newer": 50},
+                "by_mode": {"substring": 100, "word": 25, "regex": 25},
+            },
+        }
+        (tmp_path / "processed.json").write_text(json.dumps(existing))
+        state = ydr.load_state()
+        assert state["keyword_stats"]["total_matched"] == 999
+        assert state["keyword_stats"]["by_pattern"]["old"] == 100
+
+
+class TestActedVideoIdsHelper:
+    """_acted_video_ids unions clickbait_acted and keyword_acted."""
+
+    def test_returns_empty_set_for_fresh_state(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        state = ydr.load_state()
+        assert ydr._acted_video_ids(state) == set()
+
+    def test_returns_clickbait_acted_only(self):
+        state = {
+            "clickbait_acted": {"vid1": {}, "vid2": {}},
+            "keyword_acted": {},
+        }
+        assert ydr._acted_video_ids(state) == {"vid1", "vid2"}
+
+    def test_returns_keyword_acted_only(self):
+        state = {
+            "clickbait_acted": {},
+            "keyword_acted": {"vid3": {}, "vid4": {}},
+        }
+        assert ydr._acted_video_ids(state) == {"vid3", "vid4"}
+
+    def test_returns_union(self):
+        state = {
+            "clickbait_acted": {"vid1": {}, "vid2": {}},
+            "keyword_acted": {"vid2": {}, "vid3": {}},  # vid2 in both
+        }
+        assert ydr._acted_video_ids(state) == {"vid1", "vid2", "vid3"}
+
+    def test_handles_missing_keys(self):
+        state = {}
+        assert ydr._acted_video_ids(state) == set()

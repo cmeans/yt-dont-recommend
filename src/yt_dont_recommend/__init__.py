@@ -135,6 +135,7 @@ from .scheduler import (
 
 # --- Re-exports from state ---
 from .state import (
+    _acted_video_ids,
     _desktop_notify,
     _had_attention,
     _ntfy_notify,
