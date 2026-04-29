@@ -997,8 +997,17 @@ def process_channels(channel_sources: dict[str, str],
                             _vm = re.search(r'[?&]v=([A-Za-z0-9_-]{11})', vid_href)
                             if _vm:
                                 video_id = _vm.group(1)
+                    # Build a log prefix that reflects the actually-active modes so
+                    # single-mode runs don't show irrelevant terms in the debug output.
+                    _mode_prefix_parts = []
+                    if _kw_eligible:
+                        _mode_prefix_parts.append("keyword")
+                    if _cb_eligible:
+                        _mode_prefix_parts.append("clickbait")
+                    _mode_prefix = "/".join(_mode_prefix_parts) if _mode_prefix_parts else "feed"
+
                     if not video_id:
-                        log.debug(f"keyword/clickbait: {path} — no video ID (Shorts or shelf card?), skipping")
+                        log.debug(f"{_mode_prefix}: {path} — no video ID (Shorts or shelf card?), skipping")
                         continue
 
                     # Late already-acted gate: now that video_id is fully resolved
@@ -1012,30 +1021,39 @@ def process_channels(channel_sources: dict[str, str],
                     json_meta = _json_videos.get(video_id)
                     if json_meta and json_meta.get("title"):
                         video_title: str | None = json_meta["title"]
-                        log.debug(f"keyword/clickbait: {path}/{video_id} — title from feed JSON cache")
+                        log.debug(f"{_mode_prefix}: {path}/{video_id} — title from feed JSON cache")
                     else:
                         if _json_videos:
-                            log.debug(f"keyword/clickbait: {path}/{video_id} — not in feed JSON cache, falling back to DOM")
-                        _title_el = None
-                        for _tl_sel in sels["title_link"]:
-                            _title_el = card.query_selector(_tl_sel)
-                            if _title_el:
-                                break
+                            log.debug(f"{_mode_prefix}: {path}/{video_id} — not in feed JSON cache, falling back to DOM")
+                        # Retry once on transient empty DOM (lazy-loaded titles).
+                        # The card's link element is connected (we have the video_id)
+                        # but the title attribute/text hasn't rendered yet. A short
+                        # wait before the second attempt drops the silent-skip rate.
                         video_title = None
-                        if _title_el:
-                            video_title = _title_el.get_attribute("title") or None
-                            if not video_title:
-                                _text_el = card.query_selector(sels["title_text"])
-                                if _text_el:
-                                    video_title = _text_el.inner_text().strip() or None
-                            if not video_title:
-                                aria = _title_el.get_attribute("aria-label") or ""
-                                video_title = re.sub(
-                                    r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
-                                    "", aria
-                                ).strip() or None
+                        for _attempt in range(2):
+                            _title_el = None
+                            for _tl_sel in sels["title_link"]:
+                                _title_el = card.query_selector(_tl_sel)
+                                if _title_el:
+                                    break
+                            if _title_el:
+                                video_title = _title_el.get_attribute("title") or None
+                                if not video_title:
+                                    _text_el = card.query_selector(sels["title_text"])
+                                    if _text_el:
+                                        video_title = _text_el.inner_text().strip() or None
+                                if not video_title:
+                                    aria = _title_el.get_attribute("aria-label") or ""
+                                    video_title = re.sub(
+                                        r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
+                                        "", aria
+                                    ).strip() or None
+                            if video_title:
+                                break
+                            if _attempt == 0:
+                                time.sleep(0.25)
                     if not video_title:
-                        log.debug(f"keyword/clickbait: {path}/{video_id} — could not extract title, skipping")
+                        log.debug(f"{_mode_prefix}: {path}/{video_id} — could not extract title, skipping")
                         continue
 
                     # Phase 3 candidate: keyword matching (higher priority than clickbait)
