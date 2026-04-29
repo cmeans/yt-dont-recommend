@@ -255,6 +255,29 @@ yt-dont-recommend --reset-state
 yt-dont-recommend --list-sources
 ```
 
+### Keyword filtering
+
+`--keyword-block` scans video titles in the YouTube home feed against a user-defined keyword list and clicks "Not interested" on matches. No LLM dependency. Three matching tiers selected by line prefix in `~/.yt-dont-recommend/keyword-block.txt`:
+
+- **Bare text** — substring match, case-insensitive (the default tier). Example: `Trump`.
+- **`word:<phrase>`** — whole-word match. `word:trek` matches "Star Trek finale" but not "trekking".
+- **`regex:<pattern>`** — full Python regex with `re.IGNORECASE`. Use the scoped `(?-i:pattern)` form to override case-sensitivity for a region of the pattern (Python 3.11+ rejects the bare `(?-i)` flag at expression start). Example: `regex:^\d+ reasons?`.
+
+Comments start with `#` and blank lines are ignored. Rules are evaluated in source-file order; first match wins, so put narrower rules above broader ones if you want them credited specifically. See `keyword-block.example.txt` at the repo root for a starting template.
+
+Optional `--keyword-source PATH-OR-URL` overrides the default file (local path or `https://` URL; `http://` rejected). Optional `--keyword-exclude` carries channel handles to skip — useful when you want to keep one trusted channel even though its titles match your filter. Defaults to auto-loading `~/.yt-dont-recommend/keyword-exclude.txt` if present.
+
+```bash
+# One-off run with the default file
+yt-dont-recommend --keyword-block
+
+# Combine with channel-level blocklist and clickbait detection
+yt-dont-recommend --blocklist --keyword-block --clickbait
+
+# Dry run to preview what would match
+yt-dont-recommend --keyword-block --dry-run
+```
+
 ## Exclusion Lists
 
 There are two separate exclusion files, each serving a different purpose:
