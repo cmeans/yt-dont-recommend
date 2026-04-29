@@ -1315,6 +1315,91 @@ class TestTitleExtractionFailure:
             "Retry should have resolved the title and fired keyword action"
         )
 
+    def test_card_aria_label_fallback_extracts_title(self, caplog):
+        """4th fallback: card-level aria-label yields title when inner selectors are empty.
+
+        Simulates a promotional / shelf card whose inner title element is absent
+        but whose top-level aria-label follows YouTube's accessibility format:
+        "<title> by <channel> <views> <time-ago> <duration>".
+        """
+        import logging
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Star Trek")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page = MagicMock()
+        page.goto.return_value = None
+        page.wait_for_load_state.return_value = None
+        page.evaluate.return_value = None
+        page.query_selector.return_value = MagicMock()  # login_check truthy
+
+        card = MagicMock()
+
+        channel_link_mock = MagicMock()
+        channel_link_mock.get_attribute.return_value = "/@trekfan"
+        channel_link_mock.inner_text.return_value = "@trekfan"
+
+        watch_link_mock = MagicMock()
+        watch_link_mock.get_attribute.return_value = f"/watch?v={_KW_VIDEO_ID}"
+
+        # Inner title selectors all return nothing — simulates shelf/promo card DOM.
+        title_link_mock = MagicMock()
+        title_link_mock.get_attribute.return_value = None
+
+        title_text_mock = MagicMock()
+        title_text_mock.inner_text.return_value = "  "
+
+        def card_query_selector(sel):
+            if "/@'" in sel or "channel/UC" in sel:
+                return channel_link_mock
+            if "formatted-string" in sel:
+                return title_text_mock
+            if "watch?v=" in sel:
+                return watch_link_mock
+            if "video-title" in sel:
+                return title_link_mock
+            return None
+
+        card.query_selector.side_effect = card_query_selector
+
+        # Card-level aria-label in YouTube's standard accessibility format.
+        _CARD_ARIA = (
+            "Some Video Title by Some Channel 1.2M views 3 days ago 5 minutes, 30 seconds"
+        )
+        card.get_attribute.return_value = _CARD_ARIA
+
+        _calls = [0]
+
+        def query_selector_all_side_effect(sel):
+            _calls[0] += 1
+            return [card] if _calls[0] == 1 else []
+
+        page.query_selector_all.side_effect = query_selector_all_side_effect
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value=set()),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value={}),
+            patch("yt_dont_recommend.browser._click_not_interested", return_value=True),
+            patch("yt_dont_recommend.browser.time") as mock_time,
+            caplog.at_level(logging.DEBUG, logger="yt_dont_recommend"),
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                keyword_compiled=compiled,
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        # Title extracted from card aria-label — card should NOT have been skipped
+        debug_msgs = [r.message for r in caplog.records]
+        assert not any("could not extract title" in m for m in debug_msgs), (
+            "Card should NOT have been skipped — aria-label fallback should have yielded a title."
+            f" Debug messages: {debug_msgs}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Clickbait cache-hit paths (lines 1050-1062)

@@ -1048,6 +1048,24 @@ def process_channels(channel_sources: dict[str, str],
                                         r'\s+(?:\d+\s+(?:hours?|minutes?|seconds?),?\s*)+$',
                                         "", aria
                                     ).strip() or None
+                            # 4th fallback: card-level aria-label. YouTube populates
+                            # this for screen-reader accessibility even when the inner
+                            # title selectors are absent (sponsored / shelf / "Up next"
+                            # inserts have a structurally different DOM).
+                            # Format: "<title> by <channel> <views> <time> [<duration>]"
+                            if not video_title:
+                                _card_aria_raw = card.get_attribute("aria-label")
+                                _card_aria = _card_aria_raw if isinstance(_card_aria_raw, str) else ""
+                                if _card_aria:
+                                    _m = re.match(r'^(.+?)\s+by\s+', _card_aria)
+                                    if _m:
+                                        video_title = _m.group(1).strip() or None
+                                    else:
+                                        video_title = re.sub(
+                                            r'\s+(?:\d[\d,]*\s+(?:views?|hours?|minutes?|seconds?'
+                                            r'|days?|weeks?|months?|years?),?\s*)+.*$',
+                                            "", _card_aria
+                                        ).strip() or None
                             if video_title:
                                 break
                             if _attempt == 0:
