@@ -1400,6 +1400,103 @@ class TestTitleExtractionFailure:
             f" Debug messages: {debug_msgs}"
         )
 
+    def test_lockup_view_model_card_title_extracted(self, caplog):
+        """5th fallback: yt-lockup-view-model cards (new YouTube rendering) extract title via
+        the lockup selectors when all legacy selectors return empty.
+
+        Simulates a card where:
+        - watch-link selector returns an element with the video ID
+        - legacy title selectors return None / empty
+        - card-level aria-label is None (lockup cards don't have it at the card root)
+        - card.query_selector("yt-lockup-view-model a.yt-lockup-metadata-view-model-wiz__title")
+          returns an element whose aria-label is "Some Lockup Card Title"
+        Asserts the keyword match fires on this card (title was successfully extracted).
+        """
+        import logging
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Lockup Card")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page = MagicMock()
+        page.goto.return_value = None
+        page.wait_for_load_state.return_value = None
+        page.evaluate.return_value = None
+        page.query_selector.return_value = MagicMock()  # login_check truthy
+
+        card = MagicMock()
+
+        channel_link_mock = MagicMock()
+        channel_link_mock.get_attribute.return_value = "/@scottmanley"
+        channel_link_mock.inner_text.return_value = "@scottmanley"
+
+        watch_link_mock = MagicMock()
+        watch_link_mock.get_attribute.return_value = f"/watch?v={_KW_VIDEO_ID}"
+
+        # Legacy title selectors all return empty — simulates the new lockup card DOM.
+        title_link_mock = MagicMock()
+        title_link_mock.get_attribute.return_value = None
+
+        title_text_mock = MagicMock()
+        title_text_mock.inner_text.return_value = "  "
+
+        # yt-lockup-view-model anchor whose aria-label holds the title.
+        lockup_anchor_mock = MagicMock()
+        lockup_anchor_mock.get_attribute.return_value = "Some Lockup Card Title"
+
+        _LOCKUP_ANCHOR_SEL = "yt-lockup-view-model a.yt-lockup-metadata-view-model-wiz__title"
+
+        def card_query_selector(sel):
+            if "/@'" in sel or "channel/UC" in sel:
+                return channel_link_mock
+            if "formatted-string" in sel:
+                return title_text_mock
+            if "watch?v=" in sel:
+                return watch_link_mock
+            if "video-title" in sel:
+                return title_link_mock
+            if sel == _LOCKUP_ANCHOR_SEL:
+                return lockup_anchor_mock
+            return None
+
+        card.query_selector.side_effect = card_query_selector
+        # No card-level aria-label — lockup cards don't populate the root element's aria-label.
+        card.get_attribute.return_value = None
+
+        _calls = [0]
+
+        def query_selector_all_side_effect(sel):
+            _calls[0] += 1
+            return [card] if _calls[0] == 1 else []
+
+        page.query_selector_all.side_effect = query_selector_all_side_effect
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value=set()),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value={}),
+            patch("yt_dont_recommend.browser._click_not_interested", return_value=True),
+            patch("yt_dont_recommend.browser.time") as mock_time,
+            caplog.at_level(logging.DEBUG, logger="yt_dont_recommend"),
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                keyword_compiled=compiled,
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        debug_msgs = [r.message for r in caplog.records]
+        assert not any("could not extract title" in m for m in debug_msgs), (
+            "Lockup card should NOT have been skipped — 5th fallback should have yielded a title."
+            f" Debug messages: {debug_msgs}"
+        )
+        assert _KW_VIDEO_ID in state["keyword_acted"], (
+            "Keyword action should have been recorded for the lockup card."
+            f" keyword_acted={state['keyword_acted']}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Clickbait cache-hit paths (lines 1050-1062)

@@ -1066,23 +1066,53 @@ def process_channels(channel_sources: dict[str, str],
                                             r'|days?|weeks?|months?|years?),?\s*)+.*$',
                                             "", _card_aria
                                         ).strip() or None
+                            # 5th fallback: yt-lockup-view-model card type. YouTube
+                            # is rolling out a new card rendering where
+                            # <ytd-rich-item-renderer lockup="true"> wraps a
+                            # <yt-lockup-view-model> child instead of the legacy
+                            # ytd-rich-grid-media structure. The title lives inside
+                            # yt-lockup-metadata-view-model-wiz__title rather than
+                            # #video-title. Try several selectors in priority order,
+                            # stopping at the first non-empty result.
+                            if not video_title:
+                                _lockup_selectors = [
+                                    ("yt-lockup-view-model a.yt-lockup-metadata-view-model-wiz__title", "aria-label"),
+                                    ("yt-lockup-view-model a.yt-lockup-metadata-view-model-wiz__title", "inner_text"),
+                                    ("yt-lockup-view-model h3.yt-lockup-metadata-view-model-wiz__heading-reset", "inner_text"),
+                                    ("yt-lockup-view-model h3", "inner_text"),
+                                    ("yt-lockup-view-model span[role='text']", "inner_text"),
+                                ]
+                                for _lsel, _lmode in _lockup_selectors:
+                                    _lel = card.query_selector(_lsel)
+                                    if not _lel:
+                                        continue
+                                    if _lmode == "aria-label":
+                                        _lval = _lel.get_attribute("aria-label")
+                                    else:
+                                        try:
+                                            _lval = _lel.inner_text()
+                                        except Exception:
+                                            _lval = None
+                                    if _lval and _lval.strip():
+                                        _lcandidate = _lval.strip()
+                                        _lm = re.match(r'^(.+?)\s+by\s+', _lcandidate)
+                                        if _lm:
+                                            _lcandidate = _lm.group(1).strip()
+                                        else:
+                                            _lcandidate = re.sub(
+                                                r'\s+(?:\d[\d,]*\s+(?:views?|hours?|minutes?|seconds?'
+                                                r'|days?|weeks?|months?|years?),?\s*)+.*$',
+                                                "", _lcandidate
+                                            ).strip()
+                                        if _lcandidate:
+                                            video_title = _lcandidate
+                                            break
                             if video_title:
                                 break
                             if _attempt == 0:
                                 time.sleep(0.25)
                     if not video_title:
-                        # Diagnostic: dump a slice of the card's outerHTML so we can see
-                        # what makes these deterministically-failing cards different from
-                        # standard richItemRenderer feed entries.
-                        try:
-                            _card_html = card.evaluate("el => el.outerHTML")
-                            _card_html_snippet = (_card_html or "")[:400].replace("\n", " ")
-                        except Exception:
-                            _card_html_snippet = "<evaluate failed>"
-                        log.debug(
-                            f"{_mode_prefix}: {path}/{video_id} — could not extract title, "
-                            f"skipping. card outerHTML[:400]: {_card_html_snippet}"
-                        )
+                        log.debug(f"{_mode_prefix}: {path}/{video_id} — could not extract title, skipping")
                         continue
 
                     # Phase 3 candidate: keyword matching (higher priority than clickbait)
