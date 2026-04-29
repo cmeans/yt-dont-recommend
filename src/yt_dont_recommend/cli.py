@@ -1070,13 +1070,9 @@ def main() -> None:
                 keyword_label,
             )
 
-        # Resolve excludes (explicit path required; default auto-loaded if present)
+        # Resolve excludes (path or URL via resolve_source; default auto-loaded if present)
         if args.keyword_exclude:
-            kw_ex_path = Path(args.keyword_exclude)
-            if not kw_ex_path.exists():
-                log.error("Keyword exclude path not found: %s", args.keyword_exclude)
-                sys.exit(1)
-            keyword_excludes_set = load_keyword_excludes(kw_ex_path)
+            keyword_excludes_set = {c.lower() for c in resolve_source(args.keyword_exclude, quiet=True)}
             log.info(
                 "Loaded %s via --keyword-exclude",
                 _n(len(keyword_excludes_set), "keyword exclusion"),

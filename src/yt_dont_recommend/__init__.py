@@ -183,6 +183,8 @@ def process_channels(channel_sources: dict[str, str],
                      headless: bool = False,
                      clickbait_cfg: dict | None = None,
                      exclude_set: set | None = None,
+                     keyword_compiled: list | None = None,
+                     keyword_excludes: set | None = None,
                      _browser: tuple | None = None) -> None:
     """
     Scan the YouTube home feed once and block every channel in channel_sources.
@@ -194,6 +196,8 @@ def process_channels(channel_sources: dict[str, str],
     clickbait_cfg: loaded clickbait config dict; when set, also classifies
         non-listed channels and blocks those with flagged video titles.
     exclude_set: lowercased channel handles to skip for clickbait evaluation.
+    keyword_compiled: compiled keyword rules for video-level keyword blocking.
+    keyword_excludes: lowercased channel handles to skip for keyword evaluation.
     """
     from .browser import process_channels as _process_channels
     return _process_channels(
@@ -205,6 +209,8 @@ def process_channels(channel_sources: dict[str, str],
         headless=headless,
         clickbait_cfg=clickbait_cfg,
         exclude_set=exclude_set,
+        keyword_compiled=keyword_compiled,
+        keyword_excludes=keyword_excludes,
         _browser=_browser,
     )
 

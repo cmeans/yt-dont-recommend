@@ -35,6 +35,8 @@ class TestInitWrappers:
         state = {"blocked_by": {}}
         clickbait_cfg = {"video": {"title": {}}}
         exclude_set = {"@c"}
+        keyword_compiled = [("foo", "substring", 1)]
+        keyword_excludes = {"@d"}
         browser_handle = (None, None, None)
 
         with patch("yt_dont_recommend.browser.process_channels") as mock_pc:
@@ -48,6 +50,8 @@ class TestInitWrappers:
                 headless=True,
                 clickbait_cfg=clickbait_cfg,
                 exclude_set=exclude_set,
+                keyword_compiled=keyword_compiled,
+                keyword_excludes=keyword_excludes,
                 _browser=browser_handle,
             )
 
@@ -60,6 +64,8 @@ class TestInitWrappers:
             headless=True,
             clickbait_cfg=clickbait_cfg,
             exclude_set=exclude_set,
+            keyword_compiled=keyword_compiled,
+            keyword_excludes=keyword_excludes,
             _browser=browser_handle,
         )
 

@@ -1,6 +1,0 @@
-# yt-dont-recommend keyword-block fixture for smoke test.
-# Three tiers: substring (default), word: prefix, regex: prefix.
-
-Trump
-word:trek
-regex:^\d+ reasons?
