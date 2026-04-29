@@ -60,10 +60,13 @@ class AppState(TypedDict, total=False):
     clickbait_cache: dict[str, dict]
     clickbait_acted: dict[str, dict]
     pending_upgrade: dict[str, str] | None
+    keyword_acted: dict[str, dict]
+    keyword_stats: dict[str, int | dict[str, int]]
 
 from .config import (
     ATTENTION_FILE,
     CLICKBAIT_ACTED_PRUNE_DAYS,
+    KEYWORD_ACTED_PRUNE_DAYS,
     STATE_VERSION,
 )
 from .config import (
@@ -126,11 +129,25 @@ def load_state() -> AppState:
         s.setdefault("clickbait_cache", {})
         s.setdefault("clickbait_acted", {})
         s.setdefault("pending_upgrade", None)
+        s.setdefault("keyword_acted", {})
+        keyword_stats = s.setdefault("keyword_stats", {})
+        keyword_stats.setdefault("total_matched", 0)
+        keyword_stats.setdefault("by_pattern", {})
+        by_mode = keyword_stats.setdefault("by_mode", {})
+        by_mode.setdefault("substring", 0)
+        by_mode.setdefault("word", 0)
+        by_mode.setdefault("regex", 0)
         # Prune clickbait_acted entries older than CLICKBAIT_ACTED_PRUNE_DAYS
         _prune_cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=CLICKBAIT_ACTED_PRUNE_DAYS)).isoformat()
         s["clickbait_acted"] = {
             vid: entry for vid, entry in s["clickbait_acted"].items()
             if entry.get("acted_at", "") >= _prune_cutoff
+        }
+        # Prune keyword_acted entries older than KEYWORD_ACTED_PRUNE_DAYS
+        _kw_cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=KEYWORD_ACTED_PRUNE_DAYS)).isoformat()
+        s["keyword_acted"] = {
+            vid: entry for vid, entry in s["keyword_acted"].items()
+            if entry.get("acted_at", "") >= _kw_cutoff
         }
         # Schema version guard — warn if state was written by a newer binary
         file_sv = s.get("state_version", 0)
@@ -174,8 +191,26 @@ def load_state() -> AppState:
         "clickbait_cache": {},
         "clickbait_acted": {},
         "pending_upgrade": None,
+        "keyword_acted": {},
+        "keyword_stats": {
+            "total_matched": 0,
+            "by_pattern": {},
+            "by_mode": {"substring": 0, "word": 0, "regex": 0},
+        },
         "state_version": STATE_VERSION,
     }
+
+
+def _acted_video_ids(state: dict) -> set[str]:
+    """Return the union of video_ids that have been acted on by either
+    the clickbait or keyword pipelines.
+
+    Used by the shadow-limit detection in clickbait.py and by --stats so
+    a video acted on by either pipeline counts as "we've seen this".
+    """
+    clickbait = state.get("clickbait_acted", {}) or {}
+    keyword = state.get("keyword_acted", {}) or {}
+    return set(clickbait.keys()) | set(keyword.keys())
 
 
 def save_state(state: AppState) -> None:

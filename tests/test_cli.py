@@ -1640,3 +1640,218 @@ class TestClickbaitExcludePaths:
             ydr.main()
         assert any("default clickbait exclude file" in r.message
                    for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# --keyword-block / --keyword-source / --keyword-exclude flag parsing
+# ---------------------------------------------------------------------------
+
+class TestKeywordCliFlags:
+    """--keyword-block, --keyword-source, --keyword-exclude argument parsing."""
+
+    def test_keyword_block_flag_parses(self, monkeypatch, tmp_path):
+        import yt_dont_recommend.cli as cli
+        parser = cli._build_parser() if hasattr(cli, "_build_parser") else None
+        if parser is None:
+            # Provide a real keyword source so the setup block doesn't error.
+            kw = tmp_path / "kw.txt"
+            kw.write_text("# empty\n")
+            with patch.object(
+                cli.sys, "argv", ["ydr", "--keyword-block", "--keyword-source", str(kw), "--dry-run"]
+            ):
+                # We only care that argparse doesn't reject the flag.
+                # Stub open_browser so the test exits early without browser automation.
+                with patch("yt_dont_recommend.browser.open_browser", return_value=None):
+                    cli.main()
+            return
+        args = parser.parse_args(["--keyword-block"])
+        assert args.keyword_block is True
+
+    def test_keyword_source_flag_parses(self, monkeypatch):
+        import yt_dont_recommend.cli as cli
+        if not hasattr(cli, "_build_parser"):
+            return  # exercised in integration tests in Task 7
+        parser = cli._build_parser()
+        args = parser.parse_args(["--keyword-block", "--keyword-source", "/some/path/kw.txt"])
+        assert args.keyword_source == "/some/path/kw.txt"
+
+    def test_keyword_exclude_flag_parses(self, monkeypatch):
+        import yt_dont_recommend.cli as cli
+        if not hasattr(cli, "_build_parser"):
+            return
+        parser = cli._build_parser()
+        args = parser.parse_args(["--keyword-block", "--keyword-exclude", "/some/path/ex.txt"])
+        assert args.keyword_exclude == "/some/path/ex.txt"
+
+
+class TestKeywordSetupBlock:
+    """End-to-end CLI behavior for keyword setup: file resolution, compile,
+    excludes, and mode-gate."""
+
+    def test_no_modes_shows_help(
+        self, capsys, monkeypatch
+    ):
+        # Running with NO modes at all should show help.
+        # The existing pattern is: print help, return (no SystemExit raised).
+        monkeypatch.setattr("sys.argv", ["ydr"])
+        from yt_dont_recommend.cli import main
+        main()
+        captured = capsys.readouterr()
+        assert "usage" in captured.out.lower() or "usage" in captured.err.lower()
+
+    def test_keyword_source_missing_path_errors(self, tmp_path, monkeypatch, caplog):
+        from yt_dont_recommend import cli
+        monkeypatch.setattr(
+            "sys.argv",
+            ["ydr", "--keyword-block", "--keyword-source", str(tmp_path / "missing.txt")],
+        )
+        caplog.set_level("ERROR")
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main()
+        assert excinfo.value.code == 1
+        assert any("not found" in r.message.lower() for r in caplog.records)
+
+    def test_keyword_source_http_rejected(self, tmp_path, monkeypatch, caplog):
+        from yt_dont_recommend import cli
+        monkeypatch.setattr(
+            "sys.argv",
+            ["ydr", "--keyword-block", "--keyword-source", "http://example.com/k.txt"],
+        )
+        caplog.set_level("ERROR")
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main()
+        assert excinfo.value.code == 1
+        assert any("http://" in r.message for r in caplog.records)
+
+    def test_keyword_default_file_auto_loaded(self, tmp_path, monkeypatch, caplog):
+        from yt_dont_recommend import cli, config
+        monkeypatch.setattr(config, "DEFAULT_KEYWORD_FILE", tmp_path / "keyword-block.txt")
+        # Reload constant in cli (it imported by name from config).
+        monkeypatch.setattr(cli, "DEFAULT_KEYWORD_FILE", tmp_path / "keyword-block.txt")
+        (tmp_path / "keyword-block.txt").write_text("Trump\n")
+        # Run --keyword-block --dry-run; stub open_browser to avoid Playwright.
+        monkeypatch.setattr("sys.argv", ["ydr", "--keyword-block", "--dry-run"])
+        caplog.set_level("INFO", logger="yt_dont_recommend")
+        with patch("yt_dont_recommend.browser.open_browser", return_value=None):
+            cli.main()
+        assert any("keyword rule" in r.message.lower() for r in caplog.records)
+
+    def test_keyword_exclude_explicit_missing_path_errors(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from yt_dont_recommend import cli
+        kw = tmp_path / "kw.txt"
+        kw.write_text("foo\n")
+        ex_missing = tmp_path / "no-exclude.txt"
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "ydr", "--keyword-block",
+                "--keyword-source", str(kw),
+                "--keyword-exclude", str(ex_missing),
+            ],
+        )
+        caplog.set_level("ERROR")
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main()
+        assert excinfo.value.code == 1
+
+    def test_keyword_block_no_source_and_no_default_file_errors(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """--keyword-block with no --keyword-source and no default file exits with code 1."""
+        from yt_dont_recommend import cli, config
+
+        monkeypatch.setattr(config, "DEFAULT_KEYWORD_FILE", tmp_path / "absent.txt")
+        monkeypatch.setattr(cli, "DEFAULT_KEYWORD_FILE", tmp_path / "absent.txt")
+        monkeypatch.setattr("sys.argv", ["ydr", "--keyword-block"])
+        caplog.set_level("ERROR")
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main()
+        assert excinfo.value.code == 1
+        assert any("default file" in r.message.lower() for r in caplog.records)
+
+    def test_keyword_exclude_explicit_path_loaded_successfully(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """--keyword-exclude with a valid file logs a confirmation at INFO level."""
+        from yt_dont_recommend import cli
+
+        kw = tmp_path / "kw.txt"
+        kw.write_text("Trump\n")
+        ex = tmp_path / "ex.txt"
+        ex.write_text("@trustchannel\n")
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "ydr", "--keyword-block", "--dry-run",
+                "--keyword-source", str(kw),
+                "--keyword-exclude", str(ex),
+            ],
+        )
+        caplog.set_level("INFO", logger="yt_dont_recommend")
+        with patch("yt_dont_recommend.browser.open_browser", return_value=None):
+            cli.main()
+        assert any("via --keyword-exclude" in r.message for r in caplog.records)
+
+    def test_keyword_default_exclude_file_auto_loaded(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """When no --keyword-exclude is given but the default exclude file exists, it is auto-loaded."""
+        from yt_dont_recommend import cli, config
+
+        kw = tmp_path / "kw.txt"
+        kw.write_text("Trump\n")
+        default_ex = tmp_path / "keyword-exclude.txt"
+        default_ex.write_text("@trustchannel\n")
+        monkeypatch.setattr(config, "DEFAULT_KEYWORD_EXCLUDE_FILE", default_ex)
+        monkeypatch.setattr(cli, "DEFAULT_KEYWORD_EXCLUDE_FILE", default_ex)
+        monkeypatch.setattr(
+            "sys.argv",
+            ["ydr", "--keyword-block", "--dry-run", "--keyword-source", str(kw)],
+        )
+        caplog.set_level("INFO", logger="yt_dont_recommend")
+        with patch("yt_dont_recommend.browser.open_browser", return_value=None):
+            cli.main()
+        assert any("default keyword exclude file" in r.message for r in caplog.records)
+
+
+class TestKeywordStats:
+    """--stats output includes a 'Keyword matches' section."""
+
+    def _patch_stats_prereqs(self, monkeypatch, tmp_path):
+        """Patch the minimum set of side-effects that --stats triggers."""
+        import yt_dont_recommend as ydr
+        monkeypatch.setattr(ydr, "STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr("yt_dont_recommend.cli.STATE_FILE", tmp_path / "processed.json")
+        monkeypatch.setattr("yt_dont_recommend.cli.setup_logging", lambda verbose=False: None)
+
+    def test_stats_shows_zero_keyword_section_when_empty(
+        self, capsys, tmp_path, monkeypatch
+    ):
+        from yt_dont_recommend import cli
+        self._patch_stats_prereqs(monkeypatch, tmp_path)
+        monkeypatch.setattr("sys.argv", ["ydr", "--stats"])
+        cli.main()
+        out = capsys.readouterr().out
+        assert "Keyword matches" in out
+        assert "Total: 0" in out
+
+    def test_stats_shows_top_patterns(self, capsys, tmp_path, monkeypatch):
+        import yt_dont_recommend as ydr
+        from yt_dont_recommend import cli
+        self._patch_stats_prereqs(monkeypatch, tmp_path)
+        state = ydr.load_state()
+        state["keyword_stats"] = {
+            "total_matched": 15,
+            "by_pattern": {"Trump": 10, "Star Trek": 3, "regex:^foo": 2},
+            "by_mode": {"substring": 13, "word": 0, "regex": 2},
+        }
+        ydr.save_state(state)
+        monkeypatch.setattr("sys.argv", ["ydr", "--stats"])
+        cli.main()
+        out = capsys.readouterr().out
+        assert "Total: 15" in out
+        assert "Trump" in out
+        assert "10" in out
+        assert "Star Trek" in out

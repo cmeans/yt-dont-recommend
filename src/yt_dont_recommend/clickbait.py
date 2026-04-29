@@ -22,9 +22,66 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import _n
+from .config import SHADOW_LIMIT_GRACE_HOURS, SHADOW_LIMIT_WARN_AFTER, _n
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shadow-limit detection helpers
+# ---------------------------------------------------------------------------
+
+def _acted_at(state: dict, video_id: str) -> "str | None":
+    """Return the ISO acted_at timestamp for video_id from whichever acted
+    dict contains it (clickbait_acted first, then keyword_acted), or None."""
+    for key in ("clickbait_acted", "keyword_acted"):
+        d = state.get(key) or {}
+        if video_id in d:
+            return d[video_id].get("acted_at")
+    return None
+
+
+def _check_shadow_reencounter(state: dict, video_id: str, run_hits: dict) -> bool:
+    """Check whether video_id is a suspicious re-encounter this run.
+
+    A re-encounter counts when video_id appears in the union of
+    clickbait_acted | keyword_acted (via _acted_video_ids) AND its acted_at
+    timestamp is older than SHADOW_LIMIT_GRACE_HOURS.
+
+    run_hits is a mutable dict {"count": int} owned by the caller; this
+    function increments run_hits["count"] on each qualifying re-encounter.
+
+    Returns True the first time run_hits["count"] reaches
+    SHADOW_LIMIT_WARN_AFTER, signalling that the caller should stop the run
+    and call write_attention().  Returns False otherwise.
+    """
+    from datetime import timedelta, timezone
+
+    from .state import _acted_video_ids
+
+    if video_id not in _acted_video_ids(state):
+        return False
+
+    ts = _acted_at(state, video_id)
+    if ts is None:
+        return False
+
+    try:
+        acted = datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+
+    now = datetime.now(tz=timezone.utc)
+    # Normalise tz-naive timestamps to UTC (old entries may lack tzinfo)
+    if acted.tzinfo is None:
+        acted = acted.replace(tzinfo=timezone.utc)
+
+    if now - acted < timedelta(hours=SHADOW_LIMIT_GRACE_HOURS):
+        # Within the grace window — normal algorithm latency, not suspicious
+        return False
+
+    run_hits["count"] = run_hits.get("count", 0) + 1
+    return run_hits["count"] >= SHADOW_LIMIT_WARN_AFTER
 
 
 def _clamp_confidence(conf: "float | None") -> "float | None":

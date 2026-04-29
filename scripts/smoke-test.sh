@@ -86,6 +86,16 @@ check        "--schedule status exits 0"    yt-dont-recommend --schedule status
 check_output "no-args prints usage"  "usage:" yt-dont-recommend
 
 # ---------------------------------------------------------------------------
+# Keyword-block checks (no browser required)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Keyword-block checks ==="
+
+check_output "--help mentions --keyword-block"  "--keyword-block"   yt-dont-recommend --help
+check_output "--help mentions --keyword-source" "--keyword-source"  yt-dont-recommend --help
+check_output "--help mentions --keyword-exclude" "--keyword-exclude" yt-dont-recommend --help
+
+# ---------------------------------------------------------------------------
 # Clickbait extras checks (no browser, no ollama daemon required)
 # ---------------------------------------------------------------------------
 echo ""

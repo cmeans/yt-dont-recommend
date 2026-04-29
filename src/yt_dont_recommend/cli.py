@@ -26,6 +26,8 @@ from .config import (
     BUILTIN_SOURCES,
     DEFAULT_BLOCKLIST_EXCLUDE_FILE,
     DEFAULT_CLICKBAIT_EXCLUDE_FILE,
+    DEFAULT_KEYWORD_EXCLUDE_FILE,
+    DEFAULT_KEYWORD_FILE,
     DEFAULT_SOURCES,
     LOG_FILE,
     STATE_FILE,
@@ -34,6 +36,12 @@ from .config import (
     _n,
     load_auto_upgrade_config,
     setup_logging,
+)
+from .keywords import (
+    compile_keywords,
+    load_keyword_excludes,
+    parse_keyword_file,
+    resolve_keyword_source,
 )
 from .scheduler import _find_installed_binary, schedule_cmd
 from .state import (
@@ -505,6 +513,36 @@ def main() -> None:
             f"If not specified, {DEFAULT_CLICKBAIT_EXCLUDE_FILE} is loaded automatically if it exists."
         ),
     )
+    parser.add_argument(
+        "--keyword-block",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable keyword-blocking mode: scan video titles in the home feed "
+            "against the keyword list and click 'Not interested' on matches. "
+            "Independent of --clickbait (no LLM dependency)."
+        ),
+    )
+    parser.add_argument(
+        "--keyword-source",
+        default=None,
+        metavar="PATH-OR-URL",
+        help=(
+            f"Keyword list source. Local file path or https:// URL. "
+            f"Defaults to {DEFAULT_KEYWORD_FILE} if it exists. "
+            f"http:// is rejected (insecure)."
+        ),
+    )
+    parser.add_argument(
+        "--keyword-exclude",
+        default=None,
+        metavar="PATH-OR-URL",
+        help=(
+            f"Channels to never evaluate for keyword matches. Local file path or "
+            f"https:// URL. Defaults to {DEFAULT_KEYWORD_EXCLUDE_FILE} (auto-loaded "
+            f"if present, silent if absent)."
+        ),
+    )
     parser.add_argument("--headless", action="store_true",
                         help="Run browser in headless mode (no visible window)")
     parser.add_argument("--blocklist", action="store_true",
@@ -753,6 +791,23 @@ def main() -> None:
             print("\nSubscribed channels in blocklist (skipped, notified once):")
             for ch, info in whb.items():
                 print(f"  {ch}  (sources: {info.get('sources', [])}, first seen: {info.get('first_seen', '?')[:10]})")
+        # Keyword matches section
+        kw_stats = state.get("keyword_stats", {})
+        kw_total = kw_stats.get("total_matched", 0)
+        print()
+        print("Keyword matches")
+        print(f"  Total: {kw_total}")
+        by_pattern = kw_stats.get("by_pattern", {})
+        if by_pattern:
+            top = sorted(by_pattern.items(), key=lambda kv: kv[1], reverse=True)[:10]
+            print("  Top patterns:")
+            for pat, count in top:
+                print(f"    {pat}: {count}")
+        by_mode = kw_stats.get("by_mode", {})
+        if any(by_mode.values()):
+            print("  By mode:")
+            for mode in ("substring", "word", "regex"):
+                print(f"    {mode}: {by_mode.get(mode, 0)}")
         print(f"\nState file         : {STATE_FILE}")
         print(f"Log file           : {LOG_FILE}")
         return
@@ -795,11 +850,12 @@ def main() -> None:
         ok = check_selectors(args.test_channel, repair=args.repair)
         sys.exit(0 if ok else 1)
 
-    # Determine operating mode. Running without --blocklist or --clickbait shows help.
+    # Determine operating mode. Running without any recognized mode flag shows help.
     run_blocklist = args.blocklist or (args.source is not None)
     run_clickbait = args.clickbait
+    run_keyword = args.keyword_block
 
-    if not run_blocklist and not run_clickbait:
+    if not run_blocklist and not run_clickbait and not run_keyword:
         parser.print_help()
         return
 
@@ -983,7 +1039,53 @@ def main() -> None:
         clickbait_exclude_set = {c.lower() for c in resolve_source(clickbait_exclude_source, quiet=True)}
         log.info(f"Loaded {_n(len(clickbait_exclude_set), 'clickbait exclusion')} via {clickbait_exclude_label}")
 
-    if not channel_sources and not all_unblocks and clickbait_cfg is None:
+    # ---- Keyword blocking setup ----
+    keyword_compiled = None
+    keyword_excludes_set: set[str] = set()
+    if run_keyword:
+        # Resolve source (explicit --keyword-source or default file if present)
+        if args.keyword_source:
+            keyword_source = args.keyword_source
+            keyword_label = "--keyword-source"
+        elif DEFAULT_KEYWORD_FILE.exists():
+            keyword_source = str(DEFAULT_KEYWORD_FILE)
+            keyword_label = f"default keyword file ({DEFAULT_KEYWORD_FILE})"
+        else:
+            log.error(
+                "--keyword-block was specified but no keyword source was provided "
+                "and the default file %s does not exist.",
+                DEFAULT_KEYWORD_FILE,
+            )
+            sys.exit(1)
+
+        text = resolve_keyword_source(keyword_source)
+        raw = parse_keyword_file(text)
+        keyword_compiled = compile_keywords(raw)
+        if not keyword_compiled:
+            log.info("keyword-block file is empty, no keyword matching active")
+        else:
+            log.info(
+                "Loaded %s via %s",
+                _n(len(keyword_compiled), "keyword rule"),
+                keyword_label,
+            )
+
+        # Resolve excludes (path or URL via resolve_source; default auto-loaded if present)
+        if args.keyword_exclude:
+            keyword_excludes_set = {c.lower() for c in resolve_source(args.keyword_exclude, quiet=True)}
+            log.info(
+                "Loaded %s via --keyword-exclude",
+                _n(len(keyword_excludes_set), "keyword exclusion"),
+            )
+        elif DEFAULT_KEYWORD_EXCLUDE_FILE.exists():
+            keyword_excludes_set = load_keyword_excludes(DEFAULT_KEYWORD_EXCLUDE_FILE)
+            log.info(
+                "Loaded %s via default keyword exclude file (%s)",
+                _n(len(keyword_excludes_set), "keyword exclusion"),
+                DEFAULT_KEYWORD_EXCLUDE_FILE,
+            )
+
+    if not channel_sources and not all_unblocks and clickbait_cfg is None and not keyword_compiled:
         log.info("Nothing to do.")
     else:
         from .browser import close_browser, open_browser, process_channels
@@ -1000,6 +1102,8 @@ def main() -> None:
                 headless=args.headless,
                 clickbait_cfg=clickbait_cfg,
                 exclude_set=clickbait_exclude_set or None,
+                keyword_compiled=keyword_compiled,
+                keyword_excludes=keyword_excludes_set or None,
                 _browser=browser_handle,
             )
         finally:

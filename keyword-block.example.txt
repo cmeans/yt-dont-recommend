@@ -1,0 +1,27 @@
+# yt-dont-recommend keyword-block example.
+#
+# Copy to ~/.yt-dont-recommend/keyword-block.txt and edit to taste.
+# Lines starting with '#' are comments. Blank lines are ignored.
+# Three matching tiers selected by line prefix:
+#
+#   <bare text>          — substring match (case-insensitive, default tier)
+#   word:<phrase>        — whole-word match using \b regex anchors
+#   regex:<pattern>      — full Python regex; case-insensitive by default.
+#                          Use the scoped form (?-i:pattern) to match case-
+#                          sensitively for a region of the pattern (Python
+#                          3.11+ rejects the bare (?-i) flag at expression
+#                          start).
+#
+# Rules are evaluated in source-file order; first match wins.
+
+# Topics — substring tier
+Trump
+Star Trek
+
+# Word-boundary — won't match "trekking" or "Trumpian"
+word:trek
+word:trump
+
+# Regex — full re.IGNORECASE by default
+regex:\b(rfk|kennedy)\b
+regex:^\d+ reasons?

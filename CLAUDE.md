@@ -144,6 +144,7 @@ The `aislist` source is plain text with `!` comments, ~8400+ channels. Format co
 - `unblock.py` — `_perform_browser_unblocks`, `_pending_attempted_this_run`, `_MAX_DISPLAY_NAME_RETRIES`
 - `diagnostics.py` — `check_selectors`, `_screenshot` (viewport hardcoded 1280×800 for reproducible reports)
 - `clickbait.py` — clickbait detection: config loading, LLM classifiers, pipeline (see below)
+- `keywords.py` — keyword blocking: `parse_keyword_file`, `compile_keywords`, `match_title`, `resolve_keyword_source`, `load_keyword_excludes`. Three matching tiers (substring / `word:` / `regex:`). Pure-logic; no Playwright, no LLM, no network at import time.
 
 Key components:
 
@@ -271,7 +272,11 @@ Key behaviours:
     "<video_id>": {"acted_at": "2026-03-12T...", "title": "...", "channel": "@handle"}
   },
   "pending_upgrade": {"version": "0.5.1", "first_seen_at": "2026-04-27T21:30:00"},
-  "state_version": 4
+  "keyword_acted": {
+    "<video_id>": {"acted_at": "2026-04-28T...", "title": "...", "channel": "@handle", "matched_pattern": "trump", "matched_mode": "substring", "matched_line": 3}
+  },
+  "keyword_stats": {"total_matched": 0, "by_pattern": {}, "by_mode": {}},
+  "state_version": 5
 }
 ```
 
@@ -281,10 +286,14 @@ Key behaviours:
 
 **v3 additions**: `clickbait_cache` and `clickbait_acted` (both default to `{}`).
 - `clickbait_cache`: cross-run classification cache keyed by video_id. Entries expire after `CLICKBAIT_CACHE_TTL_DAYS` (14 days). Loaded into `_title_cache` at the start of each run to skip re-evaluation of recently seen videos.
-- `clickbait_acted`: videos successfully marked "Not interested", keyed by video_id. Used for shadow-limiting detection — if a previously-acted video reappears more than `SHADOW_LIMIT_GRACE_HOURS` (48h) later, it counts as a suspicious re-encounter. After `SHADOW_LIMIT_WARN_AFTER` (2) such hits in a run, the tool stops and calls `write_attention()`. Entries older than `CLICKBAIT_ACTED_PRUNE_DAYS` (90 days) are pruned on load.
+- `clickbait_acted`: videos successfully marked "Not interested", keyed by video_id. Entries older than `CLICKBAIT_ACTED_PRUNE_DAYS` (90 days) are pruned on load. The `_acted_video_ids` helper and `_check_shadow_reencounter` in `clickbait.py` provide the union-aware detection contract; live wiring into the per-card loop was removed in a prior refactor and is tracked as #60.
 
 **v4 additions**: `pending_upgrade` (defaults to `None`).
 - `pending_upgrade`: tracks the auto-upgrade delay window introduced for #55. When `check_for_update` detects a new PyPI release, it records `{"version": "X.Y.Z", "first_seen_at": "<ISO timestamp>"}`. `do_auto_upgrade` then refuses to install until `now - first_seen_at >= AUTO_UPGRADE_DELAY_DAYS` (default 3, override via `auto_upgrade.delay_days` in `config.yaml`). The clock resets when a different version supersedes the pending one (the full window applies to each new release). `pending_upgrade` is cleared on successful upgrade and on a "yanked" detection (PyPI's latest is no longer newer than current). The delay is defense in depth on top of trusted-publisher OIDC + the `isatty` gate from #50 — covers the "compromised tag-push, fast exploit" channel that trusted-publishers don't address.
+
+**v5 additions**: `keyword_acted` and `keyword_stats` (both default to empty `{}` / structured zero counts).
+- `keyword_acted`: keyed by video_id. Records `acted_at`, `title`, `channel`, `matched_pattern`, `matched_mode` (`"substring"|"word"|"regex"`), and `matched_line` (1-indexed source line in the keyword file). Pruned at 90 days on load (`KEYWORD_ACTED_PRUNE_DAYS`). Considered alongside `clickbait_acted` by the `_acted_video_ids(state)` helper used by the shadow-limit detection helpers in `clickbait.py`.
+- `keyword_stats`: cumulative counts (`total_matched`, `by_pattern`, `by_mode`). Permanent — not pruned.
 
 `pending_unblock` entries carry an internal `_retry_count` sub-key (prefixed `_` to indicate it is not part of the public schema). It tracks consecutive display-name lookup failures for that channel. After `_MAX_DISPLAY_NAME_RETRIES` (3) failures the channel is removed from `pending_unblock` automatically. This key does not require a `STATE_VERSION` bump — old binaries ignore it.
 
@@ -337,6 +346,9 @@ def fetch_subscriptions(page) -> set[str]:
 | `--source` | Blocklist source(s) to use with `--blocklist`. Built-in names (comma-separated), local file path, or HTTP(S) URL. Defaults to all built-in sources. |
 | `--exclude` | Channels to never block via `--blocklist`. Local file path or HTTP(S) URL. Auto-loads `~/.yt-dont-recommend/blocklist-exclude.txt` (legacy: `exclude.txt` accepted with deprecation warning) |
 | `--clickbait-exclude` | Channels to never evaluate for clickbait. Local file path or HTTP(S) URL. Auto-loads `~/.yt-dont-recommend/clickbait-exclude.txt` |
+| `--keyword-block` | Run video-level title keyword filtering. Independent of `--clickbait`; no LLM dependency. |
+| `--keyword-source` | Keyword list source for `--keyword-block`. Local file path or `https://` URL. Default: `~/.yt-dont-recommend/keyword-block.txt`. `http://` rejected (insecure). |
+| `--keyword-exclude` | Channels to never evaluate for keyword matches. Local file path or URL. Default auto-loads `~/.yt-dont-recommend/keyword-exclude.txt` if present. |
 | `--limit N` | Stop after N actions (default cap: 75 per session) |
 | `--no-limit` | Remove the per-session action cap for this run |
 | `--dry-run` | Show what would be processed without acting (combine with `--blocklist` or `--clickbait`) |
