@@ -1222,7 +1222,7 @@ class TestTitleExtractionFailure:
     def test_dom_title_retry_on_first_miss(self, caplog):
         """First DOM title query returns None; second attempt (after 250ms sleep) succeeds.
 
-        Verifies that the retry loop fires time.sleep(0.25) exactly once and that
+        Verifies that the retry loop fires time.sleep(1.0) exactly once and that
         the card is NOT skipped when the retry resolves the title.
         """
         import logging
@@ -1256,7 +1256,7 @@ class TestTitleExtractionFailure:
         # Track retry attempts: the retry loop calls all title_link selectors per
         # attempt.  We use a flag to return None for ALL selectors on attempt 0,
         # and a real element on attempt 1.  We detect the attempt boundary by
-        # counting time.sleep(0.25) calls — but we can't reference mock_time here.
+        # counting time.sleep(1.0) calls — but we can't reference mock_time here.
         # Instead, use a simple "first-pass gate" toggled by watching the sleep call.
         _attempt_done = [False]  # flipped to True after the first full selector pass
 
@@ -1294,7 +1294,7 @@ class TestTitleExtractionFailure:
             def _sleep_side_effect(seconds):
                 # When the retry sleep fires, flip the gate so the next
                 # query_selector call for title_link returns the real element.
-                if seconds == 0.25:
+                if seconds == 1.0:
                     _attempt_done[0] = True
 
             mock_time.sleep.side_effect = _sleep_side_effect
@@ -1305,10 +1305,10 @@ class TestTitleExtractionFailure:
                 _browser=("pwcm-stub", MagicMock(), page),
             )
 
-        # The 250ms retry sleep must have fired exactly once
+        # The 1s retry sleep must have fired exactly once
         sleep_calls = [c.args[0] for c in mock_time.sleep.call_args_list]
-        assert 0.25 in sleep_calls, (
-            f"Expected time.sleep(0.25) from DOM-title retry. Calls: {sleep_calls}"
+        assert 1.0 in sleep_calls, (
+            f"Expected time.sleep(1.0) from DOM-title retry. Calls: {sleep_calls}"
         )
         # Card was NOT skipped — keyword acted on the resolved title
         assert _KW_VIDEO_ID in state["keyword_acted"], (

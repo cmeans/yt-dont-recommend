@@ -1069,7 +1069,7 @@ def process_channels(channel_sources: dict[str, str],
                             if video_title:
                                 break
                             if _attempt == 0:
-                                time.sleep(0.25)
+                                time.sleep(1.0)
                     if not video_title:
                         log.debug(f"{_mode_prefix}: {path}/{video_id} — could not extract title, skipping")
                         continue
