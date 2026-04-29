@@ -1069,9 +1069,20 @@ def process_channels(channel_sources: dict[str, str],
                             if video_title:
                                 break
                             if _attempt == 0:
-                                time.sleep(1.0)
+                                time.sleep(0.25)
                     if not video_title:
-                        log.debug(f"{_mode_prefix}: {path}/{video_id} — could not extract title, skipping")
+                        # Diagnostic: dump a slice of the card's outerHTML so we can see
+                        # what makes these deterministically-failing cards different from
+                        # standard richItemRenderer feed entries.
+                        try:
+                            _card_html = card.evaluate("el => el.outerHTML")
+                            _card_html_snippet = (_card_html or "")[:400].replace("\n", " ")
+                        except Exception:
+                            _card_html_snippet = "<evaluate failed>"
+                        log.debug(
+                            f"{_mode_prefix}: {path}/{video_id} — could not extract title, "
+                            f"skipping. card outerHTML[:400]: {_card_html_snippet}"
+                        )
                         continue
 
                     # Phase 3 candidate: keyword matching (higher priority than clickbait)
