@@ -755,3 +755,110 @@ class TestKeywordPhase3:
         mock_ni.assert_not_called()
         # State must not have been overwritten either.
         assert state["keyword_acted"][_KW_VIDEO_ID]["acted_at"] == "2026-04-01T00:00:00+00:00"
+
+    def test_keyword_match_dry_run_logs_would_match(self, caplog):
+        """dry_run=True logs 'WOULD MATCH' and increments keyword_count without clicking."""
+        import logging
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Star Trek")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page, _card, json_videos = _make_kw_page(
+            video_id=_KW_VIDEO_ID,
+            channel_handle="@trekfan",
+            title="Star Trek finale spoilers",
+        )
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value=set()),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value=json_videos),
+            patch("yt_dont_recommend.browser._click_not_interested", return_value=True) as mock_ni,
+            patch("yt_dont_recommend.browser.time") as mock_time,
+            caplog.at_level(logging.INFO, logger="yt_dont_recommend"),
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                dry_run=True,
+                keyword_compiled=compiled,
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        # dry_run: no click attempted, no state mutation
+        mock_ni.assert_not_called()
+        assert _KW_VIDEO_ID not in state["keyword_acted"]
+        assert any("WOULD MATCH (keyword)" in r.message for r in caplog.records)
+
+    def test_keyword_match_click_failure_logs_warning_no_state_mutation(self, caplog):
+        """_click_not_interested returning False logs a warning; state is not mutated."""
+        import logging
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Star Trek")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page, _card, json_videos = _make_kw_page(
+            video_id=_KW_VIDEO_ID,
+            channel_handle="@trekfan",
+            title="Star Trek finale spoilers",
+        )
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value=set()),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value=json_videos),
+            patch("yt_dont_recommend.browser._click_not_interested", return_value=False),
+            patch("yt_dont_recommend.browser.time") as mock_time,
+            caplog.at_level(logging.WARNING, logger="yt_dont_recommend"),
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                dry_run=False,
+                keyword_compiled=compiled,
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        assert _KW_VIDEO_ID not in state["keyword_acted"], "failed click must not record state"
+        assert any("SKIP keyword match" in r.message for r in caplog.records)
+
+    def test_keyword_match_click_exception_logs_error_no_state_mutation(self, caplog):
+        """_click_not_interested raising an exception logs an error; state is not mutated."""
+        import logging
+
+        from yt_dont_recommend.keywords import compile_keywords
+
+        compiled = compile_keywords([(1, "Star Trek")])
+        state = copy.deepcopy(_MINIMAL_STATE)
+
+        page, _card, json_videos = _make_kw_page(
+            video_id=_KW_VIDEO_ID,
+            channel_handle="@trekfan",
+            title="Star Trek finale spoilers",
+        )
+
+        with (
+            patch("yt_dont_recommend.browser.fetch_subscriptions", return_value=set()),
+            patch("yt_dont_recommend.browser._extract_feed_videos_from_json", return_value=json_videos),
+            patch(
+                "yt_dont_recommend.browser._click_not_interested",
+                side_effect=RuntimeError("selector stale"),
+            ),
+            patch("yt_dont_recommend.browser.time") as mock_time,
+            caplog.at_level(logging.ERROR, logger="yt_dont_recommend"),
+        ):
+            mock_time.sleep.return_value = None
+            process_channels(
+                channel_sources={},
+                state=state,
+                dry_run=False,
+                keyword_compiled=compiled,
+                _browser=("pwcm-stub", MagicMock(), page),
+            )
+
+        assert _KW_VIDEO_ID not in state["keyword_acted"], "exception must not record state"
+        assert any("FAIL keyword match" in r.message for r in caplog.records)

@@ -249,6 +249,13 @@ class TestLoadKeywordExcludes:
         f.write_text("\n# c\n\n@a\n   \n@b\n")
         assert load_keyword_excludes(f) == {"@a", "@b"}
 
+    def test_loads_excludes_with_utf8_bom(self, tmp_path):
+        """A UTF-8 BOM at the start of the file is stripped before parsing."""
+        f = tmp_path / "ex.txt"
+        # Write BOM (﻿) followed by content
+        f.write_text("﻿@FooBar\n@bazQUX\n", encoding="utf-8")
+        assert load_keyword_excludes(f) == {"@foobar", "@bazqux"}
+
 
 class TestPackageReExports:
     """Names from keywords.py are re-exported at yt_dont_recommend root."""

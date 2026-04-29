@@ -1407,3 +1407,44 @@ class TestShadowLimitUnion:
         run_hits: dict = {"count": 0}
         assert _check_shadow_reencounter(state, "vid_recent", run_hits) is False
         assert run_hits["count"] == 0
+
+    def test_acted_at_returns_none_when_video_not_in_either_dict(self):
+        """_acted_at returns None when the video_id is absent from both acted dicts."""
+        from yt_dont_recommend.clickbait import _acted_at
+
+        state = {"clickbait_acted": {"other_vid": {"acted_at": "x"}}, "keyword_acted": {}}
+        assert _acted_at(state, "absent_vid") is None
+
+    def test_check_shadow_reencounter_returns_false_when_acted_at_missing(self):
+        """Video is in clickbait_acted but has no acted_at key — returns False."""
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+
+        state = {"clickbait_acted": {"vid": {}}, "keyword_acted": {}}
+        run_hits: dict = {"count": 0}
+        assert _check_shadow_reencounter(state, "vid", run_hits) is False
+        assert run_hits["count"] == 0
+
+    def test_check_shadow_reencounter_returns_false_on_invalid_iso(self):
+        """acted_at is present but not a parseable ISO timestamp — returns False."""
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+
+        state = {"clickbait_acted": {"vid": {"acted_at": "not-a-timestamp"}}, "keyword_acted": {}}
+        run_hits: dict = {"count": 0}
+        assert _check_shadow_reencounter(state, "vid", run_hits) is False
+        assert run_hits["count"] == 0
+
+    def test_check_shadow_reencounter_handles_tz_naive_timestamp(self):
+        """acted_at without tzinfo (legacy format) is normalised to UTC and processed."""
+        from datetime import datetime as _dt
+        from datetime import timedelta
+
+        from yt_dont_recommend.clickbait import _check_shadow_reencounter
+        from yt_dont_recommend.config import SHADOW_LIMIT_GRACE_HOURS
+
+        # Naive timestamp (no tzinfo) older than the grace window
+        old_naive = (_dt.utcnow() - timedelta(hours=SHADOW_LIMIT_GRACE_HOURS + 1)).isoformat()
+        state = {"clickbait_acted": {"vid": {"acted_at": old_naive}}, "keyword_acted": {}}
+        run_hits: dict = {"count": 0}
+        # First call: count goes 0 -> 1, still under WARN_AFTER, returns False
+        assert _check_shadow_reencounter(state, "vid", run_hits) is False
+        assert run_hits["count"] == 1

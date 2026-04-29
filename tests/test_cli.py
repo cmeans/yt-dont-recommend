@@ -1756,6 +1756,65 @@ class TestKeywordSetupBlock:
             cli.main()
         assert excinfo.value.code == 1
 
+    def test_keyword_block_no_source_and_no_default_file_errors(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """--keyword-block with no --keyword-source and no default file exits with code 1."""
+        from yt_dont_recommend import cli, config
+
+        monkeypatch.setattr(config, "DEFAULT_KEYWORD_FILE", tmp_path / "absent.txt")
+        monkeypatch.setattr(cli, "DEFAULT_KEYWORD_FILE", tmp_path / "absent.txt")
+        monkeypatch.setattr("sys.argv", ["ydr", "--keyword-block"])
+        caplog.set_level("ERROR")
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main()
+        assert excinfo.value.code == 1
+        assert any("default file" in r.message.lower() for r in caplog.records)
+
+    def test_keyword_exclude_explicit_path_loaded_successfully(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """--keyword-exclude with a valid file logs a confirmation at INFO level."""
+        from yt_dont_recommend import cli
+
+        kw = tmp_path / "kw.txt"
+        kw.write_text("Trump\n")
+        ex = tmp_path / "ex.txt"
+        ex.write_text("@trustchannel\n")
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "ydr", "--keyword-block", "--dry-run",
+                "--keyword-source", str(kw),
+                "--keyword-exclude", str(ex),
+            ],
+        )
+        caplog.set_level("INFO", logger="yt_dont_recommend")
+        with patch("yt_dont_recommend.browser.open_browser", return_value=None):
+            cli.main()
+        assert any("via --keyword-exclude" in r.message for r in caplog.records)
+
+    def test_keyword_default_exclude_file_auto_loaded(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """When no --keyword-exclude is given but the default exclude file exists, it is auto-loaded."""
+        from yt_dont_recommend import cli, config
+
+        kw = tmp_path / "kw.txt"
+        kw.write_text("Trump\n")
+        default_ex = tmp_path / "keyword-exclude.txt"
+        default_ex.write_text("@trustchannel\n")
+        monkeypatch.setattr(config, "DEFAULT_KEYWORD_EXCLUDE_FILE", default_ex)
+        monkeypatch.setattr(cli, "DEFAULT_KEYWORD_EXCLUDE_FILE", default_ex)
+        monkeypatch.setattr(
+            "sys.argv",
+            ["ydr", "--keyword-block", "--dry-run", "--keyword-source", str(kw)],
+        )
+        caplog.set_level("INFO", logger="yt_dont_recommend")
+        with patch("yt_dont_recommend.browser.open_browser", return_value=None):
+            cli.main()
+        assert any("default keyword exclude file" in r.message for r in caplog.records)
+
 
 class TestKeywordStats:
     """--stats output includes a 'Keyword matches' section."""
