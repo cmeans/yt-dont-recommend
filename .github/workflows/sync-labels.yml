@@ -25,7 +25,7 @@ jobs:
       # (v2.3.3, Feb 2024) still runs on Node 20. Upstream's Node 24 update
       # merged 2026-04-10 (EndBug/label-sync#316) but no v2.3.4 tag has been
       # cut yet. Re-evaluate to a release tag once upstream cuts one.
-      - uses: EndBug/label-sync@1cd399a63f3d27e0a890cec8d1c29efad3e5db3d # main 2026-04-25 (Node 24)
+      - uses: EndBug/label-sync@d3013d0910a52c1b1c529f4df1c3d040a96424d7 # main 2026-04-25 (Node 24)
         with:
           config-file: .github/labels.yml
           delete-other-labels: false
